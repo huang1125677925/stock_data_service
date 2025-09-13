@@ -36,10 +36,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
+    'django_crontab',
     'stock_data',
     'cctv_news',
     'stock_strategy',
     'user_management',
+    'scheduled_tasks',
 ]
 
 MIDDLEWARE = [
@@ -202,3 +204,17 @@ API_RATE_LIMIT = os.environ.get('API_RATE_LIMIT', '100/hour')
 # 创建日志目录
 log_dir = BASE_DIR / 'logs'
 log_dir.mkdir(exist_ok=True)
+
+# Django Crontab配置
+CRONJOBS = [
+    # 默认的系统维护任务
+    ('0 2 * * *', 'scheduled_tasks.tasks.cleanup_old_logs'),  # 每天凌晨2点清理旧日志
+    ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
+    ('32 21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
+    ('35 22 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
+]
+
+# Crontab配置
+CRONTAB_LOCK_JOBS = True
+CRONTAB_COMMAND_PREFIX = f'PYTHONPATH={BASE_DIR}'
+CRONTAB_DJANGO_SETTINGS_MODULE = 'stock_data_service.settings'
