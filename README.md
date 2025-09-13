@@ -1,28 +1,46 @@
-# 股票数据服务 Flask 框架
+# 股票数据服务 Django 框架
 
-这是一个灵活的股票数据服务 Flask 框架，用户只需要在指定目录添加数据获取逻辑、接口函数和路由即可快速构建股票数据API服务。
+这是一个灵活的股票数据服务 Django 框架，用户只需要在指定目录添加数据获取逻辑、接口函数和路由即可快速构建股票数据API服务。
 
 ## 项目结构
 
 ```
 stock_data_service/
-├── app.py                 # 主应用文件
-├── run.py                 # 启动脚本
-├── config.py              # 配置文件
-├── requirements.txt       # 依赖文件
+├── manage.py             # Django管理脚本
+├── start.sh              # Linux/Mac启动脚本
+├── start.bat             # Windows启动脚本
+├── config.py             # 配置文件
+├── requirements.txt      # 依赖文件
 ├── .env.example          # 环境变量模板
-├── Dockerfile            # Docker配置文件
-├── docker-compose.yml    # Docker Compose配置
-├── routes/               # 路由目录
-│   ├── example.py        # 示例路由文件
-├── data_handlers/        # 数据处理器目录
-│   └── stock_data.py     # 股票数据处理
-├── utils/                # 工具函数目录
+├── stock_data_service/   # 项目主目录
+│   ├── __init__.py
+│   ├── settings.py       # 项目设置
+│   ├── urls.py           # 主URL配置
+│   ├── asgi.py           # ASGI配置
+│   └── wsgi.py           # WSGI配置
+├── stock_data/           # 股票数据应用
+│   ├── __init__.py
+│   ├── models.py         # 数据模型
+│   ├── views.py          # 视图函数
+│   ├── urls.py           # URL配置
+│   └── services.py       # 服务层
+├── stock_strategy/       # 股票策略应用
+│   ├── __init__.py
+│   ├── models.py         # 数据模型
+│   ├── views.py          # 视图函数
+│   ├── urls.py           # URL配置
+│   └── services.py       # 服务层
+├── cctv_news/            # 新闻数据应用
+│   ├── __init__.py
+│   ├── models.py         # 数据模型
+│   ├── views.py          # 视图函数
+│   ├── urls.py           # URL配置
+│   └── services.py       # 服务层
+├── common/               # 公共组件
+│   ├── __init__.py
 │   ├── response.py       # 响应工具
 │   └── validators.py     # 验证工具
-├── models/               # 数据模型目录（预留）
-├── tests/                # 测试文件目录
-├── logs/                 # 日志目录
+├── docs/                 # 文档目录
 └── data/                 # 数据存储目录
 ```
 
@@ -34,7 +52,7 @@ stock_data_service/
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+### 2. 配置环境变量（可选）
 
 ```bash
 cp .env.example .env
@@ -43,77 +61,133 @@ cp .env.example .env
 
 ### 3. 启动服务
 
+#### 使用启动脚本（推荐）
+
+在Linux/Mac系统上：
 ```bash
-# 开发模式
-python run.py
+# 添加执行权限
+chmod +x start.sh
+# 运行启动脚本
+./start.sh
+```
 
-# 或使用Flask命令
-flask run
+在Windows系统上：
+```bash
+# 运行启动脚本
+start.bat
+```
 
-# 生产模式
-export FLASK_ENV=production
-python run.py
+#### 手动启动
+
+```bash
+# 执行数据库迁移
+python manage.py migrate
+
+# 开发模式启动
+python manage.py runserver
+
+# 指定IP和端口启动（允许外部访问）
+python manage.py runserver 0.0.0.0:8000
 ```
 
 ### 4. 测试服务
 
 访问以下地址测试服务是否正常运行：
-- http://localhost:5000/ - 服务主页
-- http://localhost:5000/health - 健康检查
-- http://localhost:5000/api/example/hello - 示例接口
+- http://localhost:8000/ - 服务主页（API端点列表）
+- http://localhost:8000/api/stock/realtime - 实时股票数据
+- http://localhost:8000/api/news/cctv - CCTV新闻数据
+- http://localhost:8000/api/strategy/index_rps - 指数RPS强度排名
 
 ## 使用指南
 
-### 添加新的数据获取逻辑
+### 添加新的Django应用
 
-在 `data_handlers/` 目录下创建新的数据处理器文件：
-
-```python
-# data_handlers/my_data_handler.py
-from typing import Dict, List
-
-class MyDataHandler:
-    def get_data(self, symbol: str) -> Dict:
-        # 实现你的数据获取逻辑
-        return {"data": "your data here"}
-
-# 创建便捷函数供路由使用
-my_handler = MyDataHandler()
-def get_my_data(symbol: str) -> Dict:
-    return my_handler.get_data(symbol)
+```bash
+python manage.py startapp my_app
 ```
 
-### 添加新的接口函数
+### 添加新的数据模型
 
-在 `routes/` 目录下创建新的路由文件：
+在新应用的`models.py`文件中定义数据模型：
 
 ```python
-# routes/my_routes.py
-from flask import Blueprint, request
-from utils.response import success_response, error_response
-from data_handlers.my_data_handler import get_my_data
+# my_app/models.py
+from django.db import models
 
-# 创建蓝图
-bp = Blueprint('my_routes', __name__, url_prefix='/api/my')
+class MyData(models.Model):
+    name = models.CharField(max_length=100)
+    value = models.FloatField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return self.name
+```
 
-@bp.route('/data/<symbol>', methods=['GET'])
-def get_custom_data(symbol):
-    """获取自定义数据"""
+### 添加新的服务层
+
+在新应用中创建`services.py`文件：
+
+```python
+# my_app/services.py
+from typing import Dict, List
+from .models import MyData
+
+class MyDataService:
+    @staticmethod
+    def get_data(name: str) -> Dict:
+        # 实现你的数据获取逻辑
+        data = MyData.objects.filter(name=name).first()
+        if data:
+            return {"name": data.name, "value": data.value}
+        return {"error": "Data not found"}
+```
+
+### 添加新的视图函数
+
+在新应用的`views.py`文件中定义视图函数：
+
+```python
+# my_app/views.py
+from django.http import JsonResponse
+from common.response import success_response, error_response
+from .services import MyDataService
+
+def get_my_data(request, name):
     try:
-        data = get_my_data(symbol)
+        data = MyDataService.get_data(name)
         return success_response(data)
     except Exception as e:
-        return error_response(str(e), 500)
+        return error_response(str(e))
+```
 
-@bp.route('/batch', methods=['POST'])
-def batch_get_data():
-    """批量获取数据"""
-    try:
-        symbols = request.json.get('symbols', [])
-        results = [get_my_data(symbol) for symbol in symbols]
-        return success_response(results)
-    except Exception as e:
-        return error_response(str(e), 500)
+### 添加新的URL配置
+
+在新应用中创建`urls.py`文件：
+
+```python
+# my_app/urls.py
+from django.urls import path
+from . import views
+
+app_name = 'my_app'
+
+urlpatterns = [
+    path('data/<str:name>/', views.get_my_data, name='get_my_data'),
+]
+```
+
+### 注册应用URL
+
+在项目主URL配置文件中注册新应用的URL：
+
+```python
+# stock_data_service/urls.py
+from django.urls import path, include
+
+urlpatterns = [
+    # 其他URL配置
+    path('api/my/', include('my_app.urls')),
+]
 ```
 
 ### 使用工具函数
@@ -121,7 +195,7 @@ def batch_get_data():
 #### 响应工具
 
 ```python
-from utils.response import success_response, error_response
+from common.response import success_response, error_response
 
 # 成功响应
 return success_response(data, '操作成功')
@@ -130,166 +204,45 @@ return success_response(data, '操作成功')
 return error_response('错误信息', 400)
 ```
 
-#### 验证工具
+## 启动脚本说明
 
-```python
-from utils.validators import validate_stock_symbol, validate_symbols_list
+### Linux/Mac启动脚本 (start.sh)
 
-# 验证单个股票代码
-if not validate_stock_symbol(symbol):
-    return error_response('无效的股票代码', 400)
+启动脚本会自动执行以下操作：
+1. 设置环境变量
+2. 检查并激活虚拟环境（如果存在）
+3. 安装依赖
+4. 执行数据库迁移
+5. 启动Django服务器（绑定到0.0.0.0:8000）
 
-# 验证股票代码列表
-if not validate_symbols_list(symbols):
-    return error_response('无效的股票代码列表', 400)
-```
+### Windows启动脚本 (start.bat)
 
-## 配置说明
-
-### 环境变量
-
-| 变量名 | 描述 | 默认值 |
-|--------|------|--------|
-| FLASK_ENV | 运行环境 | development |
-| PORT | 服务端口 | 5000 |
-| SECRET_KEY | 安全密钥 | dev-secret-key |
-| STOCK_API_KEY | 股票API密钥 | - |
-| STOCK_API_BASE_URL | 股票API基础URL | https://api.example.com |
-| DATABASE_URL | 数据库连接 | sqlite:///stock_data.db |
-| REDIS_URL | Redis连接 | redis://localhost:6379/0 |
-| LOG_LEVEL | 日志级别 | INFO |
-
-### 配置文件
-
-编辑 `config.py` 文件可以添加更多配置项：
-
-```python
-class MyConfig(Config):
-    MY_CUSTOM_SETTING = os.environ.get('MY_SETTING') or 'default_value'
-```
-
-## Docker部署
-
-### 使用Docker
-
-```bash
-# 构建镜像
-docker build -t stock-data-service .
-
-# 运行容器
-docker run -p 5000:5000 stock-data-service
-```
-
-### 使用Docker Compose
-
-```bash
-# 启动服务
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f web
-
-# 停止服务
-docker-compose down
-```
+Windows启动脚本执行相同的操作，但适用于Windows环境：
+1. 设置环境变量
+2. 检查并激活虚拟环境（如果存在）
+3. 安装依赖
+4. 执行数据库迁移
+5. 启动Django服务器（绑定到0.0.0.0:8000）
 
 ## 开发最佳实践
 
 ### 1. 数据获取逻辑
 
-- 将所有数据获取逻辑放在 `data_handlers/` 目录
+- 将所有数据获取逻辑放在服务层（services.py）
 - 使用类封装数据获取功能
 - 提供错误处理和日志记录
 - 使用缓存提高性能
 
-### 2. 路由设计
+### 2. API设计
 
-- 每个功能模块创建独立的路由文件
-- 使用蓝图（Blueprint）组织路由
-- 提供清晰的API文档注释
+- 每个功能模块创建独立的应用
+- 使用Django REST framework（可选）
+- 提供清晰的API文档
 - 统一响应格式
 
 ### 3. 错误处理
 
-- 使用 try-except 处理异常
-- 提供有意义的错误信息
+- 使用try/except捕获异常
+- 返回统一格式的错误响应
 - 记录错误日志
-- 返回标准的错误响应
-
-### 4. 测试
-
-```bash
-# 运行测试
-pytest tests/
-
-# 运行特定测试
-pytest tests/test_app.py::test_health_check
-
-# 生成测试报告
-pytest --cov=. --cov-report=html
-```
-
-## 示例API
-
-### 健康检查
-
-```bash
-curl http://localhost:5000/health
-```
-
-### 获取股票数据
-
-```bash
-curl http://localhost:5000/api/example/stock/AAPL?period=1d
-```
-
-### 批量获取股票数据
-
-```bash
-curl -X POST http://localhost:5000/api/example/stocks \
-  -H "Content-Type: application/json" \
-  -d '{"symbols": ["AAPL", "MSFT"], "period": "1d"}'
-```
-
-## 故障排除
-
-### 常见问题
-
-1. **端口占用**
-   ```bash
-   lsof -i :5000
-   kill -9 <PID>
-   ```
-
-2. **依赖问题**
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt --force-reinstall
-   ```
-
-3. **权限问题**
-   ```bash
-   chmod +x run.py
-   ```
-
-### 日志查看
-
-```bash
-# 查看应用日志
-tail -f logs/app.log
-
-# 查看系统日志（Docker）
-docker-compose logs -f web
-```
-
-## 贡献指南
-
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
-
-## 许可证
-
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+- 提供有用的错误信息

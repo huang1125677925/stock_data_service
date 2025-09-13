@@ -1,7 +1,8 @@
-# Flask框架
-Flask==2.3.3
-Flask-CORS==4.0.0
-Flask-Limiter==3.5.0
+# Django框架
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-ratelimit==4.1.0
 
 # 数据获取
 requests==2.31.0
@@ -9,10 +10,12 @@ aiohttp
 pandas
 numpy
 akshare
+pywencai
 
 # 缓存和数据库
-redis==5.0.1
-SQLAlchemy==2.0.23
+# redis==5.0.1
+# django-redis==5.4.0
+# psycopg2-binary==2.9.9
 
 # 日期时间处理
 python-dateutil==2.8.2
@@ -26,7 +29,7 @@ loguru==0.7.2
 
 # 测试
 pytest==7.4.3
-pytest-flask==1.2.0
+pytest-django==4.7.0
 pytest-mock==3.12.0
 
 # 开发工具
@@ -35,7 +38,7 @@ flake8==6.1.0
 isort==5.12.0
 
 # 文档生成
-flask-restx==1.3.0
+drf-spectacular==0.26.5
 pymysql
 playwright==1.55.0
 
