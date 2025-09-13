@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'stock_data',
     'cctv_news',
     'stock_strategy',
+    'user_management',
 ]
 
 MIDDLEWARE = [
@@ -50,6 +51,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'user_management.middleware.AuthenticationMiddleware',
 ]
 
 ROOT_URLCONF = 'stock_data_service.urls'
@@ -124,6 +126,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF settings
+CSRF_TRUSTED_ORIGINS = ['http://localhost:5174']
 
 # REST Framework settings
 REST_FRAMEWORK = {

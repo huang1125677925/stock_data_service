@@ -55,7 +55,8 @@ def error_response(message='error', code=500, **kwargs):
     # 添加其他字段
     response_data.update(kwargs)
     
-    return JsonResponse(response_data, status=code)
+    # 始终返回200状态码，让前端通过响应体中的code字段判断请求结果
+    return JsonResponse(response_data, status=200)
 
 def validation_error(errors):
     """
