@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'stock_strategy',
     'user_management',
     'scheduled_tasks',
+    'forum',
 ]
 
 MIDDLEWARE = [
@@ -130,7 +131,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 # CSRF settings
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5174']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:5174', 'http://localhost:5173']
 
 # REST Framework settings
 REST_FRAMEWORK = {

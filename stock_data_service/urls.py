@@ -38,7 +38,8 @@ def index(request):
             'cctv_news': '/api/news/',
             'stock_strategy': '/api/strategy/',
             'user_management': '/api/user/',
-            'scheduled_tasks': '/api/tasks/'
+            'scheduled_tasks': '/api/tasks/',
+            'forum': '/api/forum/'
         },
         'timestamp': datetime.now().isoformat()
     })
@@ -52,4 +53,5 @@ urlpatterns = [
     path('django/api/strategy/', include('stock_strategy.urls')),
     path('django/api/user/', include('user_management.urls')),
     path('django/api/tasks/', include('scheduled_tasks.urls')),
+    path('django/api/forum/', include('forum.urls')),
 ]
