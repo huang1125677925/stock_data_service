@@ -357,7 +357,8 @@ def main():
             
             # 保存合并后的内容到数据库
             if all_news_content and publish_date:
-                save_combined_news_to_db(all_news_content, publish_date)
+                Print.print2(f"合并内容: {all_news_content}")
+                # save_combined_news_to_db(all_news_content, publish_date)
                 Print.print2(f"成功保存 {len(all_news_content)} 条新闻的合并内容")
             else:
                 Print.print2("没有可保存的内容")
