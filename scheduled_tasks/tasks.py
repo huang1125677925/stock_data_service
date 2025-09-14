@@ -71,7 +71,7 @@ def fetch_cctv_news():
         sys.path.insert(0, str(current_dir))
         
         # 导入main函数
-        from new_spide import main
+        from cctv_spider_requests import main
         
         # 执行main函数
         main()

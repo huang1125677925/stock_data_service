@@ -211,8 +211,8 @@ CRONJOBS = [
     # 默认的系统维护任务
     ('0 2 * * *', 'scheduled_tasks.tasks.cleanup_old_logs'),  # 每天凌晨2点清理旧日志
     ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
-    ('*/5 21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
-    ('5 20 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
+    ('1 20 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
+    ('10 20 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
     # ('25 13 * * *', 'scheduled_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
     ('31 13 * * *', 'scheduled_tasks.industry_sector_tasks.fetch_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每周一至周五15:00更新行业板块数据
 ]
