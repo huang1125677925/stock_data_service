@@ -6,6 +6,7 @@ import pandas as pd
 from datetime import datetime
 from .services import rps_service
 from .models import IndexRPS
+from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response
 
 @csrf_exempt
@@ -101,3 +102,43 @@ def get_historical_rps(request):
         
     except Exception as e:
         return error_response(f'获取历史RPS数据失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_turnover_percentile(request):
+    """
+    获取行业成交额占比分位数数据
+    
+    Query Parameters:
+        start_date (str): 开始日期，格式为YYYY-MM-DD，默认为7天前
+        end_date (str): 结束日期，格式为YYYY-MM-DD，默认为当天
+        use_cache (bool): 是否使用缓存，默认为True
+    
+    Returns:
+        JSON响应，包含每个行业在指定日期范围内的成交额占比分位数数据
+    """
+    try:
+        # 获取查询参数
+        start_date = request.GET.get('start_date', None)
+        end_date = request.GET.get('end_date', None)
+        use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
+        
+        # 获取行业成交额占比分位数数据
+        result = industry_turnover_strategy.get_industry_turnover_percentile(
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if result is None:
+            return error_response('获取行业成交额占比分位数数据失败', 500)
+        
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'start_date': start_date,
+            'end_date': end_date,
+            'query_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return error_response(f'获取行业成交额占比分位数数据失败: {str(e)}', 500)

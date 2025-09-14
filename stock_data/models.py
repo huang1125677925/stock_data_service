@@ -1,6 +1,92 @@
 from django.db import models
 from datetime import datetime
 
+
+class IndustrySector(models.Model):
+    """行业板块模型"""
+    code = models.CharField(max_length=20, unique=True, verbose_name='板块代码')
+    name = models.CharField(max_length=50, verbose_name='板块名称')
+    description = models.TextField(null=True, blank=True, verbose_name='板块描述')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'industry_sector'
+        verbose_name = '行业板块'
+        verbose_name_plural = '行业板块'
+        ordering = ['code']
+    
+    def __str__(self):
+        return f'{self.code} - {self.name}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'code': self.code,
+            'name': self.name,
+            'description': self.description,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
+
+
+class IndustrySectorDaily(models.Model):
+    """行业板块日频数据模型"""
+    sector = models.ForeignKey(IndustrySector, on_delete=models.CASCADE, related_name='daily_data', verbose_name='所属板块')
+    date = models.DateField(verbose_name='交易日期')
+    open_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='开盘价')
+    close_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='收盘价')
+    high_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='最高价')
+    low_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='最低价')
+    change_percent = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='涨跌幅(%)')
+    change_amount = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='涨跌额')
+    total_volume = models.BigIntegerField(verbose_name='总成交量(手)')
+    total_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='总成交额(元)')
+    total_market_cap = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='总市值')
+    amplitude = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='振幅(%)')
+    turnover_rate = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='平均换手率(%)')
+    rising_stocks = models.IntegerField(verbose_name='上涨股票数')
+    falling_stocks = models.IntegerField(verbose_name='下跌股票数')
+    flat_stocks = models.IntegerField(null=True, blank=True, verbose_name='平盘股票数')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    
+    class Meta:
+        db_table = 'industry_sector_daily'
+        verbose_name = '行业板块日频数据'
+        verbose_name_plural = '行业板块日频数据'
+        ordering = ['-date', 'sector']
+        indexes = [
+            models.Index(fields=['sector', '-date']),
+            models.Index(fields=['-date']),
+        ]
+        unique_together = ['sector', 'date']
+    
+    def __str__(self):
+        return f'{self.sector.name} - {self.date} - {self.change_percent}%'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'sector_code': self.sector.code,
+            'sector_name': self.sector.name,
+            'date': self.date.isoformat(),
+            'open_price': float(self.open_price),
+            'close_price': float(self.close_price),
+            'high_price': float(self.high_price),
+            'low_price': float(self.low_price),
+            'change_percent': float(self.change_percent),
+            'change_amount': float(self.change_amount),
+            'total_volume': self.total_volume,
+            'total_amount': float(self.total_amount),
+            'total_market_cap': float(self.total_market_cap) if self.total_market_cap else None,
+            'amplitude': float(self.amplitude) if self.amplitude else None,
+            'turnover_rate': float(self.turnover_rate) if self.turnover_rate else None,
+            'rising_stocks': self.rising_stocks,
+            'falling_stocks': self.falling_stocks,
+            'flat_stocks': self.flat_stocks if self.flat_stocks else 0,
+            'created_at': self.created_at.isoformat()
+        }
+
 class StockInfo(models.Model):
     """股票基本信息模型"""
     code = models.CharField(max_length=10, unique=True, verbose_name='股票代码')

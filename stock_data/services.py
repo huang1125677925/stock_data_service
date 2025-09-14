@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
 from django.db import models
-from .models import StockInfo, StockRealtime, MarketSummary
+from .models import StockInfo, StockRealtime, MarketSummary, IndustrySector, IndustrySectorDaily
 from common.validators import validate_stock_symbol
 
 logger = logging.getLogger(__name__)
@@ -958,5 +958,341 @@ class StockDataService:
         # 直接调用 get_stock_type 方法，保持功能一致性
         return self.get_stock_type(stock_code)
 
+# 行业板块数据服务类
+class IndustrySectorService:
+    """行业板块数据服务类"""
+    
+    def __init__(self):
+        self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 300)  # 缓存5分钟
+        self.request_timeout = getattr(settings, 'STOCK_REQUEST_TIMEOUT', 30)
+        self.max_retries = getattr(settings, 'STOCK_MAX_RETRIES', 3)
+        
+        logger.info(f"行业板块数据服务初始化: cache_timeout={self.cache_timeout}s")
+    
+    def get_industry_sectors(self) -> Optional[List[Dict]]:
+        """获取所有行业板块列表
+        
+        Returns:
+            行业板块列表
+        """
+        cache_key = 'industry_sectors_list'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info("从缓存获取行业板块列表")
+            return cached_data
+        
+        try:
+            # 尝试从数据库获取
+            sectors = list(IndustrySector.objects.all().values())
+            if sectors:
+                # 转换为字典列表
+                result = []
+                for sector in sectors:
+                    result.append({
+                        'code': sector['code'],
+                        'name': sector['name'],
+                        'description': sector['description'],
+                        'created_at': sector['created_at'].isoformat() if isinstance(sector['created_at'], datetime) else sector['created_at'],
+                        'updated_at': sector['updated_at'].isoformat() if isinstance(sector['updated_at'], datetime) else sector['updated_at']
+                    })
+                
+                # 缓存数据
+                cache.set(cache_key, result, self.cache_timeout)
+                logger.info(f"从数据库获取{len(result)}个行业板块")
+                return result
+            
+            # 数据库没有数据，从akshare获取
+            logger.info("数据库无行业板块数据，从akshare获取")
+            df = ak.stock_board_industry_name_em()
+            
+            if df is None or df.empty:
+                logger.warning("获取行业板块数据为空")
+                return None
+            
+            # 转换数据格式
+            sectors = []
+            for _, row in df.iterrows():
+                sector_data = {
+                    'code': str(row['板块代码']),
+                    'name': str(row['板块名称']),
+                    'description': None,
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
+                }
+                sectors.append(sector_data)
+                
+                # 保存到数据库
+                IndustrySector.objects.update_or_create(
+                    code=sector_data['code'],
+                    defaults={
+                        'name': sector_data['name'],
+                        'description': sector_data['description']
+                    }
+                )
+            
+            # 缓存数据
+            cache.set(cache_key, sectors, self.cache_timeout)
+            logger.info(f"获取{len(sectors)}个行业板块数据并保存到数据库")
+            
+            return sectors
+            
+        except Exception as e:
+            logger.error(f"获取行业板块列表失败: {str(e)}")
+            return None
+    
+    def get_industry_sector_daily(self, sector_code: str, start_date: str = None, end_date: str = None) -> Optional[List[Dict]]:
+        """获取行业板块日频数据
+        
+        Args:
+            sector_code: 行业板块代码
+            start_date: 开始日期，格式：YYYYMMDD
+            end_date: 结束日期，格式：YYYYMMDD
+        
+        Returns:
+            行业板块日频数据列表
+        """
+        if not start_date:
+            # 默认获取最近60天数据
+            start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
+        
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+        
+        cache_key = f'industry_sector_daily_{sector_code}_{start_date}_{end_date}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业板块{sector_code}日频数据")
+            return cached_data
+        
+        try:
+            # 尝试从数据库获取
+            start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
+            end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
+            
+            sector = IndustrySector.objects.filter(code=sector_code).first()
+            if not sector:
+                logger.warning(f"行业板块{sector_code}不存在")
+                return None
+            
+            daily_data = IndustrySectorDaily.objects.filter(
+                sector=sector,
+                date__gte=start_date_obj,
+                date__lte=end_date_obj
+            ).order_by('-date')
+            
+            if daily_data.exists():
+                result = [item.to_dict() for item in daily_data]
+                
+                # 缓存数据
+                cache.set(cache_key, result, self.cache_timeout)
+                logger.info(f"从数据库获取行业板块{sector_code}的{len(result)}条日频数据")
+                return result
+            
+            # 数据库没有数据，从akshare获取
+            logger.info(f"数据库无行业板块{sector_code}日频数据，从akshare获取")
+            df = ak.stock_board_industry_hist_em(
+                symbol=sector_code,
+                start_date=start_date,
+                end_date=end_date,
+                period="日k",
+                adjust=""
+            )
+            
+            if df is None or df.empty:
+                logger.warning(f"获取行业板块{sector_code}日频数据为空")
+                return None
+            
+            # 转换数据格式
+            daily_list = []
+            for _, row in df.iterrows():
+                date_str = str(row['日期'])
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                
+                # 检查数据是否已存在
+                exists = IndustrySectorDaily.objects.filter(sector=sector, date=date_obj).exists()
+                if exists:
+                    continue
+                
+                # 创建日频数据对象
+                daily_data = IndustrySectorDaily(
+                    sector=sector,
+                    date=date_obj,
+                    open_price=float(row['开盘']),
+                    close_price=float(row['收盘']),
+                    high_price=float(row['最高']),
+                    low_price=float(row['最低']),
+                    change_percent=float(row['涨跌幅']),
+                    change_amount=float(row['涨跌额']),
+                    total_volume=int(row['成交量']),
+                    total_amount=float(row['成交额']),
+                    amplitude=float(row['振幅']) if '振幅' in row and pd.notna(row['振幅']) else None,
+                    turnover_rate=float(row['换手率']) if '换手率' in row and pd.notna(row['换手率']) else None,
+                    # 以下字段需要从其他接口获取或计算
+                    rising_stocks=0,
+                    falling_stocks=0,
+                    flat_stocks=0,
+                    total_market_cap=None
+                )
+                
+                # 保存到数据库
+                daily_data.save()
+                
+                # 添加到结果列表
+                daily_list.append(daily_data.to_dict())
+            
+            # 如果没有新增数据，则从数据库获取
+            if not daily_list:
+                daily_data = IndustrySectorDaily.objects.filter(
+                    sector=sector,
+                    date__gte=start_date_obj,
+                    date__lte=end_date_obj
+                ).order_by('-date')
+                
+                daily_list = [item.to_dict() for item in daily_data]
+            
+            # 缓存数据
+            cache.set(cache_key, daily_list, self.cache_timeout)
+            logger.info(f"获取行业板块{sector_code}的{len(daily_list)}条日频数据并保存到数据库")
+            
+            return daily_list
+            
+        except Exception as e:
+            logger.error(f"获取行业板块{sector_code}日频数据失败: {str(e)}")
+            return None
+    
+    def get_industry_sector_realtime(self, sector_code: str) -> Optional[Dict]:
+        """获取行业板块实时行情
+        
+        Args:
+            sector_code: 行业板块代码
+        
+        Returns:
+            行业板块实时行情
+        """
+        cache_key = f'industry_sector_realtime_{sector_code}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业板块{sector_code}实时行情")
+            return cached_data
+        
+        try:
+            # 从akshare获取
+            logger.info(f"从akshare获取行业板块{sector_code}实时行情")
+            
+            # 先获取板块名称
+            sector = IndustrySector.objects.filter(code=sector_code).first()
+            if not sector:
+                # 尝试从API获取板块列表
+                self.get_industry_sectors()
+                sector = IndustrySector.objects.filter(code=sector_code).first()
+                if not sector:
+                    logger.warning(f"行业板块{sector_code}不存在")
+                    return None
+            
+            # 获取实时行情
+            df = ak.stock_board_industry_spot_em(symbol=sector.name)
+            
+            if df is None or df.empty:
+                logger.warning(f"获取行业板块{sector_code}实时行情为空")
+                return None
+            
+            # 转换为字典
+            realtime_data = {}
+            for _, row in df.iterrows():
+                item = str(row['item']).strip()
+                value = row['value']
+                realtime_data[item] = value
+            
+            # 构建结果
+            result = {
+                'sector_code': sector_code,
+                'sector_name': sector.name,
+                'latest_price': float(realtime_data.get('最新', 0)),
+                'change_percent': float(realtime_data.get('涨跌幅', 0)),
+                'change_amount': float(realtime_data.get('涨跌额', 0)),
+                'open_price': float(realtime_data.get('开盘', 0)),
+                'high_price': float(realtime_data.get('最高', 0)),
+                'low_price': float(realtime_data.get('最低', 0)),
+                'volume': int(realtime_data.get('成交量', 0)),
+                'amount': float(realtime_data.get('成交额', 0)),
+                'turnover_rate': float(realtime_data.get('换手率', 0)),
+                'amplitude': float(realtime_data.get('振幅', 0)),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # 缓存数据
+            cache.set(cache_key, result, self.cache_timeout)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取行业板块{sector_code}实时行情失败: {str(e)}")
+            return None
+    
+    def get_industry_sector_constituents(self, sector_code: str) -> Optional[List[Dict]]:
+        """获取行业板块成分股
+        
+        Args:
+            sector_code: 行业板块代码
+        
+        Returns:
+            行业板块成分股列表
+        """
+        cache_key = f'industry_sector_constituents_{sector_code}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业板块{sector_code}成分股")
+            return cached_data
+        
+        try:
+            # 从akshare获取
+            logger.info(f"从akshare获取行业板块{sector_code}成分股")
+            df = ak.stock_board_industry_cons_em(symbol=sector_code)
+            
+            if df is None or df.empty:
+                logger.warning(f"获取行业板块{sector_code}成分股为空")
+                return None
+            
+            # 转换数据格式
+            constituents = []
+            for _, row in df.iterrows():
+                constituent = {
+                    'code': str(row['代码']),
+                    'name': str(row['名称']),
+                    'latest_price': float(row['最新价']) if pd.notna(row['最新价']) else 0.0,
+                    'change_percent': float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0,
+                    'change_amount': float(row['涨跌额']) if pd.notna(row['涨跌额']) else 0.0,
+                    'volume': float(row['成交量']) if pd.notna(row['成交量']) else 0.0,
+                    'amount': float(row['成交额']) if pd.notna(row['成交额']) else 0.0,
+                    'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else 0.0,
+                    'high': float(row['最高']) if pd.notna(row['最高']) else 0.0,
+                    'low': float(row['最低']) if pd.notna(row['最低']) else 0.0,
+                    'open_price': float(row['今开']) if pd.notna(row['今开']) else 0.0,
+                    'close_price': float(row['昨收']) if pd.notna(row['昨收']) else 0.0,
+                    'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else 0.0,
+                    'pe_ratio': float(row['市盈率-动态']) if pd.notna(row['市盈率-动态']) else 0.0,
+                    'pb_ratio': float(row['市净率']) if pd.notna(row['市净率']) else 0.0
+                }
+                constituents.append(constituent)
+            
+            # 缓存数据
+            cache.set(cache_key, constituents, self.cache_timeout)
+            logger.info(f"获取行业板块{sector_code}的{len(constituents)}只成分股")
+            
+            return constituents
+            
+        except Exception as e:
+            logger.error(f"获取行业板块{sector_code}成分股失败: {str(e)}")
+            return None
+
 # 全局服务实例
 stock_service = StockDataService()
+industry_sector_service = IndustrySectorService()

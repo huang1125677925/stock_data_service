@@ -18,4 +18,10 @@ urlpatterns = [
     path('stock/market-activity/', views.get_stock_market_activity, name='stock_market_activity'),
     path('stock/types/batch/', views.get_stock_types_batch, name='stock_types_batch'),
     path('industries/', views.get_industries, name='industries'),
+    
+    # 行业板块相关API
+    path('industry-sectors/', views.get_industry_sectors, name='industry_sectors'),
+    path('industry-sector/daily/<str:code>/', views.get_industry_sector_daily, name='industry_sector_daily'),
+    path('industry-sector/realtime/<str:code>/', views.get_industry_sector_realtime, name='industry_sector_realtime'),
+    path('industry-sector/constituents/<str:code>/', views.get_industry_sector_constituents, name='industry_sector_constituents'),
 ]

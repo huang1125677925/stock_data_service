@@ -6,9 +6,16 @@ import logging
 import pandas as pd
 import akshare as ak
 from datetime import datetime
-from .services import stock_service
+from .services import stock_service, industry_sector_service
 from common.response import success_response, error_response
 from common.validators import validate_pagination_params, validate_stock_symbol
+
+# 行业板块相关验证函数
+def validate_sector_code(code):
+    """验证行业板块代码"""
+    if not code or not isinstance(code, str):
+        return False
+    return True
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +304,207 @@ def get_stock_type(request, code):
     except Exception as e:
         logger.error(f"获取股票类型信息失败: {str(e)}")
         return error_response(str(e), 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_sectors(request):
+    """
+    获取所有行业板块列表
+    
+    Query Parameters:
+        limit (int): 返回行业板块数量限制，默认返回全部
+        offset (int): 偏移量，默认0
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "total": 100,
+                "sectors": [...],
+                "query_time": "2024-01-01T12:00:00"
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        limit = int(request.GET.get('limit')) if request.GET.get('limit') else None
+        offset = int(request.GET.get('offset', 0))
+        
+        # 验证分页参数
+        limit, offset = validate_pagination_params(limit, offset)
+        
+        # 获取行业板块列表
+        sectors = industry_sector_service.get_industry_sectors()
+        if sectors is None:
+            return error_response('获取行业板块列表失败', 500)
+        
+        # 应用分页
+        total = len(sectors)
+        if limit:
+            sectors = sectors[offset:offset + limit]
+        else:
+            sectors = sectors[offset:]
+        
+        return success_response({
+            'total': total,
+            'sectors': sectors,
+            'query_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"获取行业板块列表失败: {str(e)}")
+        return error_response(f'获取行业板块列表失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_sector_daily(request, code):
+    """
+    获取行业板块日频数据
+    
+    Path Parameters:
+        code (str): 行业板块代码
+    
+    Query Parameters:
+        start_date (str): 开始日期，格式：YYYYMMDD
+        end_date (str): 结束日期，格式：YYYYMMDD
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "daily_data": [...],
+                "query_time": "2024-01-01T12:00:00"
+            }
+        }
+    """
+    try:
+        # 验证行业板块代码
+        if not validate_sector_code(code):
+            return error_response('无效的行业板块代码', 400)
+        
+        # 获取查询参数
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        
+        # 获取行业板块日频数据
+        daily_data = industry_sector_service.get_industry_sector_daily(code, start_date, end_date)
+        if daily_data is None:
+            return error_response(f'获取行业板块 {code} 日频数据失败', 500)
+        
+        # 获取行业板块信息
+        from .models import IndustrySector
+        sector = IndustrySector.objects.filter(code=code).first()
+        sector_name = sector.name if sector else '未知'
+        
+        return success_response({
+            'sector_code': code,
+            'sector_name': sector_name,
+            'daily_data': daily_data,
+            'query_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"获取行业板块 {code} 日频数据失败: {str(e)}")
+        return error_response(f'获取行业板块日频数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_sector_realtime(request, code):
+    """
+    获取行业板块实时行情
+    
+    Path Parameters:
+        code (str): 行业板块代码
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "latest_price": 1234.56,
+                "change_percent": 1.23,
+                ...
+            }
+        }
+    """
+    try:
+        # 验证行业板块代码
+        if not validate_sector_code(code):
+            return error_response('无效的行业板块代码', 400)
+        
+        # 获取行业板块实时行情
+        realtime_data = industry_sector_service.get_industry_sector_realtime(code)
+        if realtime_data is None:
+            return error_response(f'获取行业板块 {code} 实时行情失败', 500)
+        
+        return success_response(realtime_data)
+        
+    except Exception as e:
+        logger.error(f"获取行业板块 {code} 实时行情失败: {str(e)}")
+        return error_response(f'获取行业板块实时行情失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_sector_constituents(request, code):
+    """
+    获取行业板块成分股
+    
+    Path Parameters:
+        code (str): 行业板块代码
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "constituents": [...],
+                "total": 50,
+                "query_time": "2024-01-01T12:00:00"
+            }
+        }
+    """
+    try:
+        # 验证行业板块代码
+        if not validate_sector_code(code):
+            return error_response('无效的行业板块代码', 400)
+        
+        # 获取行业板块成分股
+        constituents = industry_sector_service.get_industry_sector_constituents(code)
+        if constituents is None:
+            return error_response(f'获取行业板块 {code} 成分股失败', 500)
+        
+        # 获取行业板块信息
+        from .models import IndustrySector
+        sector = IndustrySector.objects.filter(code=code).first()
+        sector_name = sector.name if sector else '未知'
+        
+        return success_response({
+            'sector_code': code,
+            'sector_name': sector_name,
+            'constituents': constituents,
+            'total': len(constituents),
+            'query_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"获取行业板块 {code} 成分股失败: {str(e)}")
+        return error_response(f'获取行业板块成分股失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])
