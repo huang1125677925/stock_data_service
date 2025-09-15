@@ -65,7 +65,7 @@ def fetch_industry_sector_daily_data():
         
         # 计算开始日期和结束日期（最近120天）
         end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=120)).strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
         
         # 获取每个行业板块的日频数据
         success_count = 0
