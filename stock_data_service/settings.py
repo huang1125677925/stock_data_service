@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'user_management',
     'scheduled_tasks',
     'forum',
+    'indival_stock_data',
 ]
 
 MIDDLEWARE = [
@@ -199,6 +200,21 @@ STOCK_API_BASE_URL = os.environ.get('STOCK_API_BASE_URL', 'https://api.example.c
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
 
+# 股票数据缓存时间（秒）
+STOCK_CACHE_TIMEOUT = int(os.environ.get('STOCK_CACHE_TIMEOUT', 300))
+STOCK_REQUEST_TIMEOUT = int(os.environ.get('STOCK_REQUEST_TIMEOUT', 30))
+STOCK_MAX_RETRIES = int(os.environ.get('STOCK_MAX_RETRIES', 3))
+
+# 定时任务配置
+# CRONJOBS = [
+#     # 每天早上9:00更新个股列表
+#     ('0 9 * * *', 'scheduled_tasks.individual_stock_tasks.fetch_individual_stocks'),
+#     # 交易时间内每5分钟更新个股实时行情（9:30-11:30, 13:00-15:00）
+#     ('*/5 9-11,13-15 * * 1-5', 'scheduled_tasks.individual_stock_tasks.update_individual_stock_realtime'),
+#     # 每天收盘后更新个股日频数据
+#     ('30 15 * * 1-5', 'scheduled_tasks.individual_stock_tasks.update_individual_stock_daily_data'),
+# ]
+
 # API限流配置
 API_RATE_LIMIT = os.environ.get('API_RATE_LIMIT', '100/hour')
 
@@ -215,6 +231,9 @@ CRONJOBS = [
     ('10 20 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
     # ('25 13 * * *', 'scheduled_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
     ('1 16,17,18,19 * * *', 'scheduled_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
+
+    ('43 22 * * *', 'scheduled_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
+    ('35 23 * * 2', 'scheduled_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
 ]
 
 # Crontab配置
