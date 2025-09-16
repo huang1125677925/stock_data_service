@@ -555,6 +555,7 @@ class IndividualStockService:
                 date_str = row['日期'].strftime('%Y-%m-%d')
                 # 将字符串日期转换为日期对象
                 date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                time.sleep(0.01)
                 
                 # 创建或更新历史数据
                 _, created = IndividualStockDaily.objects.update_or_create(
@@ -573,7 +574,7 @@ class IndividualStockService:
                         'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else None
                     }
                 )
-                print(f"更新股票{stock.code}的历史数据，日期：{date_str} {created}")
+                print(f"时间{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}更新股票{stock.code}的历史数据，日期：{date_str} {created}")
                 updated_count += 1
             
             # 清除缓存
