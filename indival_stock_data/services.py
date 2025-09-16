@@ -555,7 +555,7 @@ class IndividualStockService:
                 date_str = row['日期'].strftime('%Y-%m-%d')
                 # 将字符串日期转换为日期对象
                 date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                time.sleep(0.01)
+                time.sleep(0.08)
                 
                 # 创建或更新历史数据
                 _, created = IndividualStockDaily.objects.update_or_create(
