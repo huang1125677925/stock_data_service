@@ -13,6 +13,7 @@ from django.http import JsonResponse
 from django.core.paginator import Paginator
 from .services import individual_stock_service
 from common.validators import validate_stock_symbol
+from common.response import success_response, error_response
 
 logger = logging.getLogger(__name__)
 
@@ -31,22 +32,25 @@ class StockListView(APIView):
             stocks = individual_stock_service.get_stock_list()
             
             if not stocks:
-                return Response({"message": "获取股票列表失败"}, status=status.HTTP_404_NOT_FOUND)
+                return error_response("获取股票列表失败", 404)
             
             # 分页处理
             paginator = Paginator(stocks, page_size)
             current_page = paginator.page(page)
             
-            return Response({
+            return success_response({
                 "total": paginator.count,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": paginator.num_pages,
                 "data": list(current_page.object_list)
             })
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
         except Exception as e:
             logger.error(f"获取股票列表失败: {str(e)}")
-            return Response({"message": f"获取股票列表失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return error_response(f'获取股票列表失败: {str(e)}', 500)
 
 
 class StockRealtimeView(APIView):
@@ -58,14 +62,14 @@ class StockRealtimeView(APIView):
             # 如果提供了股票代码，则获取单只股票的实时行情
             if stock_code:
                 if not validate_stock_symbol(stock_code):
-                    return Response({"message": f"无效的股票代码: {stock_code}"}, status=status.HTTP_400_BAD_REQUEST)
+                    return error_response(f"无效的股票代码: {stock_code}", 400)
                 
                 realtime = individual_stock_service.get_stock_realtime(stock_code)
                 
                 if not realtime:
-                    return Response({"message": f"获取股票{stock_code}实时行情失败"}, status=status.HTTP_404_NOT_FOUND)
+                    return error_response(f"获取股票{stock_code}实时行情失败", 404)
                 
-                return Response(realtime)
+                return success_response(realtime)
             
             # 否则获取所有股票的实时行情
             # 获取分页参数
@@ -76,22 +80,25 @@ class StockRealtimeView(APIView):
             realtime_list = individual_stock_service.get_stock_realtime()
             
             if not realtime_list:
-                return Response({"message": "获取股票实时行情失败"}, status=status.HTTP_404_NOT_FOUND)
+                return error_response("获取股票实时行情失败", 404)
             
             # 分页处理
             paginator = Paginator(realtime_list, page_size)
             current_page = paginator.page(page)
             
-            return Response({
+            return success_response({
                 "total": paginator.count,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": paginator.num_pages,
                 "data": list(current_page.object_list)
             })
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
         except Exception as e:
             logger.error(f"获取股票实时行情失败: {str(e)}")
-            return Response({"message": f"获取股票实时行情失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return error_response(f'获取股票实时行情失败: {str(e)}', 500)
 
 
 class StockHistoryView(APIView):
@@ -101,7 +108,7 @@ class StockHistoryView(APIView):
     def get(self, request, stock_code):
         try:
             if not validate_stock_symbol(stock_code):
-                return Response({"message": f"无效的股票代码: {stock_code}"}, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(f"无效的股票代码: {stock_code}", 400)
             
             # 获取查询参数
             start_date = request.query_params.get('start_date')
@@ -111,13 +118,14 @@ class StockHistoryView(APIView):
             # 获取历史数据
             history = individual_stock_service.get_stock_history(stock_code, start_date, end_date, adjust)
             
-            if not history:
-                return Response({"message": f"获取股票{stock_code}历史行情数据失败"}, status=status.HTTP_404_NOT_FOUND)
             
-            return Response(history)
+            return success_response(history)
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
         except Exception as e:
             logger.error(f"获取股票历史行情数据失败: {str(e)}")
-            return Response({"message": f"获取股票历史行情数据失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return error_response(f'获取股票历史行情数据失败: {str(e)}', 500)
 
 
 class StockInfoView(APIView):
@@ -127,18 +135,18 @@ class StockInfoView(APIView):
     def get(self, request, stock_code):
         try:
             if not validate_stock_symbol(stock_code):
-                return Response({"message": f"无效的股票代码: {stock_code}"}, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(f"无效的股票代码: {stock_code}", 400)
             
             # 获取股票详细信息
             info = individual_stock_service.get_stock_info(stock_code)
             
-            if not info:
-                return Response({"message": f"获取股票{stock_code}详细信息失败"}, status=status.HTTP_404_NOT_FOUND)
-            
-            return Response(info)
+            return success_response(info)
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
         except Exception as e:
             logger.error(f"获取股票详细信息失败: {str(e)}")
-            return Response({"message": f"获取股票详细信息失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return error_response(f'获取股票详细信息失败: {str(e)}', 500)
 
 
 @api_view(['POST'])
@@ -176,10 +184,12 @@ def update_stock_data(request):
                 "updated_history": updated_history
             }
         
-        return Response({
-            "message": "股票数据更新成功",
+        return success_response({
             "result": result
-        })
+        }, message="股票数据更新成功")
+    except ValueError as e:
+        logger.error(f"参数格式错误: {str(e)}")
+        return error_response(f'参数格式错误: {str(e)}', 400)
     except Exception as e:
         logger.error(f"更新股票数据失败: {str(e)}")
-        return Response({"message": f"更新股票数据失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return error_response(f'更新股票数据失败: {str(e)}', 500)

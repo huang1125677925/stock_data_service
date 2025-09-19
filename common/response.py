@@ -25,7 +25,7 @@ def success_response(data=None, message='success', **kwargs):
         'code': 200,
         'message': message,
         'timestamp': datetime.now().isoformat(),
-        'data': data or {}
+        'data': data
     }
     
     # 添加其他字段

@@ -211,22 +211,15 @@ class IndividualStockService:
         if not start_date:
             start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
         
-        cache_key = f'individual_stock_history_{stock_code}_{start_date}_{end_date}_{adjust}'
-        
-        # 尝试从缓存获取
-        cached_data = cache.get(cache_key)
-        if cached_data:
-            logger.info(f"从缓存获取股票{stock_code}历史行情数据")
-            return cached_data
-        
         try:
-            # 获取或创建股票信息
-            stock = self._get_or_create_stock(stock_code)
-            if not stock:
+            # 获取股票信息
+            try:
+                stock = IndividualStock.objects.get(code=stock_code)
+            except IndividualStock.DoesNotExist:
                 logger.warning(f"未找到股票{stock_code}的信息")
                 return None
             
-            # 尝试从数据库获取历史数据
+            # 从数据库获取历史数据
             start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
             end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
             
@@ -236,53 +229,13 @@ class IndividualStockService:
                 date__lte=end_date_obj
             ).order_by('date')
             
-            # 如果数据库中有完整的历史数据，则直接返回
-            if db_history.count() > 0 and (end_date_obj - start_date_obj).days + 1 <= db_history.count() * 1.5:  # 允许有一些交易日的差异
+            if db_history.exists():
                 history_list = [history.to_dict() for history in db_history]
-                cache.set(cache_key, history_list, self.cache_timeout)
                 logger.info(f"从数据库获取股票{stock_code}历史行情数据")
                 return history_list
-            
-            # 从akshare获取历史数据
-            logger.info(f"从akshare获取股票{stock_code}历史行情数据")
-            df = ak.stock_zh_a_hist(symbol=stock_code, period="daily", start_date=start_date, end_date=end_date, adjust=adjust)
-            
-            if df is None or df.empty:
-                logger.warning(f"获取股票{stock_code}历史行情数据为空")
-                return None
-            
-            # 转换数据格式并保存到数据库
-            history_list = []
-            with transaction.atomic():
-                for _, row in df.iterrows():
-                    date_str = row['日期']
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    
-                    # 创建或更新历史数据
-                    history, created = IndividualStockDaily.objects.update_or_create(
-                        stock=stock,
-                        date=date_obj,
-                        defaults={
-                            'open_price': float(row['开盘']) if pd.notna(row['开盘']) else 0.0,
-                            'close_price': float(row['收盘']) if pd.notna(row['收盘']) else 0.0,
-                            'high_price': float(row['最高']) if pd.notna(row['最高']) else 0.0,
-                            'low_price': float(row['最低']) if pd.notna(row['最低']) else 0.0,
-                            'change_percent': float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0,
-                            'change_amount': float(row['涨跌额']) if pd.notna(row['涨跌额']) else 0.0,
-                            'volume': int(row['成交量']) if pd.notna(row['成交量']) else 0,
-                            'amount': float(row['成交额']) if pd.notna(row['成交额']) else 0.0,
-                            'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else None,
-                            'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else None
-                        }
-                    )
-                    
-                    history_list.append(history.to_dict())
-            
-            # 缓存数据
-            cache.set(cache_key, history_list, self.cache_timeout)
-            logger.info(f"获取股票{stock_code}历史行情数据并保存到数据库")
-            
-            return history_list
+            else:
+                logger.warning(f"数据库中没有股票{stock_code}在指定日期范围的历史数据")
+                return []
             
         except Exception as e:
             logger.error(f"获取股票{stock_code}历史行情数据失败: {str(e)}")
@@ -302,35 +255,22 @@ class IndividualStockService:
             logger.warning(f"无效的股票代码: {stock_code}")
             return None
         
-        cache_key = f'individual_stock_info_{stock_code}'
-        
-        # 尝试从缓存获取
-        cached_data = cache.get(cache_key)
-        if cached_data:
-            logger.info(f"从缓存获取股票{stock_code}详细信息")
-            return cached_data
-        
         try:
-            # 尝试从数据库获取
+            # 从数据库获取股票信息
             try:
                 stock = IndividualStock.objects.get(code=stock_code)
                 stock_info = stock.to_dict()
             except IndividualStock.DoesNotExist:
-                # 数据库没有数据，从akshare获取
-                logger.info(f"数据库无股票{stock_code}信息，从akshare获取")
-                stock = self._get_or_create_stock(stock_code)
-                if not stock:
-                    logger.warning(f"未找到股票{stock_code}的信息")
-                    return None
-                stock_info = stock.to_dict()
+                logger.warning(f"未找到股票{stock_code}的信息")
+                return None
             
             # 获取最新的实时行情
             try:
                 realtime = IndividualStockRealtime.objects.filter(stock=stock).latest('timestamp')
                 realtime_info = realtime.to_dict()
             except IndividualStockRealtime.DoesNotExist:
-                # 没有实时行情，获取最新的
-                realtime_info = self.get_stock_realtime(stock_code)
+                logger.warning(f"未找到股票{stock_code}的实时行情数据")
+                realtime_info = None
             
             # 获取最近的历史数据
             end_date = datetime.now().strftime('%Y%m%d')
@@ -343,9 +283,6 @@ class IndividualStockService:
                 'realtime': realtime_info,
                 'history': history[:7] if history else []
             }
-            
-            # 缓存数据
-            cache.set(cache_key, info, self.cache_timeout)
             
             return info
             

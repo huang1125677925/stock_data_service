@@ -11,10 +11,10 @@ from datetime import datetime, timedelta
 import os
 
 # 设置Django环境
-# sys.path.append(str(Path(__file__).resolve().parent.parent))
-# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
-# import django
-# django.setup()
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
+import django
+django.setup()
 
 from django.utils import timezone
 
@@ -136,4 +136,5 @@ def update_specific_stock_history(stock_code, days=30):
         return {"status": "error", "message": str(e)}
 
 if __name__ == '__main__':
-    update_individual_stock_daily_data()
+    from indival_stock_data.services import individual_stock_service
+    individual_stock_service.get_stock_history('600136', '20250810', '20250910')
