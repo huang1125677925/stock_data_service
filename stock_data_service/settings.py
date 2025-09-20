@@ -239,7 +239,7 @@ CRONJOBS = [
 
     # 个股数据 
     ('59 16 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
-    ('10 18 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
+    ('55 18 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
 
     # 大盘数据
 
