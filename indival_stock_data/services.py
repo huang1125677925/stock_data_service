@@ -31,71 +31,24 @@ class IndividualStockService:
     
     def get_stock_list(self) -> Optional[List[Dict]]:
         """
-        获取股票列表
+        从数据库获取股票列表
         
         Returns:
-            股票列表
+            股票列表，如果数据库中没有数据则返回None
         """
-        cache_key = 'individual_stock_list'
-        
-        # 尝试从缓存获取
-        cached_data = cache.get(cache_key)
-        if cached_data:
-            logger.info("从缓存获取股票列表")
-            return cached_data
-        
         try:
-            # 尝试从数据库获取
+            # 从数据库获取股票列表
             stocks = IndividualStock.objects.all()
             if stocks.exists():
                 stock_list = [stock.to_dict() for stock in stocks]
-                cache.set(cache_key, stock_list, self.cache_timeout)
                 logger.info(f"从数据库获取{len(stock_list)}只股票信息")
                 return stock_list
-            
-            # 数据库没有数据，从akshare获取
-            logger.info("数据库无股票列表数据，从akshare获取")
-            df = ak.stock_sh_a_spot_em()
-            
-            if df is None or df.empty:
-                logger.warning("获取股票列表数据为空")
+            else:
+                logger.warning("数据库中没有股票列表数据")
                 return None
             
-            # 转换数据格式并保存到数据库
-            stock_list = []
-            for _, row in df.iterrows():
-                code = str(row['代码'])
-                name = str(row['名称'])
-                
-                # 创建或更新股票信息
-                stock, created = IndividualStock.objects.update_or_create(
-                    code=code,
-                    defaults={
-                        'name': name,
-                        'pe_ratio': float(row['市盈率-动态']) if pd.notna(row['市盈率-动态']) else None,
-                        'pb_ratio': float(row['市净率']) if pd.notna(row['市净率']) else None,
-                        'total_market_cap': float(row['总市值']) if pd.notna(row['总市值']) else None,
-                        'circulating_market_cap': float(row['流通市值']) if pd.notna(row['流通市值']) else None,
-                    }
-                )
-                
-                stock_list.append({
-                    'code': code,
-                    'name': name,
-                    'pe_ratio': float(row['市盈率-动态']) if pd.notna(row['市盈率-动态']) else None,
-                    'pb_ratio': float(row['市净率']) if pd.notna(row['市净率']) else None,
-                    'total_market_cap': float(row['总市值']) if pd.notna(row['总市值']) else None,
-                    'circulating_market_cap': float(row['流通市值']) if pd.notna(row['流通市值']) else None,
-                })
-            
-            # 缓存数据
-            cache.set(cache_key, stock_list, self.cache_timeout)
-            logger.info(f"获取{len(stock_list)}只股票信息并保存到数据库")
-            
-            return stock_list
-            
         except Exception as e:
-            logger.error(f"获取股票列表失败: {str(e)}")
+            logger.error(f"从数据库获取股票列表失败: {str(e)}")
             return None
     
     def get_stock_realtime(self, stock_code: str = None) -> Optional[Union[Dict, List[Dict]]]:
@@ -364,61 +317,6 @@ class IndividualStockService:
             logger.error(f"更新所有股票信息失败: {str(e)}")
             return 0, 0, 0
     
-    def update_stock_history(self, stock_code: str = None, days: int = 30) -> Tuple[int, int]:
-        """
-        更新股票历史数据
-        
-        Args:
-            stock_code: 股票代码，如果为None则更新所有股票
-            days: 更新的天数
-        
-        Returns:
-            更新的股票数量、更新的历史数据数量
-        """
-        try:
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
-
-            updated_stocks = 0
-            updated_history = 0
-            
-            # 如果指定了股票代码，则只更新该股票
-            if stock_code:
-                if not validate_stock_symbol(stock_code):
-                    logger.warning(f"无效的股票代码: {stock_code}")
-                    return 0, 0
-                
-                # 获取或创建股票信息
-                stock = self._get_or_create_stock(stock_code)
-                if not stock:
-                    logger.warning(f"未找到股票{stock_code}的信息")
-                    return 0, 0
-                
-                # 更新历史数据
-                history_count = self._update_stock_history(stock, start_date, end_date)
-                if history_count > 0:
-                    updated_stocks = 1
-                    updated_history = history_count
-            else:
-                # 更新所有股票的历史数据
-                stocks = IndividualStock.objects.all()
-                for stock in stocks:
-                    print(f"更新股票{stock.code}的历史数据")
-                    try:
-                        history_count = self._update_stock_history(stock, start_date, end_date)
-                        if history_count > 0:
-                            updated_stocks += 1
-                            updated_history += history_count
-                    except Exception as e:
-                        logger.error(f"更新股票{stock.code}历史数据失败: {str(e)}")
-            
-            logger.info(f"更新股票历史数据完成: 更新{updated_stocks}只股票，{updated_history}条历史数据")
-            return updated_stocks, updated_history
-            
-        except Exception as e:
-            logger.error(f"更新股票历史数据失败: {str(e)}")
-            return 0, 0
-    
     def _get_or_create_stock(self, stock_code: str) -> Optional[IndividualStock]:
         """
         获取或创建股票信息
@@ -464,66 +362,6 @@ class IndividualStockService:
         except Exception as e:
             logger.error(f"获取或创建股票{stock_code}信息失败: {str(e)}")
             return None
-    
-    def _update_stock_history(self, stock: IndividualStock, start_date: str, end_date: str) -> int:
-        """
-        更新股票历史数据
-        
-        Args:
-            stock: 股票对象
-            start_date: 开始日期，格式：YYYYMMDD
-            end_date: 结束日期，格式：YYYYMMDD
-        
-        Returns:
-            更新的历史数据数量
-        """
-        try:
-            time.sleep(1)
-            # 从akshare获取历史数据
-            df = ak.stock_zh_a_hist(symbol=stock.code, period="daily", start_date=start_date, end_date=end_date, adjust="")
-            
-            if df is None or df.empty:
-                logger.warning(f"获取股票{stock.code}历史行情数据为空")
-                return 0
-            
-            # 更新历史数据
-            updated_count = 0
-            for _, row in df.iterrows():
-                date_str = row['日期'].strftime('%Y-%m-%d')
-                # 将字符串日期转换为日期对象
-                date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                time.sleep(0.08)
-                
-                # 创建或更新历史数据
-                _, created = IndividualStockDaily.objects.update_or_create(
-                    stock=stock,
-                    date=date_obj,
-                    defaults={
-                        'open_price': float(row['开盘']) if pd.notna(row['开盘']) else 0.0,
-                        'close_price': float(row['收盘']) if pd.notna(row['收盘']) else 0.0,
-                        'high_price': float(row['最高']) if pd.notna(row['最高']) else 0.0,
-                        'low_price': float(row['最低']) if pd.notna(row['最低']) else 0.0,
-                        'change_percent': float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0,
-                        'change_amount': float(row['涨跌额']) if pd.notna(row['涨跌额']) else 0.0,
-                        'volume': int(row['成交量']) if pd.notna(row['成交量']) else 0,
-                        'amount': float(row['成交额']) if pd.notna(row['成交额']) else 0.0,
-                        'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else None,
-                        'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else None
-                    }
-                )
-                print(f"时间{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}更新股票{stock.code}的历史数据，日期：{date_str} {created}")
-                updated_count += 1
-            
-            # 清除缓存
-            cache_key = f'individual_stock_history_{stock.code}_{start_date}_{end_date}_'
-            cache.delete(cache_key)
-            
-            return updated_count
-            
-        except Exception as e:
-            logger.error(f"更新股票{stock.code}历史数据失败: {str(e)}")
-            return 0
-
 
 # 创建服务实例
 individual_stock_service = IndividualStockService()

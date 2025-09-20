@@ -14,6 +14,25 @@ class IndividualStock(models.Model):
     pb_ratio = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='市净率')
     total_market_cap = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='总市值')
     circulating_market_cap = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='流通市值')
+    
+    # akshare数据字段
+    latest_price = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='最新价')
+    change_percent = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='涨跌幅(%)')
+    change_amount = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='涨跌额')
+    volume = models.BigIntegerField(null=True, blank=True, verbose_name='成交量')
+    amount = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='成交额')
+    amplitude = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='振幅(%)')
+    high = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='最高')
+    low = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='最低')
+    open_price = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='今开')
+    close_price = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name='昨收')
+    volume_ratio = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='量比')
+    turnover_rate = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='换手率(%)')
+    price_change_speed = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='涨速(%)')
+    change_5min = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='5分钟涨跌(%)')
+    change_60d = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='60日涨跌幅(%)')
+    change_ytd = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='年初至今涨跌幅(%)')
+    
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
     
@@ -39,6 +58,23 @@ class IndividualStock(models.Model):
             'pb_ratio': float(self.pb_ratio) if self.pb_ratio else None,
             'total_market_cap': float(self.total_market_cap) if self.total_market_cap else None,
             'circulating_market_cap': float(self.circulating_market_cap) if self.circulating_market_cap else None,
+            # akshare数据字段
+            'latest_price': float(self.latest_price) if self.latest_price else None,
+            'change_percent': float(self.change_percent) if self.change_percent else None,
+            'change_amount': float(self.change_amount) if self.change_amount else None,
+            'volume': self.volume,
+            'amount': float(self.amount) if self.amount else None,
+            'amplitude': float(self.amplitude) if self.amplitude else None,
+            'high': float(self.high) if self.high else None,
+            'low': float(self.low) if self.low else None,
+            'open_price': float(self.open_price) if self.open_price else None,
+            'close_price': float(self.close_price) if self.close_price else None,
+            'volume_ratio': float(self.volume_ratio) if self.volume_ratio else None,
+            'turnover_rate': float(self.turnover_rate) if self.turnover_rate else None,
+            'price_change_speed': float(self.price_change_speed) if self.price_change_speed else None,
+            'change_5min': float(self.change_5min) if self.change_5min else None,
+            'change_60d': float(self.change_60d) if self.change_60d else None,
+            'change_ytd': float(self.change_ytd) if self.change_ytd else None,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
