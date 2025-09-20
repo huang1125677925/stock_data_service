@@ -78,14 +78,6 @@ class CCTVNewsService:
         Returns:
             新闻详情
         """
-        cache_key = f'news_detail_{news_id}'
-        
-        # 尝试从缓存获取
-        cached_data = cache.get(cache_key)
-        if cached_data:
-            logger.info(f"从缓存获取新闻{news_id}详情")
-            return cached_data
-        
         try:
             news = CCTVNews.objects.get(id=news_id)
             
@@ -97,10 +89,6 @@ class CCTVNewsService:
                 'publish_date': news.publish_date.strftime('%Y-%m-%d') if news.publish_date else None,
                 'create_time': news.create_time.strftime('%Y-%m-%d %H:%M:%S') if news.create_time else None
             }
-            
-            # 缓存数据
-            cache.set(cache_key, news_detail, self.cache_timeout)
-            
             return news_detail
             
         except CCTVNews.DoesNotExist:

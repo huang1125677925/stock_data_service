@@ -196,20 +196,40 @@ def update_specific_stock_history(stock_code, days=30):
         logger.error(f"股票{stock_code}的历史数据更新失败: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-def update_stock_history(stock_code_list: list = None, days: int = 30) -> Tuple[int, int]:
+def update_stock_history(
+    stock_code_list: list = None, 
+    days: int = 30, 
+    batch_size: int = 300, 
+    sleep_seconds: float = 0.03, 
+    ignore_conflicts: bool = True, 
+    order_by_date: bool = True) -> Tuple[int, int]:
     """
-    更新股票历史数据
+    更新股票历史数据（支持小批量分事务提交以降低数据库压力）
     
-    Args:
-        stock_code_list: 股票代码列表，如果为None则更新所有股票
-        days: 更新的天数
+    功能:
+        - 从 akshare 拉取指定股票近 N 天的日线数据
+        - 仅对不存在的记录进行批量插入（遵循 unique_together(stock, date)）
+        - 采用“每个小批次一个事务”的方式提交，降低长事务带来的锁与日志压力
+        - 可选忽略唯一冲突（ignore_conflicts），增强并发场景的健壮性
+        - 可选按日期升序插入（order_by_date），优化索引写入的顺序性
+        - 可选在批次之间短暂休眠（sleep_seconds），进行轻微节流
     
-    Returns:
-        更新的股票数量、更新的历史数据数量
+    参数:
+        stock_code_list (list): 股票代码列表; 若为 None 则更新所有股票。
+        days (int): 回溯的天数，默认 30。
+        batch_size (int): 每次 bulk_create 的批量大小，默认 300，建议 200~500 以降低单次事务压力。
+        sleep_seconds (float): 每个批次写入完成后的休眠秒数，默认 0.0（不休眠）。
+        ignore_conflicts (bool): 批量插入发生唯一冲突时是否忽略，默认 True。
+        order_by_date (bool): 是否按日期升序写入，默认 True，有助于降低随机写入带来的索引压力。
+    
+    返回值:
+        Tuple[int, int]: (有新增数据的股票数, 新增的历史数据条数)
+    
+    事件:
+        - 日志事件: logger.info/ warning/ error 记录拉取、过滤、插入与异常信息
+        - 数据库事件: 以 batch_size 为单位开启事务，执行 bulk_create 并可选忽略唯一冲突
     """
     try:
-
-        
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
 
@@ -228,16 +248,23 @@ def update_stock_history(stock_code_list: list = None, days: int = 30) -> Tuple[
         
         # 遍历股票列表更新历史数据
         for stock in stocks:
-            print(f"更新股票{stock.code}的历史数据")
+            logger.info(f"开始更新股票 {stock.code} 的历史数据")
             try:
-                # 从akshare获取历史数据
+                # 从 akshare 获取历史数据
                 df = ak.stock_zh_a_hist(symbol=stock.code, period="daily", start_date=start_date, end_date=end_date, adjust="")
                 time.sleep(0.1)  # 避免请求过于频繁
                 if df is None or df.empty:
-                    logger.warning(f"获取股票{stock.code}历史行情数据为空")
+                    logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
                     continue
+
+                # 可选：按日期升序，优化索引顺序写入
+                if order_by_date and '日期' in df.columns:
+                    try:
+                        df = df.sort_values('日期')
+                    except Exception:
+                        pass
                 
-                # 获取该股票在指定日期范围内已有的历史数据日期
+                # 获取指定日期范围内已有的历史数据日期（用于去重）
                 start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
                 end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
                 existing_dates = set(IndividualStockDaily.objects.filter(
@@ -246,61 +273,81 @@ def update_stock_history(stock_code_list: list = None, days: int = 30) -> Tuple[
                     date__lte=end_date_obj
                 ).values_list('date', flat=True))
                 
-                # 准备批量创建和更新的数据
+                # 准备批量创建的数据
                 records_to_create = []
-                records_to_update = []
+                # 注：现有记录的“批量更新”逻辑在原实现中已注释，这里维持不变以避免额外写压力
                 
                 for _, row in df.iterrows():
-                    date_str = row['日期'].strftime('%Y-%m-%d')
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    # 将日期统一为 date 对象
+                    date_val = row['日期']
+                    if hasattr(date_val, 'strftime'):
+                        date_str = date_val.strftime('%Y-%m-%d')
+                        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    else:
+                        # 兜底：如果不是时间类型，尝试直接解析
+                        try:
+                            date_obj = datetime.strptime(str(date_val), '%Y-%m-%d').date()
+                        except Exception:
+                            continue
                     
-                    # 准备股票历史数据
                     stock_daily_data = {
-                        'open_price': float(row['开盘']) if pd.notna(row['开盘']) else 0.0,
-                        'close_price': float(row['收盘']) if pd.notna(row['收盘']) else 0.0,
-                        'high_price': float(row['最高']) if pd.notna(row['最高']) else 0.0,
-                        'low_price': float(row['最低']) if pd.notna(row['最低']) else 0.0,
-                        'change_percent': float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else 0.0,
-                        'change_amount': float(row['涨跌额']) if pd.notna(row['涨跌额']) else 0.0,
-                        'volume': int(row['成交量']) if pd.notna(row['成交量']) else 0,
-                        'amount': float(row['成交额']) if pd.notna(row['成交额']) else 0.0,
-                        'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else None,
-                        'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else None
+                        'open_price': float(row['开盘']) if pd.notna(row.get('开盘')) else 0.0,
+                        'close_price': float(row['收盘']) if pd.notna(row.get('收盘')) else 0.0,
+                        'high_price': float(row['最高']) if pd.notna(row.get('最高')) else 0.0,
+                        'low_price': float(row['最低']) if pd.notna(row.get('最低')) else 0.0,
+                        'change_percent': float(row['涨跌幅']) if pd.notna(row.get('涨跌幅')) else 0.0,
+                        'change_amount': float(row['涨跌额']) if pd.notna(row.get('涨跌额')) else 0.0,
+                        'volume': int(row['成交量']) if pd.notna(row.get('成交量')) else 0,
+                        'amount': float(row['成交额']) if pd.notna(row.get('成交额')) else 0.0,
+                        'amplitude': float(row['振幅']) if pd.notna(row.get('振幅')) else None,
+                        'turnover_rate': float(row['换手率']) if pd.notna(row.get('换手率')) else None,
                     }
                     
-                    if date_obj in existing_dates:
-                        # 已存在的记录，准备更新
-                        records_to_update.append((date_obj, stock_daily_data))
-                    else:
-                        # 新记录，准备创建
+                    # 仅为不存在的 (stock, date) 组合创建记录
+                    if date_obj not in existing_dates:
                         stock_daily_data['stock'] = stock
                         stock_daily_data['date'] = date_obj
                         records_to_create.append(IndividualStockDaily(**stock_daily_data))
                 
-                # 批量操作
-                with transaction.atomic():
-                    # 批量创建新记录
-                    if records_to_create:
-                        IndividualStockDaily.objects.bulk_create(records_to_create, batch_size=1000)
-                        print(f"股票{stock.code}批量创建了{len(records_to_create)}条历史数据")
-                    
-                    # 批量更新现有记录
-                    # for date_obj, data in records_to_update:
-                    #     IndividualStockDaily.objects.filter(stock=stock, date=date_obj).update(**data)
-                    
-                    # if records_to_update:
-                    #     print(f"股票{stock.code}批量更新了{len(records_to_update)}条历史数据")
+                # 可选：按日期升序插入，降低随机写入带来的索引抖动
+                if order_by_date and records_to_create:
+                    try:
+                        records_to_create.sort(key=lambda obj: obj.date)
+                    except Exception:
+                        pass
                 
-                updated_count = len(records_to_create)
-                if updated_count > 0:
+                # 分批提交，每个批次单独事务，降低锁与日志压力
+                created_total_for_stock = 0
+                if records_to_create:
+                    total = len(records_to_create)
+                    batches = (total + batch_size - 1) // batch_size
+                    for i in range(0, total, batch_size):
+                        chunk = records_to_create[i:i + batch_size]
+                        try:
+                            with transaction.atomic():
+                                inserted = IndividualStockDaily.objects.bulk_create(
+                                    chunk,
+                                    batch_size=batch_size,
+                                    ignore_conflicts=ignore_conflicts
+                                )
+                            created_total_for_stock += len(inserted)
+                        except Exception as be:
+                            # 单批失败不影响后续批次，记录错误并继续
+                            logger.error(f"股票 {stock.code} 第 {i//batch_size + 1}/{batches} 个批次插入失败: {be}")
+                        
+                        # 轻微节流，避免连续重写放大压力
+                        if sleep_seconds > 0:
+                            time.sleep(sleep_seconds)
+                    logger.info(f"股票 {stock.code} 新增 {created_total_for_stock} 条历史数据，共 {batches} 个批次（目标批量 {batch_size}）。")
+                
+                if created_total_for_stock > 0:
                     updated_stocks += 1
-                    updated_history += updated_count
-                    print(f"时间{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}更新股票{stock.code}的历史数据完成，共{updated_count}条")
-                
+                    updated_history += created_total_for_stock
+                    logger.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} 完成股票 {stock.code} 的历史数据写入: 新增 {created_total_for_stock} 条")
             except Exception as e:
-                logger.error(f"更新股票{stock.code}历史数据失败: {str(e)}")
+                logger.error(f"更新股票 {stock.code} 历史数据失败: {str(e)}")
         
-        logger.info(f"更新股票历史数据完成: 更新{updated_stocks}只股票，{updated_history}条历史数据")
+        logger.info(f"更新股票历史数据完成: 更新 {updated_stocks} 只股票，新增 {updated_history} 条历史数据")
         return updated_stocks, updated_history
         
     except Exception as e:
