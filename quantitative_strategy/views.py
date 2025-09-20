@@ -249,6 +249,7 @@ def get_task_status(request, task_id):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@jwt_login_required
 def get_backtest_history(request):
     """
     获取回测历史记录
@@ -285,8 +286,7 @@ def get_backtest_history(request):
         queryset = BacktestTask.objects.all()
         
         # 如果用户已登录，只显示该用户的任务
-        if request.user.is_authenticated:
-            queryset = queryset.filter(user=request.user)
+        queryset = queryset.filter(user=request.user)
         
         # 应用过滤条件
         if strategy_name:
