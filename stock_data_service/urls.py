@@ -37,6 +37,7 @@ def index(request):
             'stock_data': '/api/stock/',
             'cctv_news': '/api/news/',
             'stock_strategy': '/api/strategy/',
+            'quantitative_strategy': '/api/quant/',
             'user_management': '/api/user/',
             'scheduled_tasks': '/api/tasks/',
             'forum': '/api/forum/'
@@ -52,6 +53,7 @@ urlpatterns = [
     path('django/api/individual_stock/', include('indival_stock_data.urls')),
     path('django/api/news/', include('cctv_news.urls')),
     path('django/api/strategy/', include('stock_strategy.urls')),
+    path('django/api/quant/', include('quantitative_strategy.urls')),
     path('django/api/user/', include('user_management.urls')),
     path('django/api/tasks/', include('scheduled_tasks.urls')),
     path('django/api/forum/', include('forum.urls')),

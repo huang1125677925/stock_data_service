@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'scheduled_tasks',
     'forum',
     'indival_stock_data',
+    'quantitative_strategy',
 ]
 
 MIDDLEWARE = [
