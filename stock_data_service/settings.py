@@ -230,8 +230,8 @@ CRONJOBS = [
     ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
 
     # 新闻资讯
-    ('29 20,21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
-    ('32 20,21 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
+    ('15 20,21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
+    ('25 20,21 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
 
     # 行业板块
     # ('25 13 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
