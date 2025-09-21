@@ -107,8 +107,14 @@ class SimpleStrategy(BaseQuantStrategy):
                         f'长期EMA={self.ema_long[0]:.2f}, '
                         f'控盘度={self.control[0]:.2f}')
                 
-                # 买入
-                self.order = self.buy()
+                                # 全仓买入
+                # 计算可用资金
+                cash = self.broker.getcash()
+                # 计算可以买入的最大股数
+                max_shares = int(cash / current_price)
+                if max_shares > 0:
+                    self.log(f'全仓买入: 可用资金={cash:.2f}, 买入股数={max_shares}')
+                    self.order = self.buy(size=max_shares)
         
         else:
             # 有持仓，检查卖出信号
@@ -118,8 +124,12 @@ class SimpleStrategy(BaseQuantStrategy):
                         f'长期EMA={self.ema_long[0]:.2f}, '
                         f'控盘度={self.control[0]:.2f}')
                 
-                # 卖出
-                self.order = self.sell()
+                # 全仓卖出
+                # 获取当前持仓数量
+                position_size = self.position.size
+                if position_size > 0:
+                    self.log(f'全仓卖出: 当前持仓={position_size}')
+                    self.order = self.sell(size=position_size)
             
             # 止损：亏损超过8%
             elif self.buy_price and (current_price / self.buy_price - 1) < -0.08:
@@ -127,4 +137,9 @@ class SimpleStrategy(BaseQuantStrategy):
                         f'买入价={self.buy_price:.2f}, '
                         f'亏损={((current_price / self.buy_price - 1) * 100):.2f}%')
                 
-                self.order = self.sell()
+                # 全仓卖出
+                # 获取当前持仓数量
+                position_size = self.position.size
+                if position_size > 0:
+                    self.log(f'全仓止损卖出: 当前持仓={position_size}')
+                    self.order = self.sell(size=position_size)

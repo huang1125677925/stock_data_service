@@ -14,6 +14,8 @@ from django.core.paginator import Paginator
 from .services import individual_stock_service
 from common.validators import validate_stock_symbol
 from common.response import success_response, error_response
+from .models import IndividualStock
+from .serializers import IndividualStockSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +29,27 @@ class StockListView(APIView):
             # 获取分页参数
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
-            
-            # 获取股票列表
-            stocks = individual_stock_service.get_stock_list()
-            
-            if not stocks:
+            keyword = request.query_params.get('keyword', None)
+
+            # 从数据库获取股票列表
+            # 方案一：使用 values() 方法直接获取字典格式数据，避免 ORM 对象转换开销
+            stock_list = []
+            stocks_query = IndividualStock.objects.all()
+            if stocks_query.exists():
+                # 方案二：使用 Django REST Framework 序列化器（取消下面注释即可启用）
+                serializer = IndividualStockSerializer(stocks_query, many=True)
+                stock_list = serializer.data
+                
+                logger.info(f"从数据库获取{len(stock_list)}只股票信息")
+
+            if not stock_list:
                 return error_response("获取股票列表失败", 404)
-            
+
+            if keyword:
+                stock_list = [stock for stock in stock_list if keyword.lower() in stock['name'].lower() or keyword.lower() in stock['code'].lower()]
+
             # 分页处理
-            paginator = Paginator(stocks, page_size)
+            paginator = Paginator(stock_list, page_size)
             current_page = paginator.page(page)
             
             return success_response({

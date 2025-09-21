@@ -6,6 +6,7 @@
 import sys
 import os
 from pathlib import Path
+from tracemalloc import start
 import django
 # 设置Django环境
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
@@ -13,6 +14,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
 django.setup()
 
 import logging
+import baostock as bs
 from datetime import datetime, timedelta
 import akshare as ak
 import pandas as pd
@@ -20,7 +22,9 @@ from indival_stock_data.models import IndividualStock
 import time
 from indival_stock_data.models import IndividualStockDaily
 from django.db import transaction
-from typing import Tuple
+from typing import Tuple, List
+# 导入StockDailyData数据类
+from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
 
 
 
@@ -230,8 +234,8 @@ def update_stock_history(
         - 数据库事件: 以 batch_size 为单位开启事务，执行 bulk_create 并可选忽略唯一冲突
     """
     try:
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
         updated_stocks = 0
         updated_history = 0
@@ -250,58 +254,42 @@ def update_stock_history(
         for stock in stocks:
             logger.info(f"开始更新股票 {stock.code} 的历史数据")
             try:
-                # 从 akshare 获取历史数据
-                df = ak.stock_zh_a_hist(symbol=stock.code, period="daily", start_date=start_date, end_date=end_date, adjust="")
-                time.sleep(0.1)  # 避免请求过于频繁
-                if df is None or df.empty:
-                    logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
-                    continue
-
-                # 可选：按日期升序，优化索引顺序写入
-                if order_by_date and '日期' in df.columns:
-                    try:
-                        df = df.sort_values('日期')
-                    except Exception:
-                        pass
-                
                 # 获取指定日期范围内已有的历史数据日期（用于去重）
-                start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
+                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 existing_dates = set(IndividualStockDaily.objects.filter(
                     stock=stock,
                     date__gte=start_date_obj,
                     date__lte=end_date_obj
                 ).values_list('date', flat=True))
+
+                print(f"股票 {stock.code} 已存在的历史数据日期数量: {len(existing_dates)}")
+                if len(existing_dates) > 1000:
+                    logger.info(f"股票 {stock.code} 已存在所有历史数据，无需更新")
+                    print(f"股票 {stock.code} 已存在所有历史数据，无需更新")
+                    continue
+
+
+                daily_data_list = fetch_stock_daily_data("sh." + stock.code, start_date, end_date)
+                time.sleep(0.1)  # 避免请求过于频繁
+                print(f"股票 {stock.code} 从akshare获取到的历史数据数量: {len(daily_data_list)}")
+                if not daily_data_list:
+                    logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
+                    continue
                 
                 # 准备批量创建的数据
                 records_to_create = []
                 # 注：现有记录的“批量更新”逻辑在原实现中已注释，这里维持不变以避免额外写压力
                 
-                for _, row in df.iterrows():
+                for row in daily_data_list:
+                    # 使用近似比较而不是精确比较，避免浮点数精度问题
+                    # 如果开盘价、收盘价、最高价和最低价非常接近（差异小于0.000001），则认为它们相等
+                    if abs(row.open - row.close) < 0.000001 and abs(row.open - row.high) < 0.000001 and abs(row.open - row.low) < 0.000001:
+                        continue
                     # 将日期统一为 date 对象
-                    date_val = row['日期']
-                    if hasattr(date_val, 'strftime'):
-                        date_str = date_val.strftime('%Y-%m-%d')
-                        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    else:
-                        # 兜底：如果不是时间类型，尝试直接解析
-                        try:
-                            date_obj = datetime.strptime(str(date_val), '%Y-%m-%d').date()
-                        except Exception:
-                            continue
+                    date_obj = datetime.strptime(str(row.date), '%Y-%m-%d').date()
                     
-                    stock_daily_data = {
-                        'open_price': float(row['开盘']) if pd.notna(row.get('开盘')) else 0.0,
-                        'close_price': float(row['收盘']) if pd.notna(row.get('收盘')) else 0.0,
-                        'high_price': float(row['最高']) if pd.notna(row.get('最高')) else 0.0,
-                        'low_price': float(row['最低']) if pd.notna(row.get('最低')) else 0.0,
-                        'change_percent': float(row['涨跌幅']) if pd.notna(row.get('涨跌幅')) else 0.0,
-                        'change_amount': float(row['涨跌额']) if pd.notna(row.get('涨跌额')) else 0.0,
-                        'volume': int(row['成交量']) if pd.notna(row.get('成交量')) else 0,
-                        'amount': float(row['成交额']) if pd.notna(row.get('成交额')) else 0.0,
-                        'amplitude': float(row['振幅']) if pd.notna(row.get('振幅')) else None,
-                        'turnover_rate': float(row['换手率']) if pd.notna(row.get('换手率')) else None,
-                    }
+                    stock_daily_data = row.to_model_dict()
                     
                     # 仅为不存在的 (stock, date) 组合创建记录
                     if date_obj not in existing_dates:
@@ -354,5 +342,58 @@ def update_stock_history(
         logger.error(f"更新股票历史数据失败: {str(e)}")
         return 0, 0
 
+
+def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: str = None) -> List[StockDailyData]:
+    """
+    获取指定股票在指定日期范围的日频数据。
+
+    :param stock_code: 股票代码，例如：sh.600000
+    :param start_date: 开始日期，格式：YYYY-MM-DD，默认为当前日期前30天
+    :param end_date: 结束日期，格式：YYYY-MM-DD，默认为当前日期
+    :return: StockDailyData对象列表
+    """
+    #### 登陆系统 ####
+    lg = bs.login()
+    # 显示登陆返回信息
+    print('login respond error_code:'+lg.error_code)
+    print('login respond  error_msg:'+lg.error_msg)
+
+    # 如果未指定日期范围，默认查询最近30天数据
+    if not start_date or not end_date:
+        from datetime import datetime, timedelta
+        today = datetime.now().strftime('%Y-%m-%d')
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        start_date = start_date or thirty_days_ago
+        end_date = end_date or today
+    
+    #### 获取沪深A股历史K线数据 ####
+    # 详细指标参数，参见"历史行情指标参数"章节；"分钟线"参数与"日线"参数不同。"分钟线"不包含指数。
+    # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
+    # 周月线指标：date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
+    rs = bs.query_history_k_data_plus(stock_code,
+        "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
+        start_date=start_date, end_date=end_date,
+        frequency="d", adjustflag="3")
+    print('query_history_k_data_plus respond error_code:'+rs.error_code)
+    print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
+
+    #### 处理结果集 ####
+    data_list = []
+    while (rs.error_code == '0') & rs.next():
+        # 获取一条记录，将记录转换为StockDailyData对象
+        row_data = rs.get_row_data()
+        try:
+            stock_data = StockDailyData.from_baostock_row(row_data)
+            data_list.append(stock_data)
+        except Exception as e:
+            print(f"处理数据行时出错: {e}")
+            print(f"错误数据行: {row_data}")
+    
+    #### 登出系统 ####
+    bs.logout()
+    
+    return data_list
+
 if __name__ == '__main__':
     update_individual_stock_daily_data()
+

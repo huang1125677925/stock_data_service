@@ -55,10 +55,10 @@ class AdvancedStrategy(BaseQuantStrategy):
         self.X = bt.indicators.WeightedMovingAverage(self.A0, period=self.params.p)
         
         # 3. 动量指标 MTM
-        self.MTM = self.close - bt.indicators.Delay(self.close, period=1)
+        self.MTM = self.close - self.close(-1)
         
         # 4. 动向指标 DX
-        abs_mtm = bt.indicators.Abs(self.MTM)
+        abs_mtm = abs(self.MTM)
         ema_mtm = bt.indicators.EMA(self.MTM, period=6)
         ema_abs_mtm = bt.indicators.EMA(abs_mtm, period=6)
         
@@ -81,8 +81,8 @@ class AdvancedStrategy(BaseQuantStrategy):
         self.QS = bt.indicators.EMA(self.XG, period=self.params.m1)
         
         # 8. 涨跌停判断
-        self.is_limit_up = (self.close / bt.indicators.Delay(self.close, period=1) - 1) >= 0.095
-        self.is_limit_down = (self.close / bt.indicators.Delay(self.close, period=1) - 1) <= -0.095
+        self.is_limit_up = (self.close / self.close(-1) - 1) >= 0.095
+        self.is_limit_down = (self.close / self.close(-1) - 1) <= -0.095
         
         # 9. 成交量指标
         self.volume_ma = bt.indicators.SimpleMovingAverage(self.data.volume, period=5)
@@ -128,8 +128,14 @@ class AdvancedStrategy(BaseQuantStrategy):
                         f'DX={dx_value:.2f}, ZK={zk_value:.2f}, '
                         f'XG={xg_value:.2f}, QS={qs_value:.2f}')
                 
-                # 买入
-                self.order = self.buy()
+                # 全仓买入
+                # 计算可用资金
+                cash = self.broker.getcash()
+                # 计算可以买入的最大股数
+                max_shares = int(cash / current_price)
+                if max_shares > 0:
+                    self.log(f'全仓买入: 可用资金={cash:.2f}, 买入股数={max_shares}')
+                    self.order = self.buy(size=max_shares)
         
         else:
             # 有持仓，检查卖出信号
@@ -146,8 +152,12 @@ class AdvancedStrategy(BaseQuantStrategy):
                         f'DX={dx_value:.2f}, ZK={zk_value:.2f}, '
                         f'XG={xg_value:.2f}, QS={qs_value:.2f}')
                 
-                # 卖出
-                self.order = self.sell()
+                # 全仓卖出
+                # 获取当前持仓数量
+                position_size = self.position.size
+                if position_size > 0:
+                    self.log(f'全仓卖出: 当前持仓={position_size}')
+                    self.order = self.sell(size=position_size)
             
             # 止损：亏损超过10%
             elif self.buy_price and (current_price / self.buy_price - 1) < -0.10:
@@ -155,4 +165,9 @@ class AdvancedStrategy(BaseQuantStrategy):
                         f'买入价={self.buy_price:.2f}, '
                         f'亏损={((current_price / self.buy_price - 1) * 100):.2f}%')
                 
-                self.order = self.sell()
+                # 全仓卖出
+                # 获取当前持仓数量
+                position_size = self.position.size
+                if position_size > 0:
+                    self.log(f'全仓止损卖出: 当前持仓={position_size}')
+                    self.order = self.sell(size=position_size)
