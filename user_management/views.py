@@ -9,6 +9,29 @@ from common.response import success_response, error_response
 
 
 @method_decorator(csrf_exempt, name='dispatch')
+class ResetPasswordView(APIView):
+    """密码重置视图"""
+    authentication_classes = []
+    
+    def post(self, request):
+        """处理密码重置请求"""
+        # 获取请求数据
+        email = request.data.get('email')
+        new_password = request.data.get('new_password')
+        
+        if not all([email, new_password]):
+            return error_response("邮箱和新密码不能为空", code=400)
+        
+        # 调用服务层重置密码
+        success, message = UserService.reset_password(email, new_password)
+        
+        if success:
+            return success_response(message=message)
+        else:
+            return error_response(message, code=400)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
 class RegisterView(APIView):
     """用户注册视图"""
     authentication_classes = []

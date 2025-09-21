@@ -29,6 +29,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/user/register/',
             '/django/api/user/login/',
             '/django/api/user/invitation/validate/',
+            '/django/api/user/reset-password/',
         ]
     
     def process_request(self, request):
