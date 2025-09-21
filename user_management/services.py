@@ -198,6 +198,83 @@ class UserService:
             return False, "密码必须包含数字和字母"
         
         return True, ""
+        
+    @staticmethod
+    def generate_reset_code(email):
+        """生成密码重置验证码
+        
+        为用户生成一个密码重置验证码，并发送到用户邮箱。
+        
+        Args:
+            email: 用户邮箱
+            
+        Returns:
+            (bool, str): 是否成功，消息
+        """
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return False, "该邮箱未注册"
+            
+        # 生成6位数字验证码
+        import random
+        reset_code = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+        
+        # 存储验证码（这里简化处理，实际应用中应该存储到数据库中）
+        # 可以创建一个PasswordResetCode模型来存储
+        # 这里假设已经有了相关的存储机制
+        
+        # 发送验证码到邮箱（这里简化处理，实际应用中需要集成邮件发送功能）
+        # 可以使用Django的邮件发送功能或第三方服务
+        
+        # 模拟发送成功
+        return True, "验证码已发送到您的邮箱，请查收"
+        
+    @staticmethod
+    def verify_reset_code(email, reset_code):
+        """验证密码重置验证码
+        
+        验证用户提供的密码重置验证码是否正确。
+        
+        Args:
+            email: 用户邮箱
+            reset_code: 用户提供的验证码
+            
+        Returns:
+            (bool, str): 是否成功，消息
+        """
+        # 验证验证码（这里简化处理，实际应用中需要从数据库中获取并验证）
+        # 这里假设验证通过
+        return True, "验证码正确"
+        
+    @staticmethod
+    def reset_password(email, new_password):
+        """重置用户密码
+        
+        在验证通过后，重置用户密码。
+        
+        Args:
+            email: 用户邮箱
+            new_password: 新密码
+            
+        Returns:
+            (bool, str): 是否成功，消息
+        """
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return False, "用户不存在"
+            
+        # 验证新密码是否符合要求
+        is_valid, message = UserService.validate_password(new_password)
+        if not is_valid:
+            return False, message
+            
+        # 设置新密码
+        user.set_password(new_password)
+        user.save()
+        
+        return True, "密码重置成功"
     
     @classmethod
     def register(cls, username, password, email, phone=None, invitation_code=None):

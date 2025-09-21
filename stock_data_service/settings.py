@@ -230,16 +230,16 @@ CRONJOBS = [
     ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
 
     # 新闻资讯
-    ('29 20 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
-    ('32 20 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
+    ('29 20,21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
+    ('32 20,21 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
 
     # 行业板块
     # ('25 13 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
     ('1 16,17,18,19 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
 
     # 个股数据 
-    ('59 16 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
-    ('53 20 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
+    ('59 23 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
+    ('53 22 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
 
     # 大盘数据
 
