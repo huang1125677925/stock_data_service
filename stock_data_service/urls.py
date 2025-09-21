@@ -57,4 +57,5 @@ urlpatterns = [
     path('django/api/user/', include('user_management.urls')),
     path('django/api/tasks/', include('scheduled_tasks.urls')),
     path('django/api/forum/', include('forum.urls')),
+    path('django/api/market/', include('stock_market.urls')),
 ]

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'forum',
     'indival_stock_data',
     'quantitative_strategy',
+    'stock_market',
 ]
 
 MIDDLEWARE = [
