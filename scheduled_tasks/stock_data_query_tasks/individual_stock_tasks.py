@@ -262,6 +262,7 @@ def update_stock_history(
                     date__gte=start_date_obj,
                     date__lte=end_date_obj
                 ).values_list('date', flat=True))
+                time.sleep(1)
 
                 print(f"股票 {stock.code} 已存在的历史数据日期数量: {len(existing_dates)}")
                 if len(existing_dates) > 1000:
