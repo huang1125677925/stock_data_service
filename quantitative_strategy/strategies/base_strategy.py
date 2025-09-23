@@ -88,6 +88,9 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         订单状态通知
         """
         if order.status in [order.Submitted, order.Accepted]:
+            # 订单已提交或已接受
+            order_type = "买入" if order.isbuy() else "卖出"
+            self.log(f'{order_type}订单已提交: 数量={order.size}, 价格={order.price or "市价"}')
             return
         
         if order.status in [order.Completed]:
@@ -107,18 +110,28 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
             self.trade_records.append(record)
             
             if order.isbuy():
-                self.log(f'买入执行, 价格: {order.executed.price:.2f}, '
+                self.log(f'买入执行成功, 价格: {order.executed.price:.2f}, '
+                        f'数量: {order.executed.size}, '
                         f'成本: {order.executed.value:.2f}, '
                         f'手续费: {order.executed.comm:.2f}')
                 self.buy_price = order.executed.price
                 self.buy_comm = order.executed.comm
             else:
-                self.log(f'卖出执行, 价格: {order.executed.price:.2f}, '
+                self.log(f'卖出执行成功, 价格: {order.executed.price:.2f}, '
+                        f'数量: {order.executed.size}, '
                         f'成本: {order.executed.value:.2f}, '
                         f'手续费: {order.executed.comm:.2f}')
         
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
-            self.log('订单取消/保证金不足/拒绝')
+            # 详细记录订单失败原因
+            order_type = "买入" if order.isbuy() else "卖出"
+            if order.status == order.Canceled:
+                self.log(f'{order_type}订单被取消: 数量={order.size}, 价格={order.price or "市价"}')
+            elif order.status == order.Margin:
+                self.log(f'{order_type}订单保证金不足: 数量={order.size}, 价格={order.price or "市价"}, '
+                        f'当前资金={self.broker.get_cash():.2f}')
+            elif order.status == order.Rejected:
+                self.log(f'{order_type}订单被拒绝: 数量={order.size}, 价格={order.price or "市价"}')
         
         self.order = None
     

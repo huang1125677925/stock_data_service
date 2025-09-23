@@ -20,9 +20,16 @@ try:
     from .models import BacktestTask, BacktestResult, StrategyConfig
     from .strategies.base_strategy import StrategyRegistry
     from .strategies.ma_cross_strategy import MACrossStrategy
-    from .strategies.simple_strategy import SimpleStrategy
+    from .strategies.simple_strategy import MultiIndicatorStrategy
     from .strategies.advanced_strategy import AdvancedStrategy
     from .strategies.minimal_strategy import MinimalStrategy
+    # 导入新创建的单指标策略
+    from .strategies.macd_strategy import MACDStrategy
+    from .strategies.rsi_strategy import RSIStrategy
+    from .strategies.wr_strategy import WRStrategy
+    from .strategies.kdj_strategy import KDJStrategy
+    from .strategies.psy_strategy import PSYStrategy
+    from .strategies.bias_strategy import BIASStrategy
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
     import os
@@ -42,9 +49,16 @@ except ImportError:
     from quantitative_strategy.models import BacktestTask, BacktestResult, StrategyConfig
     from quantitative_strategy.strategies.base_strategy import StrategyRegistry
     from quantitative_strategy.strategies.ma_cross_strategy import MACrossStrategy
-    from quantitative_strategy.strategies.simple_strategy import SimpleStrategy
+    from quantitative_strategy.strategies.simple_strategy import MultiIndicatorStrategy
     from quantitative_strategy.strategies.advanced_strategy import AdvancedStrategy
     from quantitative_strategy.strategies.minimal_strategy import MinimalStrategy
+    # 导入新创建的单指标策略
+    from quantitative_strategy.strategies.macd_strategy import MACDStrategy
+    from quantitative_strategy.strategies.rsi_strategy import RSIStrategy
+    from quantitative_strategy.strategies.wr_strategy import WRStrategy
+    from quantitative_strategy.strategies.kdj_strategy import KDJStrategy
+    from quantitative_strategy.strategies.psy_strategy import PSYStrategy
+    from quantitative_strategy.strategies.bias_strategy import BIASStrategy
 
 logger = logging.getLogger(__name__)
 

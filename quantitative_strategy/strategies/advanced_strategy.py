@@ -12,162 +12,159 @@ from .base_strategy import BaseQuantStrategy, register_strategy
 @register_strategy
 class AdvancedStrategy(BaseQuantStrategy):
     _strategy_name = 'advanced'
-    _strategy_description = '高级综合策略，结合多种技术指标'
+    _strategy_description = '高级综合策略：基于多种技术指标的综合判断进行交易'
     _strategy_params = {
-        'short_period': {'type': 'int', 'default': 5, 'description': '短期周期'},
-        'long_period': {'type': 'int', 'default': 20, 'description': '长期周期'},
-        'rsi_period': {'type': 'int', 'default': 14, 'description': 'RSI周期'},
-        'rsi_oversold': {'type': 'float', 'default': 30.0, 'description': 'RSI超卖阈值'},
-        'rsi_overbought': {'type': 'float', 'default': 70.0, 'description': 'RSI超买阈值'}
+        'ema_long_period': {'type': 'int', 'default': 21, 'description': 'EMA长周期'},
+        'ema_short_period': {'type': 'int', 'default': 8, 'description': 'EMA短周期'},
+        'smooth_period': {'type': 'int', 'default': 3, 'description': 'EMA平滑周期'},
+        'volume_multiplier': {'type': 'float', 'default': 1.1, 'description': '成交量放大倍数'},
+        'dx_threshold': {'type': 'float', 'default': -10.0, 'description': 'DX卖出阈值'},
+        'zk_threshold': {'type': 'float', 'default': -5.0, 'description': 'ZK卖出阈值'},
+        'stop_loss_pct': {'type': 'float', 'default': 10.0, 'description': '止损百分比'},
+        'sell_conditions_count': {'type': 'int', 'default': 2, 'description': '卖出条件满足数量'}
     }
+    
+    # backtrader参数定义
+    params = (
+        ('ema_long_period', 21),
+        ('ema_short_period', 8),
+        ('smooth_period', 3),
+        ('volume_multiplier', 1.1),
+        ('dx_threshold', -10.0),
+        ('zk_threshold', -5.0),
+        ('stop_loss_pct', 10.0),
+        ('sell_conditions_count', 2),
+        ('printlog', True),  # 是否打印日志
+    )
+    
     """
     高级技术指标综合策略
     
     策略逻辑：
-    1. 基于自定义加权价格计算趋势指标
-    2. 使用动量指标(MTM)和动向指标(DX)判断买卖点
-    3. 控盘指标判断主力资金动向
-    4. 波段买卖指标结合均线系统
-    5. 涨跌停过滤机制
+    1. 基于EMA均线系统判断趋势方向
+    2. 使用DX动向指标和ZK随机指标确认信号
+    3. 成交量放大确认买入时机
+    4. 多条件卖出机制和止损保护
+    5. 详细的资金管理和风险控制
     """
     
-    params = dict(
-        p=21,           # EMA长周期
-        s=8,            # EMA短周期
-        m1=3,           # EMA平滑周期
-        printlog=True   # 是否打印日志
-    )
+    def __init__(self):
+        super().__init__()
+        # 获取策略参数
+        self.ema_long_period = self.params.ema_long_period
+        self.ema_short_period = self.params.ema_short_period
+        self.smooth_period = self.params.smooth_period
+        self.volume_multiplier = self.params.volume_multiplier
+        self.dx_threshold = self.params.dx_threshold
+        self.zk_threshold = self.params.zk_threshold
+        self.stop_loss_pct = self.params.stop_loss_pct
+        self.sell_conditions_count = self.params.sell_conditions_count
+        
+        # 初始化指标
+        self.ema_long = bt.indicators.EMA(period=self.ema_long_period)
+        self.ema_short = bt.indicators.EMA(period=self.ema_short_period)
+        self.ema_smooth = bt.indicators.EMA(self.ema_short, period=self.smooth_period)
+        self.volume_sma = bt.indicators.SMA(self.data.volume, period=20)
+        
+        # 计算DX和ZK指标
+        # 使用DirectionalMovement获取ADX（平均趋向指数）
+        self.di = bt.indicators.DirectionalMovement(period=14)
+        self.dx = self.di.adx  # 使用DirectionalMovement的ADX（adx）作为动向强度
+        self.zk = bt.indicators.Stochastic(period=9, period_dfast=3).percK
     
     def init_indicators(self):
         """
-        策略初始化：计算所有需要的技术指标
+        初始化技术指标
         """
-        # 基础价格数据
-        self.close = self.data.close
-        self.open = self.data.open
-        self.high = self.data.high
-        self.low = self.data.low
-        
-        # 1. 自定义加权价格 A0
-        self.A0 = (3 * self.close + self.low + self.open + self.high) / 6
-        
-        # 2. 加权移动平均线 X (21日加权平均)
-        self.X = bt.indicators.WeightedMovingAverage(self.A0, period=self.params.p)
-        
-        # 3. 动量指标 MTM
-        self.MTM = self.close - self.close(-1)
-        
-        # 4. 动向指标 DX
-        abs_mtm = abs(self.MTM)
-        ema_mtm = bt.indicators.EMA(self.MTM, period=6)
-        ema_abs_mtm = bt.indicators.EMA(abs_mtm, period=6)
-        
-        # 避免除零错误
-        self.DX = bt.indicators.DivByZero(
-            100 * bt.indicators.EMA(ema_mtm, period=6),
-            bt.indicators.EMA(ema_abs_mtm, period=6),
-            zero=0.0
-        )
-        
-        # 5. 控盘指标 ZK (主力控盘度)
-        ema_s = bt.indicators.EMA(self.A0, period=self.params.s)
-        ema_p = bt.indicators.EMA(self.A0, period=self.params.p)
-        self.ZK = 100 * (ema_s - ema_p) / ema_p
-        
-        # 6. 波段买卖指标 XG
-        self.XG = bt.indicators.EMA(self.ZK, period=self.params.m1)
-        
-        # 7. 趋势指标 QS
-        self.QS = bt.indicators.EMA(self.XG, period=self.params.m1)
-        
-        # 8. 涨跌停判断
-        self.is_limit_up = (self.close / self.close(-1) - 1) >= 0.095
-        self.is_limit_down = (self.close / self.close(-1) - 1) <= -0.095
-        
-        # 9. 成交量指标
-        self.volume_ma = bt.indicators.SimpleMovingAverage(self.data.volume, period=5)
+        # 指标已在__init__中初始化
+        pass
     
     def get_strategy_name(self) -> str:
         return "advanced"
     
     def get_strategy_description(self) -> str:
-        return "高级综合技术指标策略：基于多种技术指标的综合判断进行交易"
+        """
+        获取策略描述
+        """
+        return "高级综合策略：基于EMA均线系统、DX动向指标和ZK控盘指标的综合技术分析策略"
     
     def next(self):
         """
-        策略主逻辑
+        策略主逻辑：每个交易日执行的策略逻辑
         """
-        # 如果有未完成的订单，跳过
-        if self.order:
+        # 检查是否有足够的数据
+        if len(self.data) < max(self.ema_long_period, 20):
             return
-        
-        # 跳过涨跌停
-        if self.is_limit_up[0] or self.is_limit_down[0]:
-            return
-        
-        # 获取当前指标值
-        current_price = self.close[0]
-        dx_value = self.DX[0] if len(self.DX) > 0 else 0
-        zk_value = self.ZK[0] if len(self.ZK) > 0 else 0
-        xg_value = self.XG[0] if len(self.XG) > 0 else 0
-        qs_value = self.QS[0] if len(self.QS) > 0 else 0
-        
-        # 获取当前持仓
-        if not self.position:
-            # 没有持仓，检查买入信号
-            buy_conditions = [
-                current_price > self.X[0],  # 价格在加权均线之上
-                dx_value > 0,  # 动向指标为正
-                zk_value > 0,  # 控盘指标为正（主力控盘）
-                xg_value > qs_value,  # 波段指标上升
-                self.data.volume[0] > self.volume_ma[0] * 1.1,  # 成交量放大
-            ]
             
-            if all(buy_conditions):
-                self.log(f'买入信号: 价格={current_price:.2f}, '
-                        f'DX={dx_value:.2f}, ZK={zk_value:.2f}, '
-                        f'XG={xg_value:.2f}, QS={qs_value:.2f}')
-                
-                # 全仓买入
-                # 计算可用资金
-                cash = self.broker.getcash()
-                # 计算可以买入的最大股数
-                max_shares = int(cash / current_price)
-                if max_shares > 0:
-                    self.log(f'全仓买入: 可用资金={cash:.2f}, 买入股数={max_shares}')
-                    self.order = self.buy(size=max_shares)
+        # 获取当前价格和指标值
+        current_price = self.data.close[0]
+        ema_long_val = self.ema_long[0]
+        ema_short_val = self.ema_short[0]
+        ema_smooth_val = self.ema_smooth[0]
+        volume_ratio = self.data.volume[0] / self.volume_sma[0] if self.volume_sma[0] > 0 else 0
+        dx_val = self.dx[0] if len(self.dx) > 0 else 0
+        zk_val = self.zk[0] if len(self.zk) > 0 else 0
         
-        else:
-            # 有持仓，检查卖出信号
-            sell_conditions = [
-                current_price < self.X[0],  # 价格跌破加权均线
-                dx_value < -10,  # 动向指标明显为负
-                zk_value < -5,  # 控盘指标为负（主力出货）
-                xg_value < qs_value,  # 波段指标下降
-            ]
+        # 获取当前资金和持仓
+        current_cash = self.broker.get_cash()
+        current_position = self.position.size
+        
+        # 买入逻辑
+        if not self.position:  # 没有持仓时考虑买入
+            # 买入条件：
+            # 1. EMA短期线上穿长期线
+            # 2. 平滑EMA确认趋势
+            # 3. 成交量放大
+            buy_condition1 = ema_short_val > ema_long_val and self.ema_short[-1] <= self.ema_long[-1]
+            buy_condition2 = ema_smooth_val > ema_short_val
+            buy_condition3 = volume_ratio > self.volume_multiplier
             
-            # 满足任意两个卖出条件就卖出
-            if sum(sell_conditions) >= 2:
-                self.log(f'卖出信号: 价格={current_price:.2f}, '
-                        f'DX={dx_value:.2f}, ZK={zk_value:.2f}, '
-                        f'XG={xg_value:.2f}, QS={qs_value:.2f}')
+            if buy_condition1 and buy_condition2 and buy_condition3:
+                # 计算最大可购买股数（预留5%安全边际）
+                available_cash = current_cash * 0.95
+                max_shares = int(available_cash / current_price)
                 
-                # 全仓卖出
-                # 获取当前持仓数量
-                position_size = self.position.size
-                if position_size > 0:
-                    self.log(f'全仓卖出: 当前持仓={position_size}')
-                    self.order = self.sell(size=position_size)
+                # 按100股的整数倍买入
+                shares_to_buy = (max_shares // 100) * 100
+                
+                if shares_to_buy >= 100:  # 至少买入100股
+                    self.buy(size=shares_to_buy)
+                    self.log(f'买入信号 - 价格: {current_price:.2f}, 数量: {shares_to_buy}, '
+                           f'EMA短: {ema_short_val:.2f}, EMA长: {ema_long_val:.2f}, '
+                           f'成交量比率: {volume_ratio:.2f}, 可用资金: {available_cash:.2f}')
+                else:
+                    self.log(f'资金不足 - 当前资金: {current_cash:.2f}, 股价: {current_price:.2f}, '
+                           f'需要最少资金: {current_price * 100:.2f}')
+        
+        # 卖出逻辑
+        elif self.position:  # 有持仓时考虑卖出
+            # 计算持仓成本和当前盈亏
+            entry_price = self.position.price
+            profit_pct = (current_price - entry_price) / entry_price * 100
             
-            # 止损：亏损超过10%
-            elif self.buy_price and (current_price / self.buy_price - 1) < -0.10:
-                self.log(f'止损卖出: 价格={current_price:.2f}, '
-                        f'买入价={self.buy_price:.2f}, '
-                        f'亏损={((current_price / self.buy_price - 1) * 100):.2f}%')
+            # 卖出条件计数
+            sell_conditions = 0
+            
+            # 条件1：DX指标低于阈值
+            if dx_val < self.dx_threshold:
+                sell_conditions += 1
                 
-                # 全仓卖出
-                # 获取当前持仓数量
-                position_size = self.position.size
-                if position_size > 0:
-                    self.log(f'全仓止损卖出: 当前持仓={position_size}')
-                    self.order = self.sell(size=position_size)
+            # 条件2：ZK指标低于阈值
+            if zk_val < self.zk_threshold:
+                sell_conditions += 1
+                
+            # 条件3：EMA短期线跌破长期线
+            if ema_short_val < ema_long_val and self.ema_short[-1] >= self.ema_long[-1]:
+                sell_conditions += 1
+                
+            # 条件4：止损
+            if profit_pct <= -self.stop_loss_pct:
+                sell_conditions += 1
+                
+            # 当满足指定数量的卖出条件时卖出
+            if sell_conditions >= self.sell_conditions_count or profit_pct <= -self.stop_loss_pct:
+                self.sell(size=current_position)
+                sell_reason = "止损" if profit_pct <= -self.stop_loss_pct else f"满足{sell_conditions}个卖出条件"
+                self.log(f'卖出信号 - 价格: {current_price:.2f}, 数量: {current_position}, '
+                       f'成本: {entry_price:.2f}, 盈亏: {profit_pct:.2f}%, '
+                       f'DX: {dx_val:.2f}, ZK: {zk_val:.2f}, 原因: {sell_reason}')
