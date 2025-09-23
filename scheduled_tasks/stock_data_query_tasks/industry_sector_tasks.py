@@ -128,6 +128,7 @@ def update_industry_sector_daily_data():
         total_count = sectors.count()
         
         for sector in sectors:
+            time.sleep(1)
             try:
                 logger.info(f"更新行业板块 {sector.code} ({sector.name}) 的今日数据")
                 daily_data = industry_sector_service.get_industry_sector_daily(
