@@ -42,7 +42,7 @@ def fetch_individual_stocks():
     try:
         # 从akshare获取股票列表
         logger.info("从akshare获取股票列表数据")
-        df = ak.stock_sh_a_spot_em()
+        df = ak.stock_zh_a_spot_em()
         
         if df is None or df.empty:
             logger.warning("从akshare获取股票列表数据为空")
@@ -100,7 +100,7 @@ def fetch_individual_stocks():
         with transaction.atomic():
             # 批量创建新股票
             if stocks_to_create:
-                IndividualStock.objects.bulk_create(stocks_to_create, batch_size=1000)
+                IndividualStock.objects.bulk_create(stocks_to_create, batch_size=500)
                 logger.info(f"批量创建了{len(stocks_to_create)}只新股票")
             
             # 批量更新现有股票
@@ -159,7 +159,7 @@ def update_individual_stock_daily_data():
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
         stock_code_list = [stock.code for stock in stocks]
         # 更新所有个股的历史数据（最近30天）
-        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=40)
+        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=300)
         
         logger.info(f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
         return {
@@ -241,10 +241,7 @@ def update_stock_history(
         updated_history = 0
         
         # 获取要更新的股票列表
-        if stock_code_list:
-            stocks = IndividualStock.objects.filter(code__in=stock_code_list)
-        else:
-            stocks = IndividualStock.objects.all()
+        stocks = IndividualStock.objects.all()
         
         if not stocks.exists():
             logger.warning("没有找到需要更新的股票")
@@ -396,5 +393,5 @@ def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: st
     return data_list
 
 if __name__ == '__main__':
-    update_individual_stock_daily_data()
+    fetch_individual_stocks()
 
