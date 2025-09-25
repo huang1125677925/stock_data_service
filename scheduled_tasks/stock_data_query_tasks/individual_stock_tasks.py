@@ -97,17 +97,20 @@ def fetch_individual_stocks():
                 stocks_to_create.append(IndividualStock(**stock_data))
         
         # 批量操作
-        with transaction.atomic():
-            # 批量创建新股票
-            if stocks_to_create:
+        
+        # 批量创建新股票
+        if stocks_to_create:
+            with transaction.atomic():
                 IndividualStock.objects.bulk_create(stocks_to_create, batch_size=500)
                 logger.info(f"批量创建了{len(stocks_to_create)}只新股票")
-            
-            # 批量更新现有股票
-            if stocks_to_update:
-                for code, data in stocks_to_update:
+        
+        # 批量更新现有股票
+        if stocks_to_update:
+            for code, data in stocks_to_update:
+                with transaction.atomic():
                     IndividualStock.objects.filter(code=code).update(**data)
-                logger.info(f"批量更新了{len(stocks_to_update)}只现有股票")
+                logger.info(f"更新了股票 {code} 的数据")
+            logger.info(f"批量更新了{len(stocks_to_update)}只现有股票")
         
         stock_count = len(stocks_to_create) + len(stocks_to_update)
         
