@@ -1,6 +1,12 @@
 #!/bin/bash
 
 # 股票数据服务启动脚本
-ps -ef | grep runserver | awk '{print $2}' | xargs kill -s 15
-. "$(pwd)/venv/bin/activate"
-nohup python manage.py runserver 0.0.0.0:8001 > custom.log 2>&1 &
+#!/bin/bash
+cd /root/django/stock_data_service || exit 1
+
+# 仅杀死当前用户的 runserver 进程（避免误杀）
+pkill -f "runserver 0.0.0.0:8001" || true
+
+# 使用虚拟环境的 Python 直接启动（无需 nohup）
+. venv/bin/activate
+exec python manage.py runserver 0.0.0.0:8001
