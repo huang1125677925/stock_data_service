@@ -30,6 +30,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/user/login/',
             '/django/api/user/invitation/validate/',
             '/django/api/user/reset-password/',
+            '/django/api/individual_stock/strategy-results/',
         ]
     
     def process_request(self, request):

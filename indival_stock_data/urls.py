@@ -19,4 +19,10 @@ urlpatterns = [
     path('stocks/<str:stock_code>/history/', views.StockHistoryView.as_view(), name='stock_history'),
     # 获取股票详细信息
     path('stocks/<str:stock_code>/info/', views.StockInfoView.as_view(), name='stock_info'),
+    
+    # 策略选股结果管理接口
+    # 获取策略结果列表或创建新的策略结果
+    path('strategy-results/', views.StrategyResultView.as_view(), name='strategy_result_list'),
+    # 获取、更新或删除单个策略结果
+    path('strategy-results/<int:result_id>/', views.StrategyResultView.as_view(), name='strategy_result_detail'),
 ]

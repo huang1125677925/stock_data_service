@@ -177,3 +177,42 @@ class IndividualStockRealtime(models.Model):
             'turnover_rate': float(self.turnover_rate) if self.turnover_rate else None,
             'timestamp': self.timestamp.isoformat()
         }
+
+
+class StrategyResult(models.Model):
+    """策略选股结果模型"""
+    strategy_name = models.CharField(max_length=100, verbose_name='策略名称')
+    strategy_description = models.TextField(verbose_name='策略描述')
+    strategy_result = models.TextField(verbose_name='策略结果', help_text='JSON格式存储策略选股结果')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'strategy_result'
+        verbose_name = '策略选股结果'
+        verbose_name_plural = '策略选股结果'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['strategy_name']),
+            models.Index(fields=['-created_at']),
+        ]
+    
+    def __str__(self):
+        return f'{self.strategy_name} - {self.created_at.strftime("%Y-%m-%d %H:%M:%S")}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        import json
+        try:
+            strategy_result_data = json.loads(self.strategy_result) if self.strategy_result else {}
+        except json.JSONDecodeError:
+            strategy_result_data = {}
+        
+        return {
+            'id': self.id,
+            'strategy_name': self.strategy_name,
+            'strategy_description': self.strategy_description,
+            'strategy_result': strategy_result_data,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
+        }
