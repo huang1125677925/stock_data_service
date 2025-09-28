@@ -162,7 +162,7 @@ def update_individual_stock_daily_data():
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
         stock_code_list = [stock.code for stock in stocks]
         # 更新所有个股的历史数据（最近30天）
-        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=300)
+        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=600)
         
         logger.info(f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
         return {
@@ -245,6 +245,15 @@ def update_stock_history(
         
         # 获取要更新的股票列表
         stocks = IndividualStock.objects.all()
+
+        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+
+        # 使用集合操作提高查询效率，避免使用distinct()
+        # stock_code_list = set(IndividualStockDaily.objects.filter(
+        #             date__gte=start_date_obj,
+        #             date__lte=start_date_obj
+        #         ).values_list('stock_id', flat=True))
         
         if not stocks.exists():
             logger.warning("没有找到需要更新的股票")
@@ -252,17 +261,19 @@ def update_stock_history(
         
         # 遍历股票列表更新历史数据
         for stock in stocks:
+            # if stock.id in stock_code_list:
+            #     print(f"股票 {stock.code} 已存在历史数据，无需更新")
+            #     continue
+
             logger.info(f"开始更新股票 {stock.code} 的历史数据")
             try:
                 # 获取指定日期范围内已有的历史数据日期（用于去重）
-                start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                 existing_dates = set(IndividualStockDaily.objects.filter(
                     stock=stock,
                     date__gte=start_date_obj,
                     date__lte=end_date_obj
                 ).values_list('date', flat=True))
-                time.sleep(1)
+                time.sleep(0.2)  # 避免请求过于频繁
 
                 print(f"股票 {stock.code} 已存在的历史数据日期数量: {len(existing_dates)}")
                 if len(existing_dates) > 1000:
@@ -271,8 +282,9 @@ def update_stock_history(
                     continue
 
 
-                daily_data_list = fetch_stock_daily_data("sh." + stock.code, start_date, end_date)
-                time.sleep(0.1)  # 避免请求过于频繁
+                exchange_prefix = judge_stock_type(stock.code)
+                daily_data_list = fetch_stock_daily_data(exchange_prefix + stock.code, start_date, end_date)
+                
                 print(f"股票 {stock.code} 从akshare获取到的历史数据数量: {len(daily_data_list)}")
                 if not daily_data_list:
                     logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
@@ -371,12 +383,72 @@ def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: st
     # 详细指标参数，参见"历史行情指标参数"章节；"分钟线"参数与"日线"参数不同。"分钟线"不包含指数。
     # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
     # 周月线指标：date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
-    rs = bs.query_history_k_data_plus(stock_code,
-        "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
-        start_date=start_date, end_date=end_date,
-        frequency="d", adjustflag="3")
-    print('query_history_k_data_plus respond error_code:'+rs.error_code)
-    print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
+    # 添加超时处理
+    max_retries = 3
+    retry_count = 0
+    timeout_seconds = 10
+    
+    while retry_count < max_retries:
+        try:
+            import signal
+            from contextlib import contextmanager
+            
+            @contextmanager
+            def timeout_handler(seconds):
+                def handle_timeout(signum, frame):
+                    raise TimeoutError(f"查询超时，已经等待{seconds}秒")
+                
+                # 设置信号处理器
+                original_handler = signal.getsignal(signal.SIGALRM)
+                signal.signal(signal.SIGALRM, handle_timeout)
+                
+                # 设置闹钟
+                signal.alarm(seconds)
+                try:
+                    yield
+                finally:
+                    # 取消闹钟并恢复原始处理器
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, original_handler)
+            
+            # 使用超时处理器执行查询
+            with timeout_handler(timeout_seconds):
+                rs = bs.query_history_k_data_plus(stock_code,
+                    "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
+                    start_date=start_date, end_date=end_date,
+                    frequency="d", adjustflag="2")
+                
+                print('query_history_k_data_plus respond error_code:'+rs.error_code)
+                print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
+                
+                # 如果查询成功，跳出循环
+                if rs.error_code == '0':
+                    break
+                else:
+                    # 如果查询失败但不是超时问题，也跳出循环
+                    print(f"查询失败，错误码: {rs.error_code}, 错误信息: {rs.error_msg}")
+                    break
+                    
+        except TimeoutError as e:
+            retry_count += 1
+            print(f"尝试 {retry_count}/{max_retries}: {str(e)}")
+            if retry_count >= max_retries:
+                print(f"达到最大重试次数 {max_retries}，查询失败")
+                # 创建一个空的结果集
+                from baostock.data.resultset import ResultSet
+                rs = ResultSet()
+                rs.error_code = '1'
+                rs.error_msg = f'查询超时，已重试 {max_retries} 次'
+        except Exception as e:
+            retry_count += 1
+            print(f"尝试 {retry_count}/{max_retries}: 发生异常 - {str(e)}")
+            if retry_count >= max_retries:
+                print(f"达到最大重试次数 {max_retries}，查询失败")
+                # 创建一个空的结果集
+                from baostock.data.resultset import ResultSet
+                rs = ResultSet()
+                rs.error_code = '1'
+                rs.error_msg = f'查询发生异常: {str(e)}'
 
     #### 处理结果集 ####
     data_list = []
@@ -395,6 +467,47 @@ def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: st
     
     return data_list
 
+def judge_stock_type(stock_code: str) -> str:
+    """
+    判断股票代码所属的交易所。
+
+    :param stock_code: 股票代码，例如：000001
+    :return: 交易所前缀，例如：sh. 或 sz.
+    """
+    if stock_code.startswith(('60', '68')):
+        return "sh."
+    elif stock_code.startswith(('00', '30', '002', '003')):
+        return "sz."
+    elif stock_code.startswith(('83', '87', '88', '82')):
+        return "bj."  # 北交所股票
+    else:
+        return "sh."  # 默认使用上海交易所
+
+def del_error_data():
+    """
+    删除数据列表中的错误数据行。
+    """
+    # 获取要更新的股票列表
+    stocks = IndividualStock.objects.all()
+    
+    if not stocks.exists():
+        logger.warning("没有找到需要更新的股票")
+        return 0, 0
+    cnt = 1
+    # 遍历股票列表更新历史数据
+    for stock in stocks:
+        stock_type = judge_stock_type(stock.code)
+        if stock_type != "sh.":
+            continue
+        cnt += 1
+        IndividualStockDaily.objects.filter(stock=stock).delete()
+        logger.info(f"删除股票 {stock.code} 的错误数据")
+
+        time.sleep(0.05)
+    
+    print(f"删除了 {cnt} 只股票的错误数据")
+
+
 if __name__ == '__main__':
-    fetch_individual_stocks()
+    update_individual_stock_daily_data()
 

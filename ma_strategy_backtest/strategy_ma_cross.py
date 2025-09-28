@@ -15,8 +15,8 @@ class SmaCross(bt.Strategy):
     
     # 策略参数定义，可在运行时调整
     params = dict(
-        short=10,      # 短期均线周期
-        long=30,       # 长期均线周期
+        short=20,      # 短期均线周期
+        long=50,       # 长期均线周期
         printlog=True  # 是否打印日志
     )
 

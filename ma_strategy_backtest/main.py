@@ -1,12 +1,30 @@
 import backtrader as bt
 import pandas as pd
 import datetime as dt
-from strategy_simple import SimpleAdvancedStrategy
+from strategy_ma_cross import SmaCross
+import akshare as ak
 
 # 加载数据
-df = pd.read_csv('data/399300.csv', parse_dates=['trade_date'])
+df = ak.stock_zh_a_hist(symbol="w", start_date="20240101", end_date="20251231")
+
+df.rename(columns={
+    '日期': 'trade_date', 
+    '股票代码': 'code', 
+    '开盘': 'open', 
+    '收盘': 'close', 
+    '最高': 'high', 
+    '最低': 'low', 
+    '成交量': 'volume', 
+    '成交额': 'amount', 
+    '振幅': 'amplitude', 
+    '涨跌幅': 'pct_chg', 
+    '涨跌额': 'change', 
+    '换手率': 'turnover'
+}, inplace=True)
+
+# 确保日期是 pandas Timestamp 类型
+df['trade_date'] = pd.to_datetime(df['trade_date'])
 df.set_index('trade_date', inplace=True)
-df.rename(columns={'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close', 'vol': 'volume'}, inplace=True)
 
 # 转换为 Backtrader 数据格式
 class PandasData(bt.feeds.PandasData):
@@ -18,6 +36,13 @@ class PandasData(bt.feeds.PandasData):
         ('close', 'close'),
         ('volume', 'volume'),
         ('openinterest', -1),
+        # 额外的字段
+        ('amount', 'amount'),
+        ('amplitude', 'amplitude'),
+        ('pct_chg', 'pct_chg'),
+        ('change', 'change'),
+        ('turnover', 'turnover'),
+        ('code', 'code'),
     )
 
 # 定义回测函数
@@ -27,7 +52,7 @@ def run_backtest(data_df, period_name):
     
     # 回测引擎 Cerebro
     cerebro = bt.Cerebro()
-    cerebro.addstrategy(SimpleAdvancedStrategy)
+    cerebro.addstrategy(SmaCross)
     cerebro.adddata(data)
     cerebro.broker.set_cash(100000)
     cerebro.broker.setcommission(commission=0.001)  # 0.1%手续费

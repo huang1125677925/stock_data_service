@@ -429,6 +429,114 @@ class BacktestService:
 # 全局服务实例
 backtest_service = BacktestService()
 
+def run_backtest_task():
+    """
+    运行回测任务
+    
+    Args:
+        task_id: 任务ID
+        
+    Returns:
+        任务执行结果
+    """
+
+    try:        
+        # 获取股票数据
+        df = backtest_service.get_stock_data(
+            '000020',
+            '2024-01-01',
+            '2025-10-01'
+        )
+
+        task = BacktestTask(
+            stock_code='000020',
+            stock_name='中国双汇',
+            strategy_name='ma_cross',
+            start_date=datetime(2025, 9, 28).date(),
+            end_date=datetime(2025, 10, 1).date(),
+            initial_cash=100000,
+            commission=0.0003
+        )
+        
+        if df is None or df.empty:
+            raise ValueError(f"无法获取股票 {task.stock_code} 的数据")
+        print(f"股票 {task.stock_code} 数据长度: {len(df)}")
+        # 获取策略类
+        strategy_class = StrategyRegistry.get_strategy(task.strategy_name)
+        if strategy_class is None:
+            raise ValueError(f"未找到策略: {task.strategy_name}")
+        
+        # 创建回测引擎
+        cerebro = bt.Cerebro()
+        
+        
+        cerebro.addstrategy(strategy_class)
+        
+        data = PandasData(dataname=df)
+        cerebro.adddata(data)
+        
+        # 设置初始资金和手续费
+        cerebro.broker.set_cash(float(task.initial_cash))
+        cerebro.broker.setcommission(commission=float(task.commission))
+        
+        # 添加分析器
+        cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
+        cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+        cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='trades')
+        
+        # 运行回测
+        initial_value = cerebro.broker.getvalue()
+        results = cerebro.run(runonce=False, preload=False, maxcpus=1)
+        final_value = cerebro.broker.getvalue()
+        
+        # 检查回测结果
+        if not results or len(results) == 0:
+            raise ValueError("回测执行失败，未返回任何结果")
+        
+        # 获取分析结果
+        strategy_result = results[0]
+        analyzers = strategy_result.analyzers
+        
+        # 计算收益指标
+        total_return = (final_value - initial_value) / initial_value * 100
+        
+        # 计算年化收益率
+        days = (task.end_date - task.start_date).days
+        annual_return = ((final_value / initial_value) ** (365.0 / days) - 1) * 100 if days > 0 else 0
+        
+        # 获取分析器结果
+        sharpe_ratio = analyzers.sharpe.get_analysis().get('sharperatio', None)
+        drawdown_info = analyzers.drawdown.get_analysis()
+        max_drawdown = drawdown_info.get('max', {}).get('drawdown', 0)
+        trade_info = analyzers.trades.get_analysis()
+        
+        # 交易统计
+        total_trades = trade_info.get('total', {}).get('total', 0)
+        winning_trades = trade_info.get('won', {}).get('total', 0)
+        losing_trades = trade_info.get('lost', {}).get('total', 0)
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        
+        # 保存结果
+        print(f"初始资金: {initial_value:.2f}")
+        print(f"最终资金: {final_value:.2f}")
+        print(f"总收益率: {total_return:.2f}%")
+        print(f"年化收益率: {annual_return:.2f}%")
+        print(f"夏普比率: {sharpe_ratio:.2f}" if sharpe_ratio else "夏普比率: None")
+        print(f"最大回撤: {max_drawdown:.2f}%")
+        print(f"总交易次数: {total_trades}")
+        print(f"盈利交易次数: {winning_trades}")
+        print(f"亏损交易次数: {losing_trades}")
+        print(f"胜率: {win_rate:.2f}%" if win_rate else "胜率: None")
+        
+        
+        backtest_service.logger.info(f"回测任务 完成")
+        
+
+        
+    except Exception as e:
+        backtest_service.logger.error(f"堆栈跟踪: {traceback.format_exc()}")
+
 
 if __name__ == '__main__':
-    backtest_service.run_backtest('dc90589f-60fc-412a-bfe5-f5b9ddfc1f96')
+    run_backtest_task()
