@@ -4,7 +4,8 @@
 提供策略回测相关的API接口
 """
 
-from django.http import JsonResponse
+import os
+from django.http import JsonResponse, HttpResponse, Http404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
@@ -12,6 +13,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from django.conf import settings
 
 from common.response import success_response, error_response
 from common.validators import validate_pagination_params
@@ -431,3 +433,47 @@ def get_backtest_result(request, task_id):
     except Exception as e:
         logger.error(f"获取回测结果失败: {str(e)}")
         return error_response(f"获取回测结果失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_backtest_chart(request, task_id):
+    """
+    获取回测图表
+    
+    参数:
+        task_id: 回测任务ID
+        
+    返回:
+        图表文件或错误信息
+        
+    事件:
+        - 返回PNG格式的回测图表文件
+        - 如果图表不存在返回404错误
+    """
+    try:
+        # 获取回测结果
+        result = BacktestResult.objects.filter(task_id=task_id).first()
+        if not result:
+            return error_response("回测结果不存在", 404)
+        
+        # 检查图表文件是否存在
+        if not result.chart_image:
+            return error_response("图表文件不存在", 404)
+        
+        # 构建完整的文件路径
+        chart_path = os.path.join(settings.BASE_DIR, result.chart_image)
+        
+        # 检查文件是否存在
+        if not os.path.exists(chart_path):
+            return error_response("图表文件不存在", 404)
+        
+        # 读取并返回图表文件
+        with open(chart_path, 'rb') as f:
+            response = HttpResponse(f.read(), content_type='image/png')
+            response['Content-Disposition'] = f'inline; filename="backtest_chart_{task_id}.png"'
+            return response
+            
+    except Exception as e:
+        logger.error(f"获取回测图表失败: {str(e)}")
+        return error_response(f"获取回测图表失败: {str(e)}", 500)

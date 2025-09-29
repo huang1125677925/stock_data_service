@@ -17,6 +17,7 @@ urlpatterns = [
     path('backtest/<str:task_id>/run/', views.run_backtest, name='run_backtest'),
     path('backtest/<str:task_id>/status/', views.get_task_status, name='get_task_status'),
     path('backtest/<str:task_id>/result/', views.get_backtest_result, name='get_backtest_result'),
+    path('backtest/<str:task_id>/chart/', views.get_backtest_chart, name='get_backtest_chart'),
     
     # 历史记录接口
     path('backtest/history/', views.get_backtest_history, name='get_backtest_history'),

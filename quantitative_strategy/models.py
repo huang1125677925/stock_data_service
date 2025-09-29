@@ -117,6 +117,9 @@ class BacktestResult(models.Model):
     portfolio_values = models.JSONField(default=list, verbose_name='组合价值序列')
     trade_records = models.JSONField(default=list, verbose_name='交易记录')
     
+    # 图表文件路径
+    chart_image = models.CharField(max_length=500, blank=True, null=True, verbose_name='回测图表路径')
+    
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     
     class Meta:
@@ -138,6 +141,7 @@ class BacktestResult(models.Model):
             'volatility': float(self.volatility) if self.volatility else None,
             'total_trades': self.total_trades,
             'win_rate': float(self.win_rate) if self.win_rate else None,
+            'chart_image': self.chart_image,  # 添加图表路径
         }
 
 
