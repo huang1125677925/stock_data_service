@@ -273,6 +273,14 @@ class BacktestService:
             cerebro.broker.set_cash(float(task.initial_cash))
             cerebro.broker.setcommission(commission=float(task.commission))
             
+            # 添加观测器
+            cerebro.addobserver(bt.observers.Broker)
+            cerebro.addobserver(bt.observers.BuySell)
+            cerebro.addobserver(bt.observers.Trades)
+            cerebro.addobserver(bt.observers.TimeReturn)
+            cerebro.addobserver(bt.observers.DrawDown)
+            cerebro.addobserver(bt.observers.Benchmark)
+            
             # 添加分析器
             cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
             cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
@@ -291,6 +299,19 @@ class BacktestService:
             # 获取分析结果
             strategy_result = results[0]
             analyzers = strategy_result.analyzers
+            
+            # 获取观测器数据
+            observer_data = {}
+            if hasattr(strategy_result, 'observer_data'):
+                observer_data = strategy_result.observer_data
+            
+            # 获取原始数据和指标数据
+            raw_data = {}
+            indicator_data = {}
+            if hasattr(strategy_result, 'raw_data'):
+                raw_data = strategy_result.raw_data
+            if hasattr(strategy_result, 'indicator_data'):
+                indicator_data = strategy_result.indicator_data
             
             # 计算收益指标
             total_return = (final_value - initial_value) / initial_value * 100
@@ -326,7 +347,10 @@ class BacktestService:
                 win_rate=Decimal(str(round(win_rate, 2))) if win_rate else None,
                 daily_returns=[],  # 可以后续添加详细的每日收益数据
                 portfolio_values=[],  # 可以后续添加组合价值序列
-                trade_records=getattr(strategy_result, 'trade_records', [])  # 保存买入/卖出成交点
+                trade_records=getattr(strategy_result, 'trade_records', []),  # 保存买入/卖出成交点
+                observer_data=observer_data,  # 保存观测器数据
+                raw_data=raw_data,  # 保存原始数据
+                indicator_data=indicator_data  # 保存指标数据
             )
             
             # 标记任务完成

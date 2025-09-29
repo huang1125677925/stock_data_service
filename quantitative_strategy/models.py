@@ -117,7 +117,14 @@ class BacktestResult(models.Model):
     portfolio_values = models.JSONField(default=list, verbose_name='组合价值序列')
     trade_records = models.JSONField(default=list, verbose_name='交易记录')
     
-    # 图表文件路径
+    # 观测器数据
+    observer_data = models.JSONField(default=dict, verbose_name='观测器数据', help_text='包含Broker、BuySell、Trades、TimeReturn、DrawDown、Benchmark等观测器数据')
+    
+    # 原始数据和指标数据
+    raw_data = models.JSONField(default=dict, verbose_name='原始数据', help_text='包含OHLCV等原始市场数据')
+    indicator_data = models.JSONField(default=dict, verbose_name='指标数据', help_text='包含技术指标计算结果')
+    
+    # 图表路径
     chart_image = models.CharField(max_length=500, blank=True, null=True, verbose_name='回测图表路径')
     
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
@@ -142,6 +149,10 @@ class BacktestResult(models.Model):
             'total_trades': self.total_trades,
             'win_rate': float(self.win_rate) if self.win_rate else None,
             'chart_image': self.chart_image,  # 添加图表路径
+            'observer_data': self.observer_data,  # 添加观测器数据
+            'raw_data': self.raw_data,  # 添加原始数据
+            'indicator_data': self.indicator_data,  # 添加指标数据
+            'trade_records': self.trade_records
         }
 
 

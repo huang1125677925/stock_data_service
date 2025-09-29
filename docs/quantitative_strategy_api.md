@@ -206,7 +206,175 @@
 }
 ```
 
-### 6. 获取回测历史
+### 6. 获取观测器数据
+
+**接口地址**: `GET /backtest/<task_id>/observer/`
+
+**功能描述**: 获取回测任务的观测器数据，用于前端可视化展示
+
+**路径参数**:
+- `task_id`: 回测任务ID
+
+**请求参数**:
+- `observer_type`: 观测器类型过滤（可选）
+  - 可选值: `broker`, `trades`, `buysell`, `timereturn`, `drawdown`, `benchmark`
+  - 不指定时返回所有观测器数据
+
+**响应格式**:
+```json
+{
+    "code": 200,
+    "message": "success",
+    "data": {
+        "task_info": {
+            "task_id": "uuid-string",
+            "strategy_name": "ma_cross",
+            "stock_code": "000001.SZ",
+            "stock_name": "平安银行",
+            "start_date": "2023-01-01",
+            "end_date": "2023-12-31",
+            "initial_cash": 100000.0,
+            "commission": 0.001
+        },
+        "observer_data": {
+            "broker": [
+                {
+                    "datetime": "2023-01-01",
+                    "cash": 100000.0,
+                    "value": 100000.0
+                }
+            ],
+            "trades": [
+                {
+                    "ref": 1,
+                    "size": 1000,
+                    "price": 10.50,
+                    "value": 10500.0,
+                    "commission": 10.5,
+                    "pnl": 0.0,
+                    "pnlcomm": -10.5
+                }
+            ],
+            "buysell": [
+                {
+                    "datetime": "2023-01-15",
+                    "size": 1000,
+                    "price": 10.50,
+                    "value": 10500.0,
+                    "commission": 10.5
+                }
+            ],
+            "timereturn": [
+                {
+                    "datetime": "2023-01-01",
+                    "timereturn": 0.0
+                }
+            ],
+            "drawdown": [
+                {
+                    "datetime": "2023-01-01",
+                    "len": 0,
+                    "drawdown": 0.0,
+                    "maxdrawdown": 0.0
+                }
+            ],
+            "benchmark": []
+        },
+        "statistics": {
+            "broker_records": 100,
+            "trades_records": 10,
+            "buysell_records": 20,
+            "timereturn_records": 100,
+            "drawdown_records": 100,
+            "benchmark_records": 0
+        },
+        "visualization_hints": {
+            "broker": "资金曲线图 - 显示现金和总价值变化",
+            "trades": "交易统计表 - 显示每笔交易的盈亏情况",
+            "buysell": "买卖信号图 - 在价格图上标记买卖点",
+            "timereturn": "收益率曲线 - 显示策略收益率变化",
+            "drawdown": "回撤曲线 - 显示最大回撤情况",
+            "benchmark": "基准对比图 - 与基准收益率对比"
+        }
+    }
+}
+```
+
+### 7. 获取原始数据和指标数据
+
+**接口地址**: `GET /backtest/<task_id>/raw-indicator/`
+
+**功能描述**: 获取回测任务的原始市场数据和技术指标数据，用于前端可视化展示
+
+**路径参数**:
+- `task_id`: 回测任务ID
+
+**请求参数**:
+- `data_type`: 数据类型过滤（可选）
+  - 可选值: `raw`, `indicator`, `all`
+  - `raw`: 仅返回原始市场数据（OHLCV）
+  - `indicator`: 仅返回技术指标数据
+  - `all`: 返回所有数据（默认值）
+
+**响应格式**:
+```json
+{
+    "code": 200,
+    "message": "success",
+    "data": {
+        "task_info": {
+            "task_id": "uuid-string",
+            "strategy_name": "ma_cross",
+            "stock_code": "000001.SZ",
+            "stock_name": "平安银行",
+            "start_date": "2023-01-01",
+            "end_date": "2023-12-31",
+            "initial_cash": 100000.0,
+            "commission": 0.001
+        },
+        "raw_data": {
+            "datetime": [
+                "2023-01-01",
+                "2023-01-02",
+                "2023-01-03"
+            ],
+            "open": [10.50, 10.60, 10.55],
+            "high": [10.80, 10.75, 10.70],
+            "low": [10.40, 10.50, 10.45],
+            "close": [10.70, 10.65, 10.60],
+            "volume": [1000000, 1200000, 950000]
+        },
+        "indicator_data": {
+            "ma_short": [10.60, 10.62, 10.58],
+            "ma_long": [10.55, 10.57, 10.56],
+            "crossover": [0, 1, 0]
+        },
+        "statistics": {
+            "raw_data_records": 100,
+            "indicator_data_records": 100
+        },
+        "visualization_hints": {
+            "raw_data": "K线图 - 显示OHLCV原始市场数据",
+            "indicator_data": "技术指标图 - 显示移动平均线、交叉信号等指标数据"
+        }
+    }
+}
+```
+
+**数据说明**:
+- `raw_data`: 原始市场数据
+  - `datetime`: 日期时间数组
+  - `open`: 开盘价数组
+  - `high`: 最高价数组
+  - `low`: 最低价数组
+  - `close`: 收盘价数组
+  - `volume`: 成交量数组
+- `indicator_data`: 技术指标数据（根据策略不同而变化）
+  - `ma_short`: 短期移动平均线
+  - `ma_long`: 长期移动平均线
+  - `crossover`: 交叉信号（1表示金叉，0表示无信号，-1表示死叉）
+
+### 8. 获取回测历史
 
 **接口地址**: `GET /backtest/history/`
 
@@ -302,6 +470,28 @@ curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/status/"
 curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/result/"
 ```
 
+6. **获取观测器数据**:
+```bash
+curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/observer/"
+```
+
+7. **获取原始数据和指标数据**:
+```bash
+curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/raw-indicator/"
+```
+
+**带参数的请求示例**:
+```bash
+# 只获取原始市场数据
+curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/raw-indicator/?data_type=raw"
+
+# 只获取技术指标数据
+curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/raw-indicator/?data_type=indicator"
+
+# 只获取特定观测器数据
+curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/observer/?observer_type=broker"
+```
+
 ## 注意事项
 
 1. 所有日期格式均为 `YYYY-MM-DD`
@@ -309,6 +499,11 @@ curl -X GET "http://localhost:8000/django/api/quant/backtest/{task_id}/result/"
 3. 回测结果会保存在数据库中，可以随时查询
 4. 策略参数需要根据具体策略的要求进行设置
 5. 建议在生产环境中添加适当的认证和权限控制
+6. **新增数据接口说明**:
+   - `/observer/` 接口用于获取回测过程中的观测器数据，适用于绘制资金曲线、收益率曲线等
+   - `/raw-indicator/` 接口用于获取原始市场数据和技术指标数据，适用于绘制K线图、指标图等
+   - 两个接口都支持数据类型过滤，可根据前端需求灵活获取所需数据
+   - 响应数据包含可视化提示信息，帮助前端选择合适的图表类型
 
 ## 技术支持
 

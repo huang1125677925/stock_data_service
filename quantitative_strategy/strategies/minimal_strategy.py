@@ -41,6 +41,9 @@ class MinimalStrategy(BaseQuantStrategy):
         - 未持仓且价格上穿均线(金叉)：全仓买入
         - 已持仓且价格下穿均线(死叉)：全仓卖出
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return

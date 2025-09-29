@@ -41,6 +41,34 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         # 记录买入/卖出点
         self.trade_records = []
         
+        # 观测器数据收集
+        self.observer_data = {
+            'broker': [],      # 资金和持仓数据
+            'buysell': [],     # 买卖信号数据
+            'trades': [],      # 交易数据
+            'timereturn': [],  # 时间收益数据
+            'drawdown': [],    # 回撤数据
+            'benchmark': []    # 基准数据
+        }
+        
+        # 原始数据收集
+        self.raw_data = {
+            'datetime': [],    # 日期时间
+            'open': [],        # 开盘价
+            'high': [],        # 最高价
+            'low': [],         # 最低价
+            'close': [],       # 收盘价
+            'volume': []       # 成交量
+        }
+        
+        # 指标数据收集
+        self.indicator_data = {}
+        
+        # 用于计算收益率和回撤的历史数据
+        self.value_history = []
+        self.return_history = []
+        self.max_value_history = []
+        
         # 初始化技术指标
         self.init_indicators()
     
@@ -146,10 +174,235 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
     
     def stop(self):
         """
-        策略结束时调用
+        策略结束时调用，收集观测器数据
         """
-        portfolio_value = self.broker.getvalue()
-        self.log(f'策略结束, 最终资金: {portfolio_value:.2f}')
+        self.log('策略结束，开始收集观测器数据...')
+        self.collect_observer_data()
+        
+    def next(self):
+        """
+        每个交易日调用，记录历史数据用于后续计算
+        """
+        # 记录当前的资金状态
+        current_value = self.broker.get_value()
+        current_cash = self.broker.get_cash()
+        
+        # 记录历史数据
+        self.value_history.append(current_value)
+        
+        # 计算收益率
+        if len(self.value_history) > 1:
+            initial_value = self.value_history[0]
+            current_return = (current_value - initial_value) / initial_value * 100
+            self.return_history.append(current_return)
+        else:
+            self.return_history.append(0.0)
+        
+        # 计算最大价值（用于回撤计算）
+        if len(self.max_value_history) == 0:
+            self.max_value_history.append(current_value)
+        else:
+            max_value = max(self.max_value_history[-1], current_value)
+            self.max_value_history.append(max_value)
+        
+        # 收集原始数据
+        self.collect_raw_data()
+        
+        # 收集指标数据（由子类实现）
+        self.collect_indicator_data()
+    
+    def collect_raw_data(self):
+        """
+        收集原始OHLCV数据
+        """
+        try:
+            dt = self.data.datetime.datetime(0)
+            self.raw_data['datetime'].append(dt.isoformat() if hasattr(dt, 'isoformat') else str(dt))
+            self.raw_data['open'].append(float(self.data.open[0]))
+            self.raw_data['high'].append(float(self.data.high[0]))
+            self.raw_data['low'].append(float(self.data.low[0]))
+            self.raw_data['close'].append(float(self.data.close[0]))
+            self.raw_data['volume'].append(float(self.data.volume[0]) if hasattr(self.data, 'volume') else 0.0)
+        except Exception as e:
+            self.log(f'收集原始数据时出错: {str(e)}')
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        子类应该重写此方法来收集特定的指标数据
+        """
+        pass
+    
+    def collect_observer_data(self):
+        """
+        收集观测器数据
+        在策略结束时调用，收集所有观测器的数据
+        """
+        try:
+            # 收集Broker观测器数据（资金和持仓变化）
+            broker_data = []
+            for i in range(len(self.data)):
+                try:
+                    dt = self.data.datetime.datetime(i)
+                    # 使用策略的broker属性而不是cerebro的broker
+                    cash = self.broker.get_cash()
+                    value = self.broker.get_value()
+                    broker_data.append({
+                        'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                        'cash': float(cash),
+                        'value': float(value)
+                    })
+                except (IndexError, AttributeError):
+                    break
+            self.observer_data['broker'] = broker_data
+            
+            # 收集BuySell观测器数据（买卖信号）
+            # 这些数据已经在notify_order中收集到trade_records中
+            self.observer_data['buysell'] = self.trade_records.copy()
+            
+            # 收集Trades观测器数据（交易统计）
+            # 这些数据可以从trade_records中计算得出
+            trades_data = self._calculate_trades_data()
+            self.observer_data['trades'] = trades_data
+            
+            # 收集TimeReturn观测器数据（时间收益）
+            timereturn_data = self._calculate_timereturn_data()
+            self.observer_data['timereturn'] = timereturn_data
+            
+            # 收集DrawDown观测器数据（回撤）
+            drawdown_data = self._calculate_drawdown_data()
+            self.observer_data['drawdown'] = drawdown_data
+            
+            # 收集Benchmark观测器数据（基准对比）
+            benchmark_data = self._calculate_benchmark_data()
+            self.observer_data['benchmark'] = benchmark_data
+            
+            self.log(f'观测器数据收集完成: broker={len(broker_data)}, buysell={len(self.trade_records)}, '
+                    f'trades={len(trades_data)}, timereturn={len(timereturn_data)}, '
+                    f'drawdown={len(drawdown_data)}, benchmark={len(benchmark_data)}')
+            
+        except Exception as e:
+            self.log(f'收集观测器数据时出错: {str(e)}')
+            import traceback
+            self.log(f'错误详情: {traceback.format_exc()}')
+    
+    def _calculate_trades_data(self):
+        """计算交易统计数据"""
+        trades_data = []
+        if not self.trade_records:
+            return trades_data
+        
+        # 按交易对进行配对（买入-卖出）
+        buy_orders = [t for t in self.trade_records if t['type'] == 'buy']
+        sell_orders = [t for t in self.trade_records if t['type'] == 'sell']
+        
+        for i, buy in enumerate(buy_orders):
+            if i < len(sell_orders):
+                sell = sell_orders[i]
+                pnl = (sell['price'] - buy['price']) * buy['size'] - buy['commission'] - sell['commission']
+                trades_data.append({
+                    'buy_datetime': buy['datetime'],
+                    'sell_datetime': sell['datetime'],
+                    'buy_price': buy['price'],
+                    'sell_price': sell['price'],
+                    'size': buy['size'],
+                    'pnl': pnl,
+                    'pnl_pct': (pnl / (buy['price'] * buy['size'])) * 100 if buy['price'] * buy['size'] > 0 else 0
+                })
+        
+        return trades_data
+    
+    def _calculate_timereturn_data(self):
+        """计算时间收益数据"""
+        timereturn_data = []
+        
+        try:
+            # 使用记录的历史数据
+            for i, return_value in enumerate(self.return_history):
+                if i < len(self.value_history):
+                    # 获取对应的日期
+                    try:
+                        dt = self.data.datetime.datetime(-len(self.return_history) + i)
+                    except (IndexError, AttributeError):
+                        # 如果无法获取具体日期，使用索引
+                        dt = f"Day_{i}"
+                    
+                    timereturn_data.append({
+                        'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                        'return': float(return_value),
+                        'cumulative_return': float(return_value),
+                        'portfolio_value': float(self.value_history[i])
+                    })
+        except Exception as e:
+            self.log(f'计算时间收益数据时出错: {str(e)}')
+        
+        return timereturn_data
+    
+    def _calculate_drawdown_data(self):
+        """计算回撤数据"""
+        drawdown_data = []
+        
+        try:
+            # 使用记录的历史数据计算回撤
+            for i in range(len(self.value_history)):
+                current_value = self.value_history[i]
+                max_value = self.max_value_history[i]
+                
+                # 计算回撤
+                if max_value > 0:
+                    drawdown = (max_value - current_value) / max_value * 100
+                else:
+                    drawdown = 0.0
+                
+                # 获取对应的日期
+                try:
+                    dt = self.data.datetime.datetime(-len(self.value_history) + i)
+                except (IndexError, AttributeError):
+                    # 如果无法获取具体日期，使用索引
+                    dt = f"Day_{i}"
+                
+                drawdown_data.append({
+                    'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                    'drawdown': float(drawdown),
+                    'max_value': float(max_value),
+                    'current_value': float(current_value)
+                })
+        except Exception as e:
+            self.log(f'计算回撤数据时出错: {str(e)}')
+        
+        return drawdown_data
+    
+    def _calculate_benchmark_data(self):
+        """计算基准对比数据"""
+        benchmark_data = []
+        
+        try:
+            # 使用股票价格作为基准
+            initial_price = float(self.data.close[0]) if len(self.data) > 0 else 1.0
+            
+            for i in range(len(self.data)):
+                try:
+                    dt = self.data.datetime.datetime(i)
+                    current_price = float(self.data.close[i])
+                    benchmark_return = (current_price - initial_price) / initial_price * 100
+                    
+                    # 策略收益
+                    strategy_value = self.broker.get_value()
+                    initial_value = getattr(self._owner.broker, '_startingcash', 100000)
+                    strategy_return = (strategy_value - initial_value) / initial_value * 100
+                    
+                    benchmark_data.append({
+                        'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                        'benchmark_return': benchmark_return,
+                        'strategy_return': strategy_return,
+                        'excess_return': strategy_return - benchmark_return
+                    })
+                except (IndexError, AttributeError):
+                    break
+        except Exception as e:
+            self.log(f'计算基准数据时出错: {str(e)}')
+        
+        return benchmark_data
 
 
 class StrategyRegistry:

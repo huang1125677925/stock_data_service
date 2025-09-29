@@ -2,6 +2,14 @@
 """
 简化综合技术指标策略
 基于均线系统、动量指标和成交量的简化策略
+
+该策略集成了Backtrader观测器数据收集功能：
+- Broker: 资金变化记录
+- BuySell: 买卖信号记录
+- Trades: 交易记录
+- TimeReturn: 时间收益率
+- DrawDown: 回撤记录
+- Benchmark: 基准比较
 """
 
 import backtrader as bt
@@ -10,6 +18,33 @@ from .base_strategy import BaseQuantStrategy, register_strategy
 
 @register_strategy
 class MultiIndicatorStrategy(BaseQuantStrategy):
+    """
+    多指标综合策略
+    
+    功能：
+    - 基于EMA均线系统判断趋势
+    - MACD指标确认动量
+    - 成交量放大确认资金流入
+    - 多重条件确认买卖信号
+    - 止损保护机制
+    - 自动收集观测器数据用于可视化分析
+    
+    参数：
+    - short_period: 短期EMA周期，默认8
+    - long_period: 长期EMA周期，默认21
+    - signal_period: 信号平滑周期，默认3
+    - volume_multiplier: 成交量放大倍数，默认1.2
+    - stop_loss_pct: 止损百分比，默认8.0
+    
+    返回值：
+    - 策略执行结果包含完整的观测器数据
+    
+    事件：
+    - 买入信号：EMA金叉 + 放量 + MACD金叉
+    - 卖出信号：EMA死叉 或 控盘度转负 或 MACD死叉
+    - 止损信号：亏损超过设定百分比
+    """
+    
     _strategy_name = 'multi_indicator'
     _strategy_description = '多指标综合策略：基于EMA、MACD、成交量的综合技术分析策略'
     _strategy_params = {
@@ -19,16 +54,6 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
         'volume_multiplier': {'type': 'float', 'default': 1.2, 'description': '成交量放大倍数'},
         'stop_loss_pct': {'type': 'float', 'default': 8.0, 'description': '止损百分比'}
     }
-    """
-    多指标综合策略
-    
-    策略逻辑：
-    1. 基于EMA均线系统判断趋势
-    2. MACD指标确认动量
-    3. 成交量放大确认资金流入
-    4. 多重条件确认买卖信号
-    5. 止损保护机制
-    """
     
     params = dict(
         short_period=8,        # 短期EMA周期
@@ -42,6 +67,7 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
     def init_indicators(self):
         """
         策略初始化
+        初始化技术指标和信号
         """
         # 基础价格
         close = self.data.close
@@ -53,7 +79,6 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
         self.ema_long = bt.indicators.ExponentialMovingAverage(
             close, period=self.params.long_period
         )
-        
         
         # 3. 主力资金指标 (简化版控盘度)
         self.control = (self.ema_short - self.ema_long) / self.ema_long * 100
@@ -86,15 +111,21 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
         )
     
     def get_strategy_name(self) -> str:
+        """获取策略名称"""
         return "multi_indicator"
     
     def get_strategy_description(self) -> str:
+        """获取策略描述"""
         return "多指标综合策略：基于EMA均线系统、MACD动量指标和成交量的综合技术分析策略"
     
     def next(self):
         """
         策略主逻辑
+        每个交易日执行的核心逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return

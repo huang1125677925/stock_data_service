@@ -425,7 +425,10 @@ def get_backtest_result(request, task_id):
                 'daily_returns': result.daily_returns,
                 'portfolio_values': result.portfolio_values,
                 'trade_records': result.trade_records
-            }
+            },
+            'observer_data': result.observer_data,
+            'raw_data': result.raw_data,  # 添加原始数据
+            'indicator_data': result.indicator_data  # 添加指标数据
         }
         
         return success_response(response_data)
@@ -477,3 +480,112 @@ def get_backtest_chart(request, task_id):
     except Exception as e:
         logger.error(f"获取回测图表失败: {str(e)}")
         return error_response(f"获取回测图表失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_observer_data(request, task_id):
+    """
+    获取观测器数据，专门用于前端可视化
+    
+    Args:
+        task_id: 任务ID
+        observer_type: 可选，指定观测器类型 (broker, trades, buysell, timereturn, drawdown, benchmark)
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_info": {
+                    "task_id": "xxx",
+                    "strategy_name": "xxx",
+                    "stock_code": "xxx",
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-12-31"
+                },
+                "observer_data": {
+                    "broker": [...],
+                    "trades": [...],
+                    "buysell": [...],
+                    "timereturn": [...],
+                    "drawdown": [...],
+                    "benchmark": [...]
+                },
+                "statistics": {
+                    "total_trades": 10,
+                    "broker_records": 100,
+                    "buysell_signals": 20,
+                    "timereturn_records": 100,
+                    "drawdown_records": 100,
+                    "benchmark_records": 100
+                }
+            }
+        }
+    """
+    try:
+        # 获取任务
+        try:
+            task = BacktestTask.objects.get(task_id=task_id)
+        except BacktestTask.DoesNotExist:
+            return error_response("任务不存在", 404)
+        
+        # 检查任务状态
+        if task.status != 'completed':
+            return error_response("任务未完成", 400)
+        
+        # 获取结果
+        try:
+            result = BacktestResult.objects.get(task=task)
+        except BacktestResult.DoesNotExist:
+            return error_response("回测结果不存在", 404)
+        
+        # 获取观测器数据
+        observer_data = result.observer_data or {}
+        
+        # 获取可选的观测器类型过滤参数
+        observer_type = request.GET.get('observer_type')
+        
+        # 如果指定了观测器类型，只返回该类型的数据
+        if observer_type and observer_type in observer_data:
+            filtered_data = {observer_type: observer_data[observer_type]}
+        else:
+            filtered_data = observer_data
+        
+        # 计算统计信息
+        statistics = {}
+        for obs_type, obs_data in observer_data.items():
+            if isinstance(obs_data, list):
+                statistics[f"{obs_type}_records"] = len(obs_data)
+            else:
+                statistics[f"{obs_type}_records"] = 0
+        
+        # 构建响应数据
+        response_data = {
+            'task_info': {
+                'task_id': task.task_id,
+                'strategy_name': task.strategy_name,
+                'stock_code': task.stock_code,
+                'stock_name': task.stock_name,
+                'start_date': task.start_date.strftime('%Y-%m-%d'),
+                'end_date': task.end_date.strftime('%Y-%m-%d'),
+                'initial_cash': float(task.initial_cash),
+                'commission': float(task.commission)
+            },
+            'observer_data': filtered_data,
+            'statistics': statistics,
+            'visualization_hints': {
+                'broker': '资金曲线图 - 显示现金和总价值变化',
+                'trades': '交易统计表 - 显示每笔交易的盈亏情况',
+                'buysell': '买卖信号图 - 在价格图上标记买卖点',
+                'timereturn': '收益率曲线 - 显示策略收益率变化',
+                'drawdown': '回撤曲线 - 显示最大回撤情况',
+                'benchmark': '基准对比图 - 与基准收益率对比'
+            }
+        }
+        
+        return success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"获取观测器数据失败: {str(e)}")
+        return error_response(f"获取观测器数据失败: {str(e)}", 500)
