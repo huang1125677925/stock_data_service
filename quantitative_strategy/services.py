@@ -31,6 +31,7 @@ try:
     from .strategies.psy_strategy import PSYStrategy
     from .strategies.bias_strategy import BIASStrategy
     from .strategies.bollinger_strategy import BollingerStrategy
+    from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
     import os
@@ -61,6 +62,9 @@ except ImportError:
     from quantitative_strategy.strategies.psy_strategy import PSYStrategy
     from quantitative_strategy.strategies.bias_strategy import BIASStrategy
     from quantitative_strategy.strategies.bollinger_strategy import BollingerStrategy
+    from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
+
+
 
 logger = logging.getLogger(__name__)
 
