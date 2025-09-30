@@ -478,7 +478,7 @@ def run_backtest_task():
             stock_code='000020',
             stock_name='中国双汇',
             strategy_name='ma_cross',
-            start_date=datetime(2025, 9, 28).date(),
+            start_date=datetime(2024, 9, 28).date(),
             end_date=datetime(2025, 10, 1).date(),
             initial_cash=100000,
             commission=0.0003

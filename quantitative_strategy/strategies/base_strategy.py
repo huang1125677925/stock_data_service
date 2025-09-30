@@ -38,7 +38,7 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         self.order = None  # 当前订单
         self.buy_price = None  # 买入价格
         self.buy_comm = None  # 买入手续费
-        # 记录买入/卖出点
+        # 记录买入/卖出点（包含利润信息）
         self.trade_records = []
         
         # 观测器数据收集
@@ -130,13 +130,18 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
                 dt = self.datas[0].datetime.datetime(0)
             except Exception:
                 dt = None
+            # 创建交易记录字典，存储订单执行的关键信息
             record = {
-                'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else None,
-                'type': 'buy' if order.isbuy() else 'sell',
-                'price': float(order.executed.price),
-                'size': float(order.executed.size),
-                'value': float(order.executed.value),
-                'commission': float(order.executed.comm),
+                'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else None,  # 交易时间（ISO格式字符串）
+                'type': 'buy' if order.isbuy() else 'sell',                           # 交易类型：买入或卖出
+                'price': float(order.executed.price),                                # 成交价格
+                'size': float(order.executed.size),                                  # 成交数量（正数为买入，负数为卖出）
+                'value': float(order.executed.value),                                # 成交金额（价格×数量）
+                'commission': float(order.executed.comm),                            # 交易手续费
+                'pnl': None,           # 毛利润（交易关闭时更新）
+                'pnlcomm': None,       # 净利润（交易关闭时更新）
+                'pnl_pct': None,       # 利润率百分比（交易关闭时更新）
+                'trade_closed': False, # 交易是否已关闭
             }
             self.trade_records.append(record)
             
@@ -174,6 +179,29 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
             return
         
         self.log(f'交易利润, 毛利润: {trade.pnl:.2f}, 净利润: {trade.pnlcomm:.2f}')
+        
+        # 将利润信息更新到最后一个对应的卖出交易记录中
+        try:
+            
+            # 找到最后一个卖出交易记录
+            for i in range(len(self.trade_records) - 1, -1, -1):
+                record = self.trade_records[i]
+                if record['type'] == 'sell' and not record['trade_closed']:
+                    # 更新利润信息
+                    record['pnl'] = float(trade.pnl)           # 记录毛利润（未扣除手续费）
+                    record['pnlcomm'] = float(trade.pnlcomm)   # 记录净利润（扣除手续费后的实际收益）
+                    record['trade_closed'] = True              # 标记交易已关闭，避免重复更新利润数据
+                    
+                    # 计算并记录利润率（基于净利润）
+                    if record['price'] > 0 and record['size'] != 0:
+                        buy_cost = record['price'] * abs(record['size'])  # 买入成本
+                        record['pnl_pct'] = (float(trade.pnlcomm) / buy_cost) * 100  # 净利润率 = 净利润/买入成本×100%
+                    else:
+                        record['pnl_pct'] = 0.0
+                    break
+            
+        except Exception as e:
+            self.log(f'更新交易利润时出错: {str(e)}')
     
     def stop(self):
         """
@@ -259,6 +287,7 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
             
             # 收集BuySell观测器数据（买卖信号）
             # 这些数据已经在notify_order中收集到trade_records中
+            # 收集买卖信号数据（包含利润信息）
             self.observer_data['buysell'] = self.trade_records.copy()
             
             # 收集Trades观测器数据（交易统计）
@@ -300,15 +329,26 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         for i, buy in enumerate(buy_orders):
             if i < len(sell_orders):
                 sell = sell_orders[i]
-                pnl = (sell['price'] - buy['price']) * buy['size'] - buy['commission'] - sell['commission']
+                
+                # 使用交易记录中的真实利润数据
+                if sell['pnl'] is not None and sell['pnlcomm'] is not None:
+                    # 使用真实的利润数据
+                    pnl = sell['pnl']
+                    pnlcomm = sell['pnlcomm']
+                else:
+                    # 使用计算的利润数据（兼容旧数据）
+                    pnl = (sell['price'] - buy['price']) * buy['size'] - buy['commission'] - sell['commission']
+                    pnlcomm = pnl
+                
                 trades_data.append({
-                    'buy_datetime': buy['datetime'],
-                    'sell_datetime': sell['datetime'],
-                    'buy_price': buy['price'],
-                    'sell_price': sell['price'],
-                    'size': buy['size'],
-                    'pnl': pnl,
-                    'pnl_pct': (pnl / (buy['price'] * buy['size'])) * 100 if buy['price'] * buy['size'] > 0 else 0
+                    'buy_datetime': buy['datetime'],      # 买入时间
+                    'sell_datetime': sell['datetime'],    # 卖出时间
+                    'buy_price': buy['price'],            # 买入价格
+                    'sell_price': sell['price'],          # 卖出价格
+                    'size': buy['size'],                  # 交易数量（买入和卖出数量相同）
+                    'pnl': pnl,                           # 毛利润（卖出价-买入价）×数量-手续费
+                    'pnlcomm': pnlcomm,                   # 净利润（毛利润扣除所有手续费）
+                    'pnl_pct': (pnl / (buy['price'] * buy['size'])) * 100 if buy['price'] * buy['size'] > 0 else 0  # 利润率百分比 = 利润/买入成本×100%
                 })
         
         return trades_data
