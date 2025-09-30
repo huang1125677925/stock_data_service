@@ -70,6 +70,13 @@ class BollingerStrategy(BaseQuantStrategy):
         # 用于判断价格与布林带的关系
         self.price_below_lower = None  # 价格是否在下轨以下
         self.price_above_upper = None  # 价格是否在上轨以上
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'bb_top': [],       # 布林带上轨
+            'bb_mid': [],       # 布林带中轨
+            'bb_bot': []        # 布林带下轨
+        }
     
     def get_strategy_name(self) -> str:
         """
@@ -98,6 +105,9 @@ class BollingerStrategy(BaseQuantStrategy):
         2. 根据价格与布林带的关系判断买卖信号
         3. 执行相应的买卖操作
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return
@@ -168,3 +178,15 @@ class BollingerStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'布林带止损卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集布林带指标数据
+            self.indicator_data['bb_top'].append(float(self.bb_top[0]) if len(self.bb_top) > 0 else None)
+            self.indicator_data['bb_mid'].append(float(self.bb_mid[0]) if len(self.bb_mid) > 0 else None)
+            self.indicator_data['bb_bot'].append(float(self.bb_bot[0]) if len(self.bb_bot) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

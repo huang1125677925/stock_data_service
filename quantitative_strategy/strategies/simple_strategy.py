@@ -109,6 +109,19 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
             self.control < -3,  # 控盘度转负
             self.macd.macd < self.macd.signal  # MACD死叉
         )
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'ema_short': [],     # 短期EMA
+            'ema_long': [],      # 长期EMA
+            'control': [],       # 控盘度指标
+            'macd': [],          # MACD主线
+            'signal': [],        # MACD信号线
+            'histo': [],         # MACD柱状图
+            'volume_ma': [],     # 成交量均线
+            'buy_signal': [],    # 买入信号
+            'sell_signal': []    # 卖出信号
+        }
     
     def get_strategy_name(self) -> str:
         """获取策略名称"""
@@ -182,16 +195,29 @@ class MultiIndicatorStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集EMA指标数据
+            self.indicator_data['ema_short'].append(float(self.ema_short[0]) if len(self.ema_short) > 0 else None)
+            self.indicator_data['ema_long'].append(float(self.ema_long[0]) if len(self.ema_long) > 0 else None)
             
-            # 止损：亏损超过设定百分比
-            elif self.buy_price and (current_price / self.buy_price - 1) < -self.params.stop_loss_pct / 100:
-                loss_pct = (current_price / self.buy_price - 1) * 100
-                self.log(f'止损卖出: 价格={current_price:.2f}, '
-                        f'买入价={self.buy_price:.2f}, '
-                        f'亏损={loss_pct:.2f}% (止损线:{self.params.stop_loss_pct}%)')
-                
-                # 全仓止损卖出：卖出所有持仓
-                position_size = self.position.size
-                if position_size > 0:
-                    self.log(f'全仓止损卖出: 当前持仓={position_size}')
-                    self.order = self.sell(size=position_size)
+            # 收集控盘度指标
+            self.indicator_data['control'].append(float(self.control[0]) if len(self.control) > 0 else None)
+            
+            # 收集MACD指标数据
+            self.indicator_data['macd'].append(float(self.macd.macd[0]) if len(self.macd.macd) > 0 else None)
+            self.indicator_data['signal'].append(float(self.macd.signal[0]) if len(self.macd.signal) > 0 else None)
+            self.indicator_data['histo'].append(float(self.macd.histo[0]) if len(self.macd.histo) > 0 else None)
+            
+            # 收集成交量均线
+            self.indicator_data['volume_ma'].append(float(self.volume_ma[0]) if len(self.volume_ma) > 0 else None)
+            
+            # 收集买卖信号
+            self.indicator_data['buy_signal'].append(float(self.buy_signal[0]) if len(self.buy_signal) > 0 else None)
+            self.indicator_data['sell_signal'].append(float(self.sell_signal[0]) if len(self.sell_signal) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

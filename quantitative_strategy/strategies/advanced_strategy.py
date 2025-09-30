@@ -77,7 +77,16 @@ class AdvancedStrategy(BaseQuantStrategy):
         初始化技术指标
         """
         # 指标已在__init__中初始化
-        pass
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'ema_long': [],      # EMA长期线
+            'ema_short': [],     # EMA短期线
+            'ema_smooth': [],    # EMA平滑线
+            'volume_ratio': [],  # 成交量比率
+            'dx': [],           # DX动向指标
+            'zk': []            # ZK随机指标
+        }
     
     def get_strategy_name(self) -> str:
         return "advanced"
@@ -92,6 +101,9 @@ class AdvancedStrategy(BaseQuantStrategy):
         """
         策略主逻辑：每个交易日执行的策略逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 检查是否有足够的数据
         if len(self.data) < max(self.ema_long_period, 20):
             return
@@ -168,3 +180,23 @@ class AdvancedStrategy(BaseQuantStrategy):
                 self.log(f'卖出信号 - 价格: {current_price:.2f}, 数量: {current_position}, '
                        f'成本: {entry_price:.2f}, 盈亏: {profit_pct:.2f}%, '
                        f'DX: {dx_val:.2f}, ZK: {zk_val:.2f}, 原因: {sell_reason}')
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集EMA指标数据
+            self.indicator_data['ema_long'].append(float(self.ema_long[0]) if len(self.ema_long) > 0 else None)
+            self.indicator_data['ema_short'].append(float(self.ema_short[0]) if len(self.ema_short) > 0 else None)
+            self.indicator_data['ema_smooth'].append(float(self.ema_smooth[0]) if len(self.ema_smooth) > 0 else None)
+            
+            # 收集成交量比率
+            volume_ratio = self.data.volume[0] / self.volume_sma[0] if len(self.volume_sma) > 0 and self.volume_sma[0] > 0 else None
+            self.indicator_data['volume_ratio'].append(volume_ratio)
+            
+            # 收集DX和ZK指标数据
+            self.indicator_data['dx'].append(float(self.dx[0]) if len(self.dx) > 0 else None)
+            self.indicator_data['zk'].append(float(self.zk[0]) if len(self.zk) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

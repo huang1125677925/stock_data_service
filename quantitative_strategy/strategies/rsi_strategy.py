@@ -45,6 +45,11 @@ class RSIStrategy(BaseQuantStrategy):
         
         # 记录前一个RSI值用于判断突破
         self.rsi_prev = None
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'rsi': []      # RSI指标
+        }
     
     def get_strategy_name(self) -> str:
         return "rsi"
@@ -56,6 +61,9 @@ class RSIStrategy(BaseQuantStrategy):
         """
         策略主逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return
@@ -114,3 +122,13 @@ class RSIStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'RSI全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集RSI指标数据
+            self.indicator_data['rsi'].append(float(self.rsi[0]) if len(self.rsi) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

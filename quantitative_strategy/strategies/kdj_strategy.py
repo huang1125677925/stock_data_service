@@ -60,6 +60,14 @@ class KDJStrategy(BaseQuantStrategy):
         self.kd_crossover = bt.indicators.CrossOver(
             self.k_line, self.d_line
         )
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'k_line': [],       # K线
+            'd_line': [],       # D线
+            'j_line': [],       # J线
+            'kd_crossover': []  # KD交叉信号
+        }
     
     def get_strategy_name(self) -> str:
         return "kdj"
@@ -71,6 +79,9 @@ class KDJStrategy(BaseQuantStrategy):
         """
         策略主逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return
@@ -130,3 +141,16 @@ class KDJStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'KDJ全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集KDJ指标数据
+            self.indicator_data['k_line'].append(float(self.k_line[0]) if len(self.k_line) > 0 else None)
+            self.indicator_data['d_line'].append(float(self.d_line[0]) if len(self.d_line) > 0 else None)
+            self.indicator_data['j_line'].append(float(self.j_line[0]) if len(self.j_line) > 0 else None)
+            self.indicator_data['kd_crossover'].append(float(self.kd_crossover[0]) if len(self.kd_crossover) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

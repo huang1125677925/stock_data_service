@@ -71,6 +71,12 @@ class BIASStrategy(BaseQuantStrategy):
         self.ma = bt.indicators.SimpleMovingAverage(
             self.data.close, period=self.params.period
         )
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'bias': [],     # 乖离率指标
+            'ma': []        # 移动平均线
+        }
     
     def get_strategy_name(self) -> str:
         return "bias"
@@ -82,6 +88,9 @@ class BIASStrategy(BaseQuantStrategy):
         """
         策略主逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return
@@ -140,3 +149,14 @@ class BIASStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'BIAS全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集BIAS指标数据
+            self.indicator_data['bias'].append(float(self.bias[0]) if len(self.bias) > 0 else None)
+            self.indicator_data['ma'].append(float(self.ma[0]) if len(self.ma) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

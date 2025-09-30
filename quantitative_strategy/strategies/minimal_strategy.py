@@ -28,6 +28,12 @@ class MinimalStrategy(BaseQuantStrategy):
         """
         self.sma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.params.period)
         self.crossover = bt.indicators.CrossOver(self.data.close, self.sma)
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'sma': [],          # 简单移动平均线
+            'crossover': []     # 价格与均线交叉信号
+        }
 
     def get_strategy_name(self) -> str:
         return 'minimal'
@@ -92,3 +98,14 @@ class MinimalStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集SMA和交叉信号数据
+            self.indicator_data['sma'].append(float(self.sma[0]) if len(self.sma) > 0 else None)
+            self.indicator_data['crossover'].append(float(self.crossover[0]) if len(self.crossover) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')

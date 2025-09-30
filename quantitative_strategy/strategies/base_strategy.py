@@ -69,6 +69,9 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         self.return_history = []
         self.max_value_history = []
         
+        # 用于存储每个交易日的broker数据（资金和持仓变化）
+        self.broker_history = []
+        
         # 初始化技术指标
         self.init_indicators()
     
@@ -190,6 +193,18 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         # 记录历史数据
         self.value_history.append(current_value)
         
+        # 收集broker数据（资金和持仓变化）
+        try:
+            dt = self.data.datetime.datetime(0)
+            broker_record = {
+                'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
+                'cash': float(current_cash),
+                'value': float(current_value)
+            }
+            self.broker_history.append(broker_record)
+        except Exception as e:
+            self.log(f'收集broker数据时出错: {str(e)}')
+        
         # 计算收益率
         if len(self.value_history) > 1:
             initial_value = self.value_history[0]
@@ -239,22 +254,8 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
         在策略结束时调用，收集所有观测器的数据
         """
         try:
-            # 收集Broker观测器数据（资金和持仓变化）
-            broker_data = []
-            for i in range(len(self.data)):
-                try:
-                    dt = self.data.datetime.datetime(i)
-                    # 使用策略的broker属性而不是cerebro的broker
-                    cash = self.broker.get_cash()
-                    value = self.broker.get_value()
-                    broker_data.append({
-                        'datetime': dt.isoformat() if hasattr(dt, 'isoformat') else str(dt),
-                        'cash': float(cash),
-                        'value': float(value)
-                    })
-                except (IndexError, AttributeError):
-                    break
-            self.observer_data['broker'] = broker_data
+            # 使用已收集的broker历史数据
+            self.observer_data['broker'] = self.broker_history.copy()
             
             # 收集BuySell观测器数据（买卖信号）
             # 这些数据已经在notify_order中收集到trade_records中
@@ -277,7 +278,7 @@ class BaseQuantStrategy(bt.Strategy, metaclass=BaseQuantStrategyMeta):
             benchmark_data = self._calculate_benchmark_data()
             self.observer_data['benchmark'] = benchmark_data
             
-            self.log(f'观测器数据收集完成: broker={len(broker_data)}, buysell={len(self.trade_records)}, '
+            self.log(f'观测器数据收集完成: broker={len(self.broker_history)}, buysell={len(self.trade_records)}, '
                     f'trades={len(trades_data)}, timereturn={len(timereturn_data)}, '
                     f'drawdown={len(drawdown_data)}, benchmark={len(benchmark_data)}')
             

@@ -57,6 +57,14 @@ class MACDStrategy(BaseQuantStrategy):
         self.crossover = bt.indicators.CrossOver(
             self.macd.macd, self.macd.signal
         )
+        
+        # 初始化指标数据收集结构
+        self.indicator_data = {
+            'macd': [],         # MACD线
+            'signal': [],       # 信号线
+            'histo': [],        # 柱状图
+            'crossover': []     # 交叉信号
+        }
     
     def get_strategy_name(self) -> str:
         return "macd"
@@ -68,6 +76,9 @@ class MACDStrategy(BaseQuantStrategy):
         """
         策略主逻辑
         """
+        # 首先调用父类的next方法来记录历史数据
+        super().next()
+        
         # 如果有未完成的订单，跳过
         if self.order:
             return
@@ -117,3 +128,16 @@ class MACDStrategy(BaseQuantStrategy):
                 if position_size > 0:
                     self.log(f'MACD全仓卖出: 当前持仓={position_size}')
                     self.order = self.sell(size=position_size)
+    
+    def collect_indicator_data(self):
+        """
+        收集指标数据
+        """
+        try:
+            # 收集MACD指标数据
+            self.indicator_data['macd'].append(float(self.macd.macd[0]) if len(self.macd.macd) > 0 else None)
+            self.indicator_data['signal'].append(float(self.macd.signal[0]) if len(self.macd.signal) > 0 else None)
+            self.indicator_data['histo'].append(float(self.macd_histo.histo[0]) if len(self.macd_histo.histo) > 0 else None)
+            self.indicator_data['crossover'].append(float(self.crossover[0]) if len(self.crossover) > 0 else None)
+        except Exception as e:
+            self.log(f'收集指标数据时出错: {str(e)}')
