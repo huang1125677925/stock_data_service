@@ -32,6 +32,7 @@ try:
     from .strategies.bias_strategy import BIASStrategy
     from .strategies.bollinger_strategy import BollingerStrategy
     from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
+    from indival_stock_data.services import IndividualStockService
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
     import os
@@ -63,6 +64,8 @@ except ImportError:
     from quantitative_strategy.strategies.bias_strategy import BIASStrategy
     from quantitative_strategy.strategies.bollinger_strategy import BollingerStrategy
     from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
+
+    from indival_stock_data.services import IndividualStockService
 
 
 
@@ -451,7 +454,8 @@ class BacktestService:
         try:
             # 这里可以通过akshare或其他方式获取股票名称
             # 暂时返回代码本身
-            return stock_code
+            stock_object = IndividualStockService()._get_or_create_stock(stock_code)
+            return stock_object.name if stock_object else stock_code
         except:
             return stock_code
 
