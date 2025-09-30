@@ -25,7 +25,23 @@ class PSYIndicator(bt.Indicator):
         if len(self) < self.params.period:
             self.lines.psy[0] = 50.0  # 默认值
         else:
-            up_count = sum(self.up_days.get(ago=i) for i in range(self.params.period))
+            # 修复类型错误：安全地将布尔值转换为整数后再求和
+            up_count = 0
+            for i in range(self.params.period):
+                value = self.up_days.get(ago=i)
+                # 检查值的类型并安全转换
+                if isinstance(value, bool):
+                    up_count += int(value)
+                elif isinstance(value, (int, float)):
+                    up_count += 1 if value > 0 else 0
+                else:
+                    # 对于二进制或其他类型的值，尝试安全转换
+                    try:
+                        # 如果是非空值，视为True
+                        up_count += 1 if value else 0
+                    except:
+                        # 如果转换失败，默认为0
+                        up_count += 0
             self.lines.psy[0] = (up_count / self.params.period) * 100
 
 
