@@ -179,6 +179,97 @@ class IndividualStockRealtime(models.Model):
         }
 
 
+class PerformanceReport(models.Model):
+    """业绩快报模型
+    功能：存储个股在特定报告期的核心经营与财务指标。
+    参数（字段）：
+    - stock(ForeignKey[IndividualStock]): 所属股票；删除股票级联删除报告。
+    - report_date(CharField): 报告期，格式 YYYYMMDD。
+    - earnings_per_share(DecimalField): 每股收益（元）。
+    - operating_revenue(DecimalField): 营业总收入（元）。
+    - operating_revenue_growth_rate(DecimalField): 营业总收入-同比增长（%）。
+    - operating_revenue_quarter_growth(DecimalField): 营业总收入-季度环比增长（%）。
+    - net_profit(DecimalField): 净利润（元）。
+    - net_profit_growth_rate(DecimalField): 净利润-同比增长（%）。
+    - net_profit_quarter_growth(DecimalField): 净利润-季度环比增长（%）。
+    - net_assets_per_share(DecimalField): 每股净资产（元）。
+    - roe(DecimalField): 净资产收益率（%）。
+    - operating_cash_flow_per_share(DecimalField): 每股经营现金流量（元）。
+    - gross_profit_margin(DecimalField): 销售毛利率（%）。
+    - industry(CharField): 所处行业。
+    - announcement_date(DateField): 最新公告日期。
+    - created_at(DateTimeField): 创建时间。
+    - updated_at(DateTimeField): 更新时间。
+    返回值：无（模型用于持久化数据）。
+    事件：无（模型不直接触发事件）。
+    """
+    stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='performance_reports', verbose_name='所属股票')
+    report_date = models.CharField(max_length=8, verbose_name='报告期', help_text='格式：YYYYMMDD，如20200331')
+    earnings_per_share = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True, verbose_name='每股收益(元)')
+    
+    # 营业总收入相关字段
+    operating_revenue = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='营业总收入(元)')
+    operating_revenue_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='营业总收入-同比增长(%)')
+    operating_revenue_quarter_growth = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='营业总收入-季度环比增长(%)')
+    
+    # 净利润相关字段
+    net_profit = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='净利润(元)')
+    net_profit_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='净利润-同比增长(%)')
+    net_profit_quarter_growth = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='净利润-季度环比增长(%)')
+    
+    # 其他财务指标
+    net_assets_per_share = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True, verbose_name='每股净资产(元)')
+    roe = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True, verbose_name='净资产收益率(%)')
+    operating_cash_flow_per_share = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True, verbose_name='每股经营现金流量(元)')
+    gross_profit_margin = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True, verbose_name='销售毛利率(%)')
+    
+    # 基本信息
+    industry = models.CharField(max_length=100, null=True, blank=True, verbose_name='所处行业')
+    announcement_date = models.DateField(null=True, blank=True, verbose_name='最新公告日期')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'performance_report'
+        verbose_name = '业绩快报'
+        verbose_name_plural = '业绩快报'
+        ordering = ['-report_date', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-report_date']),
+            models.Index(fields=['-report_date']),
+            models.Index(fields=['announcement_date']),
+        ]
+        unique_together = ['stock', 'report_date']
+    
+    def __str__(self):
+        return f'{self.stock.code} - {self.stock.name} - {self.report_date}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'report_date': self.report_date,
+            'earnings_per_share': float(self.earnings_per_share) if self.earnings_per_share else None,
+            'operating_revenue': float(self.operating_revenue) if self.operating_revenue else None,
+            'operating_revenue_growth_rate': float(self.operating_revenue_growth_rate) if self.operating_revenue_growth_rate else None,
+            'operating_revenue_quarter_growth': float(self.operating_revenue_quarter_growth) if self.operating_revenue_quarter_growth else None,
+            'net_profit': float(self.net_profit) if self.net_profit else None,
+            'net_profit_growth_rate': float(self.net_profit_growth_rate) if self.net_profit_growth_rate else None,
+            'net_profit_quarter_growth': float(self.net_profit_quarter_growth) if self.net_profit_quarter_growth else None,
+            'net_assets_per_share': float(self.net_assets_per_share) if self.net_assets_per_share else None,
+            'roe': float(self.roe) if self.roe else None,
+            'operating_cash_flow_per_share': float(self.operating_cash_flow_per_share) if self.operating_cash_flow_per_share else None,
+            'gross_profit_margin': float(self.gross_profit_margin) if self.gross_profit_margin else None,
+            'industry': self.industry,
+            'announcement_date': self.announcement_date.strftime('%Y-%m-%d') if self.announcement_date else None,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
+
 class StrategyResult(models.Model):
     """策略选股结果模型"""
     strategy_name = models.CharField(max_length=100, verbose_name='策略名称')

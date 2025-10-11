@@ -25,4 +25,10 @@ urlpatterns = [
     path('strategy-results/', views.StrategyResultView.as_view(), name='strategy_result_list'),
     # 获取、更新或删除单个策略结果
     path('strategy-results/<int:result_id>/', views.StrategyResultView.as_view(), name='strategy_result_detail'),
+    
+    # 业绩快报接口
+    # 获取业绩快报数据（通过查询参数指定报告期或股票代码）
+    path('performance-reports/', views.PerformanceReportView.as_view(), name='performance_report_list'),
+    # 获取指定股票的业绩快报数据
+    path('stocks/<str:stock_code>/performance-reports/', views.StockPerformanceReportView.as_view(), name='stock_performance_reports'),
 ]

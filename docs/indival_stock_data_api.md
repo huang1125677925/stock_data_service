@@ -325,3 +325,145 @@
 | --- | --- |
 | 400 | 参数格式错误 |
 | 500 | 更新股票数据失败 |
+
+---
+
+## 7. 获取业绩快报列表
+
+获取特定报告期的所有股票业绩快报数据，支持分页。
+
+### 请求信息
+
+- **URL**: `/performance-reports/`
+- **方法**: GET
+- **接口名称**: `performance_report_list`
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 是 | - | 报告期，格式：YYYYMMDD，如20200331 |
+| stock_code | string | 否 | - | 股票代码，用于查询特定股票 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "reports": [
+      {
+        "stock_code": "600000",
+        "stock_name": "浦发银行",
+        "report_date": "20200331",
+        "earnings_per_share": 0.65,
+        "operating_revenue": 50123456789.12,
+        "operating_revenue_growth_rate": "10.5%",
+        "operating_revenue_quarter_growth": 2.3,
+        "net_profit": 12345678901.23,
+        "net_profit_growth_rate": "8.7%",
+        "net_profit_quarter_growth": 1.5,
+        "net_assets_per_share": 12.34,
+        "roe": 5.67,
+        "operating_cash_flow_per_share": 1.23,
+        "gross_profit_margin": 45.67,
+        "industry": "银行",
+        "announcement_date": "2020-04-15"
+      }
+    ],
+    "pagination": {
+      "current_page": 1,
+      "total_pages": 200,
+      "total_count": 4000,
+      "page_size": 20,
+      "has_next": true,
+      "has_previous": false
+    }
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 参数格式错误或页码超出范围 |
+| 500 | 获取业绩快报数据失败 |
+
+---
+
+## 8. 获取指定股票的业绩快报数据
+
+获取指定股票的所有业绩快报数据，支持分页。
+
+### 请求信息
+
+- **URL**: `/stocks/<str:stock_code>/performance-reports/`
+- **方法**: GET
+- **接口名称**: `stock_performance_reports`
+
+### 路径参数
+
+| 参数名 | 类型 | 必填 | 描述 |
+| --- | --- | --- | --- |
+| stock_code | string | 是 | 股票代码，如：600000 |
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取股票600000的业绩快报数据",
+  "data": {
+    "stock_code": "600000",
+    "reports": [
+      {
+          "id": 9814,
+          "stock_code": "600000",
+          "stock_name": "平安银行",
+          "report_date": "20250630",
+          "earnings_per_share": 1.18,
+          "operating_revenue": 69385000000.0,
+          "operating_revenue_growth_rate": -10.04,
+          "operating_revenue_quarter_growth": 5.84,
+          "net_profit": 24870000000.0,
+          "net_profit_growth_rate": -3.9,
+          "net_profit_quarter_growth": -23.57,
+          "net_assets_per_share": 22.679,
+          "roe": 5.25,
+          "operating_cash_flow_per_share": 9.0014,
+          "gross_profit_margin": null,
+          "industry": "银行",
+          "announcement_date": "2025-08-23",
+          "created_at": "2025-10-11 14:33:51",
+          "updated_at": "2025-10-11 14:33:51"
+      },
+    ],
+    "pagination": {
+      "current_page": 1,
+      "total_pages": 5,
+      "total_count": 100,
+      "page_size": 20,
+      "has_next": true,
+      "has_previous": false
+    }
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 无效的股票代码格式或页码超出范围 |
+| 500 | 获取股票业绩快报数据失败 |

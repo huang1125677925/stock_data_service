@@ -307,3 +307,156 @@ class StrategyResultView(APIView):
             logger.error(f"删除策略结果失败: {str(e)}")
             return error_response(f'删除策略结果失败: {str(e)}', 500)
 
+
+class PerformanceReportView(APIView):
+    """
+    业绩快报API视图
+    提供业绩快报数据的查询接口
+    """
+    
+    def get(self, request):
+        """
+        获取业绩快报数据
+        
+        查询参数:
+        - date: 报告期，格式YYYYMMDD，如20200331（必需）
+        - stock_code: 股票代码（可选，用于查询特定股票）
+        - page: 页码，默认1
+        - page_size: 每页数量，默认20
+        """
+        try:
+            # 获取查询参数
+            date = request.query_params.get('date')
+            stock_code = request.query_params.get('stock_code')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # 如果指定了股票代码，获取该股票的所有业绩快报
+            if stock_code:
+                if not validate_stock_symbol(stock_code):
+                    return error_response("无效的股票代码格式", 400)
+                
+                data = individual_stock_service.get_stock_performance_reports(stock_code)
+                if data is None:
+                    return error_response("获取股票业绩快报数据失败", 500)
+                
+                # 分页处理
+                paginator = Paginator(data, page_size)
+                if page > paginator.num_pages:
+                    return error_response("页码超出范围", 400)
+                
+                page_data = paginator.get_page(page)
+                
+                return success_response(
+                    {
+                        'reports': list(page_data),
+                        'pagination': {
+                            'current_page': page,
+                            'total_pages': paginator.num_pages,
+                            'total_count': paginator.count,
+                            'page_size': page_size,
+                            'has_next': page_data.has_next(),
+                            'has_previous': page_data.has_previous()
+                        }
+                    },
+                    f"成功获取股票{stock_code}的业绩快报数据"
+                )
+            
+            # 如果指定了报告期，获取该期的所有业绩快报
+            elif date:
+                data = individual_stock_service.get_performance_report(date)
+                if data is None:
+                    return error_response("获取业绩快报数据失败", 500)
+                
+                # 分页处理
+                paginator = Paginator(data, page_size)
+                if page > paginator.num_pages:
+                    return error_response("页码超出范围", 400)
+                
+                page_data = paginator.get_page(page)
+                
+                return success_response(
+                    {
+                        'reports': list(page_data),
+                        'pagination': {
+                            'current_page': page,
+                            'total_pages': paginator.num_pages,
+                            'total_count': paginator.count,
+                            'page_size': page_size,
+                            'has_next': page_data.has_next(),
+                            'has_previous': page_data.has_previous()
+                        }
+                    },
+                    f"成功获取{date}期业绩快报数据"
+                )
+            
+            else:
+                return error_response("请提供date（报告期）或stock_code（股票代码）参数", 400)
+                
+        except ValueError as e:
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except Exception as e:
+            logger.error(f"获取业绩快报数据失败: {str(e)}")
+            return error_response(f"获取业绩快报数据失败: {str(e)}", 500)
+
+
+class StockPerformanceReportView(APIView):
+    """
+    单个股票业绩快报API视图
+    提供特定股票的业绩快报数据查询
+    """
+    
+    def get(self, request, stock_code):
+        """
+        获取指定股票的业绩快报数据
+        
+        路径参数:
+        - stock_code: 股票代码
+        
+        查询参数:
+        - page: 页码，默认1
+        - page_size: 每页数量，默认20
+        """
+        try:
+            # 验证股票代码
+            if not validate_stock_symbol(stock_code):
+                return error_response("无效的股票代码格式", 400)
+            
+            # 获取分页参数
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # 获取数据
+            data = individual_stock_service.get_stock_performance_reports(stock_code)
+            if data is None:
+                return error_response("获取股票业绩快报数据失败", 500)
+            
+            # 分页处理
+            paginator = Paginator(data, page_size)
+            if page > paginator.num_pages and paginator.num_pages > 0:
+                return error_response("页码超出范围", 400)
+            
+            page_data = paginator.get_page(page)
+            
+            return success_response(
+                {
+                    'stock_code': stock_code,
+                    'reports': list(page_data),
+                    'pagination': {
+                        'current_page': page,
+                        'total_pages': paginator.num_pages,
+                        'total_count': paginator.count,
+                        'page_size': page_size,
+                        'has_next': page_data.has_next(),
+                        'has_previous': page_data.has_previous()
+                    }
+                },
+                f"成功获取股票{stock_code}的业绩快报数据"
+            )
+            
+        except ValueError as e:
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except Exception as e:
+            logger.error(f"获取股票业绩快报数据失败: {str(e)}")
+            return error_response(f"获取股票业绩快报数据失败: {str(e)}", 500)
+

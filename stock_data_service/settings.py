@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'indival_stock_data',
     'quantitative_strategy',
     'stock_market',
+    'django_comment_migrate',
 ]
 
 MIDDLEWARE = [
@@ -250,3 +251,8 @@ CRONJOBS = [
 CRONTAB_LOCK_JOBS = True
 CRONTAB_COMMAND_PREFIX = f'PYTHONPATH={BASE_DIR}'
 CRONTAB_DJANGO_SETTINGS_MODULE = 'stock_data_service.settings'
+
+# 注释迁移插件配置
+DCM_COMMENT_KEY = 'verbose_name'  # 将字段 verbose_name 作为列注释来源
+DCM_TABLE_COMMENT_KEY = 'verbose_name'  # 将模型 Meta.verbose_name 作为表注释来源
+DCM_COMMENT_APP = ['indival_stock_data']  # 仅迁移该 app 的注释

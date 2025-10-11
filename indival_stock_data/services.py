@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
 from django.db import transaction
-from .models import IndividualStock, IndividualStockDaily, IndividualStockRealtime
+from .models import IndividualStock, IndividualStockDaily, IndividualStockRealtime, PerformanceReport
 from common.validators import validate_stock_symbol
 
 logger = logging.getLogger(__name__)
@@ -363,5 +363,104 @@ class IndividualStockService:
             logger.error(f"获取或创建股票{stock_code}信息失败: {str(e)}")
             return None
 
+    def get_performance_report(self, date: str) -> Optional[List[Dict]]:
+        """
+        获取指定日期的业绩快报数据（仅从数据库查询）
+        
+        Args:
+            date: 报告期，格式：YYYYMMDD，如"20200331"
+            
+        Returns:
+            业绩快报数据列表，失败返回None
+        """
+        try:
+            # 验证日期格式
+            if not self._validate_report_date(date):
+                logger.error(f"无效的报告期格式: {date}")
+                return None
+            
+            # 先从缓存查询
+            cache_key = f"performance_report_{date}"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                logger.info(f"从缓存获取业绩快报数据: {date}")
+                return cached_data
+            
+            # 从数据库获取
+            reports = PerformanceReport.objects.filter(report_date=date).select_related('stock')
+            if reports.exists():
+                report_list = [report.to_dict() for report in reports]
+                cache.set(cache_key, report_list, self.cache_timeout)
+                logger.info(f"从数据库获取{len(report_list)}条业绩快报数据: {date}")
+                return report_list
+            else:
+                logger.warning(f"数据库中未找到业绩快报数据: {date}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"获取业绩快报数据失败 {date}: {str(e)}")
+            return None
+    
+    def get_stock_performance_reports(self, stock_code: str) -> Optional[List[Dict]]:
+        """
+        获取指定股票的所有业绩快报数据
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            业绩快报数据列表，失败返回None
+        """
+        try:
+            # 验证股票代码
+            if not validate_stock_symbol(stock_code):
+                logger.error(f"无效的股票代码: {stock_code}")
+                return None
+            
+            # 从数据库获取
+            reports = PerformanceReport.objects.filter(
+                stock__code=stock_code
+            ).select_related('stock').order_by('-report_date')
+            
+            if reports.exists():
+                report_list = [report.to_dict() for report in reports]
+                logger.info(f"获取股票{stock_code}的{len(report_list)}条业绩快报数据")
+                return report_list
+            else:
+                logger.warning(f"未找到股票{stock_code}的业绩快报数据")
+                return []
+            
+        except Exception as e:
+            logger.error(f"获取股票业绩快报数据失败 {stock_code}: {str(e)}")
+            return None
+    
+    def _validate_report_date(self, date: str) -> bool:
+        """
+        验证报告期格式
+        
+        Args:
+            date: 报告期字符串
+            
+        Returns:
+            是否有效
+        """
+        if not date or len(date) != 8:
+            return False
+        
+        try:
+            year = int(date[:4])
+            month_day = date[4:]
+            
+            # 检查年份范围
+            if year < 2010 or year > datetime.now().year:
+                return False
+            
+            # 检查月日格式
+            valid_endings = ['0331', '0630', '0930', '1231']
+            return month_day in valid_endings
+            
+        except ValueError:
+            return False
+    
 # 创建服务实例
 individual_stock_service = IndividualStockService()

@@ -18,7 +18,7 @@ import baostock as bs
 from datetime import datetime, timedelta
 import akshare as ak
 import pandas as pd
-from indival_stock_data.models import IndividualStock
+from indival_stock_data.models import IndividualStock, PerformanceReport
 import time
 from indival_stock_data.models import IndividualStockDaily
 from django.db import transaction
@@ -483,6 +483,158 @@ def judge_stock_type(stock_code: str) -> str:
     else:
         return "sh."  # 默认使用上海交易所
 
+def fetch_performance_report(date: str):
+    """
+    从akshare获取指定日期的业绩快报数据并保存到数据库
+    
+    Args:
+        date: 报告期，格式：YYYYMMDD，如"20200331"
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始执行业绩快报数据获取任务: {date}")
+    
+    try:
+        # 获取要更新的股票列表
+        stocks = IndividualStock.objects.all()
+        stock_dict = {stock.code: stock for stock in stocks}
+        
+        if not stocks.exists():
+            logger.warning("没有找到需要更新的股票")
+            return
+
+        # 从akshare获取数据
+        logger.info(f"从akshare获取业绩快报数据: {date}")
+        df = ak.stock_yjbb_em(date=date)
+        
+        if df is None or df.empty:
+            logger.warning(f"未获取到业绩快报数据: {date}")
+            return {"status": "warning", "message": f"未获取到业绩快报数据: {date}"}
+        
+        # 处理并保存数据
+        created_count = 0
+        failed_count = 0
+        
+        # 收集需要创建的数据
+        reports_to_create = []
+        
+        with transaction.atomic():
+            for _, row in df.iterrows():
+                try:
+                    stock_code = str(row['股票代码'])
+                    stock = stock_dict.get(stock_code, None)
+                    if not stock:
+                        logger.debug(f"股票记录不存在，跳过: {stock_code}")
+                        failed_count += 1
+                        continue
+                    
+                    # 解析数据
+                    report_data = _parse_performance_data(row, date)
+                    
+                    # 添加到批量创建列表
+                    reports_to_create.append(PerformanceReport(
+                        stock=stock,
+                        report_date=date,
+                        **report_data
+                    ))
+                        
+                except Exception as e:
+                    logger.error(f"处理业绩快报数据失败 {stock_code}: {str(e)}")
+                    failed_count += 1
+                    continue
+            
+            # 批量创建
+            if reports_to_create:
+                PerformanceReport.objects.bulk_create(reports_to_create, batch_size=500)
+                created_count = len(reports_to_create)
+        
+        logger.info(f"业绩快报数据获取任务完成: 新增{created_count}条，跳过{failed_count}条")
+        
+        return {
+            "status": "success" if failed_count == 0 else "partial",
+            "message": f"业绩快报数据获取任务完成: 新增{created_count}条，跳过{failed_count}条",
+            "created": created_count,
+            "failed": failed_count
+        }
+        
+    except Exception as e:
+        logger.error(f"业绩快报数据获取任务执行失败 {date}: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+
+def _parse_performance_data(row, date: str) -> dict:
+    """
+    解析业绩快报数据
+    
+    Args:
+        row: pandas行数据
+        date: 报告期
+        
+    Returns:
+        dict: 解析后的数据字典
+    """
+    def safe_float(value):
+        """安全转换为浮点数"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            return round(float(value), 2)
+        except (ValueError, TypeError):
+            return None
+    
+    def safe_str(value):
+        """安全转换为字符串"""
+        if pd.isna(value) or value == '':
+            return None
+        return str(value)
+    
+    def parse_growth_rate(value):
+        """解析增长率，去除%符号，并处理极端值"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            str_value = str(value)
+            if str_value.endswith('%'):
+                float_value = float(str_value[:-1])
+            else:
+                float_value = float(str_value)
+            
+            # 限制值在数据库字段允许的范围内
+            # DecimalField(max_digits=12, decimal_places=4)的实际安全范围应更小
+            max_allowed = 9999.9999  # 更保守的限制，确保不会超出范围
+            min_allowed = -max_allowed
+            
+            if float_value > max_allowed:
+                logger.warning(f"增长率值过大，已限制: {float_value} -> {max_allowed}")
+                float_value = max_allowed
+            elif float_value < min_allowed:
+                logger.warning(f"增长率值过小，已限制: {float_value} -> {min_allowed}")
+                float_value = min_allowed
+                
+            return round(float_value, 2)
+        except (ValueError, TypeError) as e:
+            logger.error(f"解析增长率失败: {value}, 错误: {str(e)}")
+            return None
+    
+    return {
+        'earnings_per_share': safe_float(row.get('每股收益')),
+        'operating_revenue': safe_float(row.get('营业总收入-营业总收入')),
+        'operating_revenue_growth_rate': parse_growth_rate(row.get('营业总收入-同比增长')),
+        'operating_revenue_quarter_growth': parse_growth_rate(row.get('营业总收入-季度环比增长')),
+        'net_profit': safe_float(row.get('净利润-净利润')),
+        'net_profit_growth_rate': parse_growth_rate(row.get('净利润-同比增长')),
+        'net_profit_quarter_growth': parse_growth_rate(row.get('净利润-季度环比增长')),
+        'net_assets_per_share': safe_float(row.get('每股净资产')),
+        'roe': safe_float(row.get('净资产收益率')),
+        'operating_cash_flow_per_share': safe_float(row.get('每股经营现金流量')),
+        'gross_profit_margin': safe_float(row.get('销售毛利率')),
+        'industry': safe_str(row.get('所处行业')),
+        'announcement_date': safe_str(row.get('最新公告日期')),
+    }
+
+
 def del_error_data():
     """
     删除数据列表中的错误数据行。
@@ -508,6 +660,77 @@ def del_error_data():
     print(f"删除了 {cnt} 只股票的错误数据")
 
 
+def fetch_all_performance_reports(start_year=2015, end_date='20240930'):
+    """
+    获取从指定年份开始到指定日期的所有季报、中报、三季报和年报数据
+    
+    Args:
+        start_year: 开始年份，默认2015年
+        end_date: 结束日期，格式YYYYMMDD，默认20240930
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始批量获取从{start_year}年到{end_date}的业绩报告数据")
+    
+    # 生成所有季度报告日期
+    report_dates = []
+    end_year = int(end_date[:4])
+    end_quarter = int(end_date[4:6]) // 3
+    
+    for year in range(start_year, end_year + 1):
+        # 对于每年，添加四个季度的报告日期
+        quarters = [
+            f"{year}0331",  # 一季报
+            f"{year}0630",  # 中报
+            f"{year}0930",  # 三季报
+            f"{year}1231"   # 年报
+        ]
+        
+        # 如果是结束年份，只添加到指定季度
+        if year == end_year:
+            quarters = quarters[:end_quarter]
+            
+        report_dates.extend(quarters)
+    
+    # 按时间顺序排序（从早到晚）
+    report_dates.sort()
+    
+    total_created = 0
+    total_failed = 0
+    results = []
+    
+    for date in report_dates:
+        logger.info(f"获取 {date} 的业绩报告数据")
+        try:
+            result = fetch_performance_report(date)
+            if result and isinstance(result, dict):
+                total_created += result.get('created', 0)
+                total_failed += result.get('failed', 0)
+                results.append(result)
+            # 添加延时，避免频繁请求
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"获取 {date} 业绩报告数据失败: {str(e)}")
+            results.append({"status": "error", "date": date, "message": str(e)})
+    
+    summary = {
+        "status": "success" if total_failed == 0 else "partial",
+        "message": f"批量获取业绩报告完成: 共处理{len(report_dates)}个报告期，新增{total_created}条，失败{total_failed}条",
+        "total_created": total_created,
+        "total_failed": total_failed,
+        "details": results
+    }
+    
+    logger.info(summary["message"])
+    return summary
+
+
 if __name__ == '__main__':
-    update_individual_stock_daily_data()
+    # update_individual_stock_daily_data()
+    
+    # 从2015年开始获取季报、中报、三季报、年报到20240930
+    # fetch_all_performance_reports(start_year=2015, end_date='20240930')
+
+    fetch_performance_report('20210331')
 

@@ -43,4 +43,6 @@ drf-spectacular==0.26.5
 pymysql
 playwright==1.55.0
 
+django-comment-migrate
+
 backtrader==1.9.78.123
