@@ -14,8 +14,8 @@ from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from .services import individual_stock_service
 from common.validators import validate_stock_symbol
 from common.response import success_response, error_response
-from .models import IndividualStock, StrategyResult
-from .serializers import IndividualStockSerializer, StrategyResultSerializer
+from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement
+from .serializers import IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, IncomeStatementSerializer, CashFlowStatementSerializer
 from django.db.models import Q
 
 logger = logging.getLogger(__name__)
@@ -470,4 +470,214 @@ class StockPerformanceReportView(APIView):
         except Exception as e:
             logger.error(f"获取股票业绩快报数据失败: {str(e)}")
             return error_response(f"获取股票业绩快报数据失败: {str(e)}", 500)
+
+
+class BalanceSheetView(APIView):
+    """
+    资产负债表API视图
+    功能：提供资产负债表数据的查询接口
+    参数：
+    - request: HTTP请求对象
+    返回值：
+    - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息
+    事件：
+    - 当查询参数错误时，记录日志并返回错误响应
+    """
+    
+    def get(self, request, stock_code=None):
+        """
+        获取资产负债表数据
+        
+        路径参数:
+        - stock_code: 股票代码（可选）
+        
+        查询参数:
+        - date: 报告期，格式YYYYMMDD（可选）
+        - page: 页码，默认1
+        - page_size: 每页数量，默认20
+        """
+        try:
+            # 获取查询参数
+            date = request.query_params.get('date')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # 构建查询条件
+            queryset = BalanceSheet.objects.select_related('stock').all()
+            
+            if stock_code:
+                if not validate_stock_symbol(stock_code):
+                    return error_response("无效的股票代码格式", 400)
+                queryset = queryset.filter(stock__code=stock_code)
+            
+            if date:
+                queryset = queryset.filter(date=date)
+            
+            # 按日期倒序排列
+            queryset = queryset.order_by('-report_date', 'stock__code')
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            if page > paginator.num_pages and paginator.num_pages > 0:
+                return error_response("页码超出范围", 400)
+            
+            page_data = paginator.get_page(page)
+            
+            # 序列化数据
+            serializer = BalanceSheetSerializer(page_data.object_list, many=True)
+            
+            return success_response({
+                'total': paginator.count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': paginator.num_pages,
+                'data': serializer.data
+            }, "成功获取资产负债表数据")
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except Exception as e:
+            logger.error(f"获取资产负债表数据失败: {str(e)}")
+            return error_response(f"获取资产负债表数据失败: {str(e)}", 500)
+
+
+class IncomeStatementView(APIView):
+    """
+    利润表API视图
+    功能：提供利润表数据的查询接口
+    参数：
+    - request: HTTP请求对象
+    返回值：
+    - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息
+    事件：
+    - 当查询参数错误时，记录日志并返回错误响应
+    """
+    
+    def get(self, request, stock_code=None):
+        """
+        获取利润表数据
+        
+        路径参数:
+        - stock_code: 股票代码（可选）
+        
+        查询参数:
+        - date: 报告期，格式YYYYMMDD（可选）
+        - page: 页码，默认1
+        - page_size: 每页数量，默认20
+        """
+        try:
+            # 获取查询参数
+            date = request.query_params.get('date')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # 构建查询条件
+            queryset = IncomeStatement.objects.select_related('stock').all()
+            
+            if stock_code:
+                if not validate_stock_symbol(stock_code):
+                    return error_response("无效的股票代码格式", 400)
+                queryset = queryset.filter(stock__code=stock_code)
+            
+            if date:
+                queryset = queryset.filter(date=date)
+            
+            # 按日期倒序排列
+            queryset = queryset.order_by('-report_date', 'stock__code')
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            if page > paginator.num_pages and paginator.num_pages > 0:
+                return error_response("页码超出范围", 400)
+            
+            page_data = paginator.get_page(page)
+            
+            # 序列化数据
+            serializer = IncomeStatementSerializer(page_data.object_list, many=True)
+            
+            return success_response({
+                'total': paginator.count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': paginator.num_pages,
+                'data': serializer.data
+            }, "成功获取利润表数据")
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except Exception as e:
+            logger.error(f"获取利润表数据失败: {str(e)}")
+            return error_response(f"获取利润表数据失败: {str(e)}", 500)
+
+
+class CashFlowStatementView(APIView):
+    """
+    现金流量表API视图
+    功能：提供现金流量表数据的查询接口
+    参数：
+    - request: HTTP请求对象
+    返回值：
+    - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息
+    事件：
+    - 当查询参数错误时，记录日志并返回错误响应
+    """
+    
+    def get(self, request, stock_code=None):
+        """
+        获取现金流量表数据
+        
+        路径参数:
+        - stock_code: 股票代码（可选）
+        
+        查询参数:
+        - date: 报告期，格式YYYYMMDD（可选）
+        - page: 页码，默认1
+        - page_size: 每页数量，默认20
+        """
+        try:
+            # 获取查询参数
+            date = request.query_params.get('date')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            # 构建查询条件
+            queryset = CashFlowStatement.objects.select_related('stock').all()
+            
+            if stock_code:
+                if not validate_stock_symbol(stock_code):
+                    return error_response("无效的股票代码格式", 400)
+                queryset = queryset.filter(stock__code=stock_code)
+            
+            if date:
+                queryset = queryset.filter(date=date)
+            
+            # 按日期倒序排列
+            queryset = queryset.order_by('-report_date', 'stock__code')
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            if page > paginator.num_pages and paginator.num_pages > 0:
+                return error_response("页码超出范围", 400)
+            
+            page_data = paginator.get_page(page)
+            
+            # 序列化数据
+            serializer = CashFlowStatementSerializer(page_data.object_list, many=True)
+            
+            return success_response({
+                'total': paginator.count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': paginator.num_pages,
+                'data': serializer.data
+            }, "成功获取现金流量表数据")
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except Exception as e:
+            logger.error(f"获取现金流量表数据失败: {str(e)}")
+            return error_response(f"获取现金流量表数据失败: {str(e)}", 500)
 

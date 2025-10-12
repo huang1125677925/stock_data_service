@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import IndividualStock, IndividualStockDaily, StrategyResult
+from .models import IndividualStock, IndividualStockDaily, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement
 import json
 
 
@@ -154,3 +154,111 @@ class StrategyResultSerializer(serializers.ModelSerializer):
                         raise serializers.ValidationError(f"策略结果必须是有效的JSON格式: {str(e)}")
         
         return super().to_internal_value(data_copy)
+
+
+class BalanceSheetSerializer(serializers.ModelSerializer):
+    """
+    资产负债表序列化器
+    功能：将BalanceSheet模型实例序列化为JSON格式。
+    参数：
+    - model: BalanceSheet模型
+    - fields: 所有字段
+    返回值：序列化后的JSON数据
+    事件：无
+    """
+    # 处理日期字段格式
+    announcement_date = serializers.DateField(format='%Y-%m-%d', required=False, allow_null=True)
+    created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    
+    # 处理 Decimal 字段，确保输出为 float 类型
+    monetary_funds = serializers.FloatField(required=False, allow_null=True)
+    accounts_receivable = serializers.FloatField(required=False, allow_null=True)
+    inventory = serializers.FloatField(required=False, allow_null=True)
+    total_assets = serializers.FloatField(required=False, allow_null=True)
+    total_assets_growth_rate = serializers.FloatField(required=False, allow_null=True)
+    accounts_payable = serializers.FloatField(required=False, allow_null=True)
+    total_liabilities = serializers.FloatField(required=False, allow_null=True)
+    advance_receipts = serializers.FloatField(required=False, allow_null=True)
+    total_liabilities_growth_rate = serializers.FloatField(required=False, allow_null=True)
+    debt_to_asset_ratio = serializers.FloatField(required=False, allow_null=True)
+    total_equity = serializers.FloatField(required=False, allow_null=True)
+    
+    # 添加股票信息字段
+    stock_code = serializers.CharField(source='stock.code', read_only=True)
+    stock_name = serializers.CharField(source='stock.name', read_only=True)
+    
+    class Meta:
+        model = BalanceSheet
+        fields = '__all__'
+
+
+class IncomeStatementSerializer(serializers.ModelSerializer):
+    """
+    利润表序列化器
+    功能：将IncomeStatement模型实例序列化为JSON格式。
+    参数：
+    - model: IncomeStatement模型
+    - fields: 所有字段
+    返回值：序列化后的JSON数据
+    事件：无
+    """
+    # 处理日期字段格式
+    announcement_date = serializers.DateField(format='%Y-%m-%d', required=False, allow_null=True)
+    created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    
+    # 处理 Decimal 字段，确保输出为 float 类型
+    net_profit = serializers.FloatField(required=False, allow_null=True)
+    net_profit_growth_rate = serializers.FloatField(required=False, allow_null=True)
+    operating_revenue = serializers.FloatField(required=False, allow_null=True)
+    operating_revenue_growth_rate = serializers.FloatField(required=False, allow_null=True)
+    operating_expenses = serializers.FloatField(required=False, allow_null=True)
+    sales_expenses = serializers.FloatField(required=False, allow_null=True)
+    management_expenses = serializers.FloatField(required=False, allow_null=True)
+    financial_expenses = serializers.FloatField(required=False, allow_null=True)
+    total_operating_expenses = serializers.FloatField(required=False, allow_null=True)
+    operating_profit = serializers.FloatField(required=False, allow_null=True)
+    total_profit = serializers.FloatField(required=False, allow_null=True)
+    
+    # 添加股票信息字段
+    stock_code = serializers.CharField(source='stock.code', read_only=True)
+    stock_name = serializers.CharField(source='stock.name', read_only=True)
+    
+    class Meta:
+        model = IncomeStatement
+        fields = '__all__'
+
+
+class CashFlowStatementSerializer(serializers.ModelSerializer):
+    """
+    现金流量表序列化器
+    功能：将CashFlowStatement模型实例序列化为JSON格式。
+    参数：
+    - model: CashFlowStatement模型
+    - fields: 所有字段
+    返回值：序列化后的JSON数据
+    事件：无
+    """
+    # 处理日期字段格式
+    announcement_date = serializers.DateField(format='%Y-%m-%d', required=False, allow_null=True)
+    created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    
+    # 处理 Decimal 字段，确保输出为 float 类型
+    net_cash_flow = serializers.FloatField(required=False, allow_null=True)
+    net_cash_flow_growth_rate = serializers.FloatField(required=False, allow_null=True)
+    operating_cash_flow = serializers.FloatField(required=False, allow_null=True)
+    operating_cash_flow_ratio = serializers.FloatField(required=False, allow_null=True)
+    investing_cash_flow = serializers.FloatField(required=False, allow_null=True)
+    investing_cash_flow_ratio = serializers.FloatField(required=False, allow_null=True)
+    financing_cash_flow = serializers.FloatField(required=False, allow_null=True)
+    financing_cash_flow_ratio = serializers.FloatField(required=False, allow_null=True)
+    
+    # 添加股票信息字段
+    stock_code = serializers.CharField(source='stock.code', read_only=True)
+    stock_name = serializers.CharField(source='stock.name', read_only=True)
+    
+    class Meta:
+        model = CashFlowStatement
+        fields = '__all__'

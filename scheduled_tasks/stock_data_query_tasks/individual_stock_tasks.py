@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-个股数据抓取任务
-定期从akshare获取个股数据并存储到数据库
+个股数据查询任务
 """
+
 import sys
 import os
 from pathlib import Path
 from tracemalloc import start
 import django
-# 设置Django环境
+
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
 django.setup()
@@ -18,15 +18,13 @@ import baostock as bs
 from datetime import datetime, timedelta
 import akshare as ak
 import pandas as pd
-from indival_stock_data.models import IndividualStock, PerformanceReport
+from indival_stock_data.models import IndividualStock, PerformanceReport, BalanceSheet, IncomeStatement, CashFlowStatement
 import time
 from indival_stock_data.models import IndividualStockDaily
 from django.db import transaction
 from typing import Tuple, List
-# 导入StockDailyData数据类
+
 from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
-
-
 
 from django.utils import timezone
 
@@ -725,6 +723,545 @@ def fetch_all_performance_reports(start_year=2015, end_date='20240930'):
     logger.info(summary["message"])
     return summary
 
+def fetch_balance_sheet(date: str):
+    """
+    从akshare获取指定日期的资产负债表数据并保存到数据库
+    
+    Args:
+        date: 报告期，格式：YYYYMMDD，如"20200331"
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始执行资产负债表数据获取任务: {date}")
+    
+    try:
+        # 获取要更新的股票列表
+        stocks = IndividualStock.objects.all()
+        stock_dict = {stock.code: stock for stock in stocks}
+        
+        if not stocks.exists():
+            logger.warning("没有找到需要更新的股票")
+            return {"status": "warning", "message": "没有找到需要更新的股票"}
+
+        # 从akshare获取数据
+        logger.info(f"从akshare获取资产负债表数据: {date}")
+        df = ak.stock_zcfz_em(date=date)
+        
+        if df is None or df.empty:
+            logger.warning(f"未获取到资产负债表数据: {date}")
+            return {"status": "warning", "message": f"未获取到资产负债表数据: {date}"}
+        
+        # 处理并保存数据
+        created_count = 0
+        failed_count = 0
+        
+        # 收集需要创建的数据
+        balance_sheets_to_create = []
+        
+        with transaction.atomic():
+            for _, row in df.iterrows():
+                try:
+                    stock_code = str(row['股票代码'])
+                    stock = stock_dict.get(stock_code, None)
+                    if not stock:
+                        logger.debug(f"股票记录不存在，跳过: {stock_code}")
+                        failed_count += 1
+                        continue
+                    
+                    # 解析数据
+                    balance_sheet_data = _parse_balance_sheet_data(row, date)
+                    
+                    # 添加到批量创建列表
+                    balance_sheets_to_create.append(BalanceSheet(
+                        stock=stock,
+                        report_date=date,
+                        **balance_sheet_data
+                    ))
+                        
+                except Exception as e:
+                    logger.error(f"处理资产负债表数据失败 {stock_code}: {str(e)}")
+                    failed_count += 1
+                    continue
+            
+            # 批量创建
+            if balance_sheets_to_create:
+                BalanceSheet.objects.bulk_create(balance_sheets_to_create, batch_size=500, ignore_conflicts=True)
+                created_count = len(balance_sheets_to_create)
+        
+        logger.info(f"资产负债表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条")
+        
+        return {
+            "status": "success" if failed_count == 0 else "partial",
+            "message": f"资产负债表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条",
+            "created": created_count,
+            "failed": failed_count
+        }
+        
+    except Exception as e:
+        logger.error(f"资产负债表数据获取任务执行失败 {date}: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+def fetch_income_statement(date: str):
+    """
+    从akshare获取指定日期的利润表数据并保存到数据库
+    
+    Args:
+        date: 报告期，格式：YYYYMMDD，如"20200331"
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始执行利润表数据获取任务: {date}")
+    
+    try:
+        # 获取要更新的股票列表
+        stocks = IndividualStock.objects.all()
+        stock_dict = {stock.code: stock for stock in stocks}
+        
+        if not stocks.exists():
+            logger.warning("没有找到需要更新的股票")
+            return {"status": "warning", "message": "没有找到需要更新的股票"}
+
+        # 从akshare获取数据
+        logger.info(f"从akshare获取利润表数据: {date}")
+        df = ak.stock_lrb_em(date=date)
+        
+        if df is None or df.empty:
+            logger.warning(f"未获取到利润表数据: {date}")
+            return {"status": "warning", "message": f"未获取到利润表数据: {date}"}
+        
+        # 处理并保存数据
+        created_count = 0
+        failed_count = 0
+        
+        # 收集需要创建的数据
+        income_statements_to_create = []
+        
+        with transaction.atomic():
+            for _, row in df.iterrows():
+                try:
+                    stock_code = str(row['股票代码'])
+                    stock = stock_dict.get(stock_code, None)
+                    if not stock:
+                        logger.debug(f"股票记录不存在，跳过: {stock_code}")
+                        failed_count += 1
+                        continue
+                    
+                    # 解析数据
+                    income_statement_data = _parse_income_statement_data(row, date)
+                    
+                    # 添加到批量创建列表
+                    income_statements_to_create.append(IncomeStatement(
+                        stock=stock,
+                        report_date=date,
+                        **income_statement_data
+                    ))
+                        
+                except Exception as e:
+                    logger.error(f"处理利润表数据失败 {stock_code}: {str(e)}")
+                    failed_count += 1
+                    continue
+            
+            # 批量创建
+            if income_statements_to_create:
+                IncomeStatement.objects.bulk_create(income_statements_to_create, batch_size=500)
+                created_count = len(income_statements_to_create)
+        
+        logger.info(f"利润表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条")
+        
+        return {
+            "status": "success" if failed_count == 0 else "partial",
+            "message": f"利润表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条",
+            "created": created_count,
+            "failed": failed_count
+        }
+        
+    except Exception as e:
+        logger.error(f"利润表数据获取任务执行失败 {date}: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+def fetch_cash_flow_statement(date: str):
+    """
+    从akshare获取指定日期的现金流量表数据并保存到数据库
+    
+    Args:
+        date: 报告期，格式：YYYYMMDD，如"20200331"
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始执行现金流量表数据获取任务: {date}")
+    
+    try:
+        # 获取要更新的股票列表
+        stocks = IndividualStock.objects.all()
+        stock_dict = {stock.code: stock for stock in stocks}
+        
+        if not stocks.exists():
+            logger.warning("没有找到需要更新的股票")
+            return {"status": "warning", "message": "没有找到需要更新的股票"}
+
+        # 从akshare获取数据
+        logger.info(f"从akshare获取现金流量表数据: {date}")
+        df = ak.stock_xjll_em(date=date)
+        
+        if df is None or df.empty:
+            logger.warning(f"未获取到现金流量表数据: {date}")
+            return {"status": "warning", "message": f"未获取到现金流量表数据: {date}"}
+        
+        # 处理并保存数据
+        created_count = 0
+        failed_count = 0
+        
+        # 收集需要创建的数据
+        cash_flow_statements_to_create = []
+        
+        with transaction.atomic():
+            for _, row in df.iterrows():
+                try:
+                    stock_code = str(row['股票代码'])
+                    stock = stock_dict.get(stock_code, None)
+                    if not stock:
+                        logger.debug(f"股票记录不存在，跳过: {stock_code}")
+                        failed_count += 1
+                        continue
+                    
+                    # 解析数据
+                    cash_flow_statement_data = _parse_cash_flow_statement_data(row, date)
+                    
+                    # 添加到批量创建列表
+                    cash_flow_statements_to_create.append(CashFlowStatement(
+                        stock=stock,
+                        report_date=date,
+                        **cash_flow_statement_data
+                    ))
+                        
+                except Exception as e:
+                    logger.error(f"处理现金流量表数据失败 {stock_code}: {str(e)}")
+                    failed_count += 1
+                    continue
+            
+            # 批量创建
+            if cash_flow_statements_to_create:
+                CashFlowStatement.objects.bulk_create(cash_flow_statements_to_create, batch_size=500, ignore_conflicts=True)
+                created_count = len(cash_flow_statements_to_create)
+        
+        logger.info(f"现金流量表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条")
+        
+        return {
+            "status": "success" if failed_count == 0 else "partial",
+            "message": f"现金流量表数据获取任务完成: 新增{created_count}条，跳过{failed_count}条",
+            "created": created_count,
+            "failed": failed_count
+        }
+        
+    except Exception as e:
+        logger.error(f"现金流量表数据获取任务执行失败 {date}: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+def _parse_balance_sheet_data(row, date: str) -> dict:
+    """
+    解析资产负债表数据
+    
+    Args:
+        row: pandas行数据
+        date: 报告期
+        
+    Returns:
+        dict: 解析后的数据字典
+    """
+    def safe_float(value):
+        """安全转换为浮点数"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            return round(float(value), 2)
+        except (ValueError, TypeError):
+            return None
+    
+    def safe_str(value):
+        """安全转换为字符串"""
+        if pd.isna(value) or value == '':
+            return None
+        return str(value)
+    
+    def parse_growth_rate(value):
+        """解析增长率，去除%符号，并处理极端值"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            str_value = str(value)
+            if str_value.endswith('%'):
+                float_value = float(str_value[:-1])
+            else:
+                float_value = float(str_value)
+            
+            # 限制值在数据库字段允许的范围内
+            max_allowed = 9999.9999
+            min_allowed = -max_allowed
+            
+            if float_value > max_allowed:
+                logger.warning(f"增长率值过大，已限制: {float_value} -> {max_allowed}")
+                float_value = max_allowed
+            elif float_value < min_allowed:
+                logger.warning(f"增长率值过小，已限制: {float_value} -> {min_allowed}")
+                float_value = min_allowed
+                
+            return round(float_value, 2)
+        except (ValueError, TypeError) as e:
+            logger.error(f"解析增长率失败: {value}, 错误: {str(e)}")
+            return None
+    
+    return {
+        'monetary_funds': safe_float(row.get('资产-货币资金')),  # 货币资金(元)
+        'accounts_receivable': safe_float(row.get('资产-应收账款')),  # 应收账款(元)
+        'inventory': safe_float(row.get('资产-存货')),  # 存货(元)
+        'total_assets': safe_float(row.get('资产-总资产')),  # 总资产(元)
+        'total_assets_growth_rate': parse_growth_rate(row.get('资产-总资产同比')),  # 总资产同比增长率(%)
+        'accounts_payable': safe_float(row.get('负债-应付账款')),  # 应付账款(元)
+        'total_liabilities': safe_float(row.get('负债-总负债')),  # 总负债(元)
+        'advance_receipts': safe_float(row.get('负债-预收账款')),  # 预收账款(元)
+        'total_liabilities_growth_rate': parse_growth_rate(row.get('负债-总负债同比')),  # 总负债同比增长率(%)
+        'debt_to_asset_ratio': safe_float(row.get('资产负债率')),  # 资产负债率(%)
+        'total_equity': safe_float(row.get('股东权益合计')),  # 股东权益合计(元)
+        'announcement_date': safe_str(row.get('公告日期')),  # 公告日期
+    }
+
+
+
+def _parse_income_statement_data(row, date: str) -> dict:
+    """
+    解析利润表数据
+    
+    Args:
+        row: pandas行数据
+        date: 报告期
+        
+    Returns:
+        dict: 解析后的数据字典
+    """
+    def safe_float(value):
+        """安全转换为浮点数"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            return round(float(value), 2)
+        except (ValueError, TypeError):
+            return None
+    
+    def safe_str(value):
+        """安全转换为字符串"""
+        if pd.isna(value) or value == '':
+            return None
+        return str(value)
+    
+    def parse_growth_rate(value):
+        """解析增长率，去除%符号，并处理极端值"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            str_value = str(value)
+            if str_value.endswith('%'):
+                float_value = float(str_value[:-1])
+            else:
+                float_value = float(str_value)
+            
+            # 限制值在数据库字段允许的范围内
+            max_allowed = 9999.9999
+            min_allowed = -max_allowed
+            
+            if float_value > max_allowed:
+                logger.warning(f"增长率值过大，已限制: {float_value} -> {max_allowed}")
+                float_value = max_allowed
+            elif float_value < min_allowed:
+                logger.warning(f"增长率值过小，已限制: {float_value} -> {min_allowed}")
+                float_value = min_allowed
+                
+            return round(float_value, 2)
+        except (ValueError, TypeError) as e:
+            logger.error(f"解析增长率失败: {value}, 错误: {str(e)}")
+            return None
+    
+    return {
+        'net_profit': safe_float(row.get('净利润')),  # 净利润(元)
+        'net_profit_growth_rate': parse_growth_rate(row.get('净利润同比')),  # 净利润同比增长率(%)
+        'operating_revenue': safe_float(row.get('营业总收入')),  # 营业总收入(元)
+        'operating_revenue_growth_rate': parse_growth_rate(row.get('营业总收入同比')),  # 营业总收入同比增长率(%)
+        'operating_expenses': safe_float(row.get('营业总支出-营业支出')),  # 营业支出(元)
+        'sales_expenses': safe_float(row.get('营业总支出-销售费用')),  # 销售费用(元)
+        'management_expenses': safe_float(row.get('营业总支出-管理费用')),  # 管理费用(元)
+        'financial_expenses': safe_float(row.get('营业总支出-财务费用')),  # 财务费用(元)
+        'total_operating_expenses': safe_float(row.get('营业总支出-营业总支出')),  # 营业总支出(元)
+        'operating_profit': safe_float(row.get('营业利润')),  # 营业利润(元)
+        'total_profit': safe_float(row.get('利润总额')),  # 利润总额(元)
+        'announcement_date': safe_str(row.get('公告日期')),  # 公告日期
+    }
+
+
+def _parse_cash_flow_statement_data(row, date: str) -> dict:
+    """
+    解析现金流量表数据
+    
+    Args:
+        row: pandas行数据
+        date: 报告期
+        
+    Returns:
+        dict: 解析后的数据字典
+    """
+    def safe_float(value):
+        """安全转换为浮点数"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            return round(float(value), 2)
+        except (ValueError, TypeError):
+            return None
+    
+    def safe_str(value):
+        """安全转换为字符串"""
+        if pd.isna(value) or value == '':
+            return None
+        return str(value)
+    
+    def parse_growth_rate(value):
+        """解析增长率，去除%符号，并处理极端值"""
+        if pd.isna(value) or value == '' or value == '-':
+            return None
+        try:
+            str_value = str(value)
+            if str_value.endswith('%'):
+                float_value = float(str_value[:-1])
+            else:
+                float_value = float(str_value)
+            
+            # 限制值在数据库字段允许的范围内
+            max_allowed = 9999.9999
+            min_allowed = -max_allowed
+            
+            if float_value > max_allowed:
+                logger.warning(f"增长率值过大，已限制: {float_value} -> {max_allowed}")
+                float_value = max_allowed
+            elif float_value < min_allowed:
+                logger.warning(f"增长率值过小，已限制: {float_value} -> {min_allowed}")
+                float_value = min_allowed
+                
+            return round(float_value, 2)
+        except (ValueError, TypeError) as e:
+            logger.error(f"解析增长率失败: {value}, 错误: {str(e)}")
+            return None
+    
+    return {
+        'net_cash_flow': safe_float(row.get('净现金流-净现金流')),
+        'net_cash_flow_growth_rate': parse_growth_rate(row.get('净现金流-同比增长')),
+        'operating_cash_flow': safe_float(row.get('经营性现金流-现金流量净额')),
+        'operating_cash_flow_ratio': parse_growth_rate(row.get('经营性现金流-净现金流占比')),
+        'investing_cash_flow': safe_float(row.get('投资性现金流-现金流量净额')),
+        'investing_cash_flow_ratio': parse_growth_rate(row.get('投资性现金流-净现金流占比')),
+        'financing_cash_flow': safe_float(row.get('融资性现金流-现金流量净额')),
+        'financing_cash_flow_ratio': parse_growth_rate(row.get('融资性现金流-净现金流占比')),
+        'announcement_date': safe_str(row.get('公告日期')),
+    }
+
+
+def fetch_all_financial_statements(start_year=2015, end_date='20240930'):
+    """
+    获取从指定年份开始到指定日期的所有财务报表数据（资产负债表、利润表、现金流量表）
+    
+    Args:
+        start_year: 开始年份，默认2015年
+        end_date: 结束日期，格式YYYYMMDD，默认20240930
+        
+    Returns:
+        dict: 包含status和message的结果字典
+    """
+    logger.info(f"开始批量获取从{start_year}年到{end_date}的财务报表数据")
+    
+    # 生成所有季度报告日期
+    report_dates = []
+    end_year = int(end_date[:4])
+    end_quarter = int(end_date[4:6]) // 3
+    
+    for year in range(start_year, end_year + 1):
+        # 对于每年，添加四个季度的报告日期
+        quarters = [
+            f"{year}0331",  # 一季报
+            f"{year}0630",  # 中报
+            f"{year}0930",  # 三季报
+            f"{year}1231"   # 年报
+        ]
+        
+        # 如果是结束年份，只添加到指定季度
+        if year == end_year:
+            quarters = quarters[:end_quarter]
+            
+        report_dates.extend(quarters)
+    
+    # 按时间顺序排序（从早到晚）
+    report_dates.sort()
+    
+    total_results = {
+        'balance_sheet': {'created': 0, 'failed': 0},
+        'income_statement': {'created': 0, 'failed': 0},
+        'cash_flow_statement': {'created': 0, 'failed': 0}
+    }
+    
+    results = []
+    
+    for date in report_dates:
+        logger.info(f"获取 {date} 的财务报表数据")
+        
+        # 获取资产负债表数据
+        try:
+            balance_result = fetch_balance_sheet(date)
+            if balance_result and isinstance(balance_result, dict):
+                total_results['balance_sheet']['created'] += balance_result.get('created', 0)
+                total_results['balance_sheet']['failed'] += balance_result.get('failed', 0)
+            time.sleep(3)  # 延时避免频繁请求
+        except Exception as e:
+            logger.error(f"获取 {date} 资产负债表数据失败: {str(e)}")
+            total_results['balance_sheet']['failed'] += 1
+        
+        # 获取利润表数据
+        try:
+            income_result = fetch_income_statement(date)
+            if income_result and isinstance(income_result, dict):
+                total_results['income_statement']['created'] += income_result.get('created', 0)
+                total_results['income_statement']['failed'] += income_result.get('failed', 0)
+            time.sleep(3)  # 延时避免频繁请求
+        except Exception as e:
+            logger.error(f"获取 {date} 利润表数据失败: {str(e)}")
+            total_results['income_statement']['failed'] += 1
+        
+        # 获取现金流量表数据
+        try:
+            cash_flow_result = fetch_cash_flow_statement(date)
+            if cash_flow_result and isinstance(cash_flow_result, dict):
+                total_results['cash_flow_statement']['created'] += cash_flow_result.get('created', 0)
+                total_results['cash_flow_statement']['failed'] += cash_flow_result.get('failed', 0)
+            time.sleep(3)  # 延时避免频繁请求
+        except Exception as e:
+            logger.error(f"获取 {date} 现金流量表数据失败: {str(e)}")
+            total_results['cash_flow_statement']['failed'] += 1
+    
+    total_created = sum(result['created'] for result in total_results.values())
+    total_failed = sum(result['failed'] for result in total_results.values())
+    
+    summary = {
+        "status": "success" if total_failed == 0 else "partial",
+        "message": f"批量获取财务报表完成: 共处理{len(report_dates)}个报告期，新增{total_created}条，失败{total_failed}条",
+        "total_created": total_created,
+        "total_failed": total_failed,
+        "details": total_results
+    }
+    
+    logger.info(summary["message"])
+    return summary
+
 
 if __name__ == '__main__':
     # update_individual_stock_daily_data()
@@ -732,5 +1269,10 @@ if __name__ == '__main__':
     # 从2015年开始获取季报、中报、三季报、年报到20240930
     # fetch_all_performance_reports(start_year=2015, end_date='20240930')
 
-    fetch_performance_report('20210331')
+    # fetch_performance_report('20210331')
 
+    # fetch_income_statement('20250630')
+
+    # fetch_cash_flow_statement('20250630')
+
+    fetch_balance_sheet('20250630')

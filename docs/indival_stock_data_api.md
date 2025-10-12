@@ -467,3 +467,399 @@
 | --- | --- |
 | 400 | 无效的股票代码格式或页码超出范围 |
 | 500 | 获取股票业绩快报数据失败 |
+
+---
+
+## 9. 获取资产负债表列表
+
+获取所有股票的资产负债表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/balance-sheets/`
+- **方法**: GET
+- **接口名称**: `balance_sheet_list`
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取资产负债表数据",
+  "data": {
+    "total": 4000,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 200,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "monetary_funds": 1234567890.12,  // 货币资金（元）
+        "accounts_receivable": 987654321.00,  // 应收账款（元）
+        "inventory": 123456789.00,  // 存货（元）
+        "total_assets": 9876543210.00,  // 总资产（元）
+        "total_assets_growth_rate": 5.67,  // 总资产同比增长率（%）
+        "accounts_payable": 456789123.00,  // 应付账款（元）
+        "total_liabilities": 8765432109.00,  // 总负债（元）
+        "advance_receipts": 234567890.00,  // 预收账款（元）
+        "total_liabilities_growth_rate": 4.32,  // 总负债同比增长率（%）
+        "debt_to_asset_ratio": 88.75,  // 资产负债率（%）
+        "total_equity": 1111111101.00,  // 股东权益合计（元）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 参数格式错误或页码超出范围 |
+| 500 | 获取资产负债表数据失败 |
+
+---
+
+## 10. 获取指定股票的资产负债表数据
+
+获取指定股票的所有资产负债表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/stocks/<str:stock_code>/balance-sheets/`
+- **方法**: GET
+- **接口名称**: `stock_balance_sheets`
+
+### 路径参数
+
+| 参数名 | 类型 | 必填 | 描述 |
+| --- | --- | --- | --- |
+| stock_code | string | 是 | 股票代码，如：600000 |
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取资产负债表数据",
+  "data": {
+    "total": 20,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "monetary_funds": 1234567890.12,  // 货币资金（元）
+        "accounts_receivable": 987654321.00,  // 应收账款（元）
+        "inventory": 123456789.00,  // 存货（元）
+        "total_assets": 9876543210.00,  // 总资产（元）
+        "total_assets_growth_rate": 5.67,  // 总资产同比增长率（%）
+        "accounts_payable": 456789123.00,  // 应付账款（元）
+        "total_liabilities": 8765432109.00,  // 总负债（元）
+        "advance_receipts": 234567890.00,  // 预收账款（元）
+        "total_liabilities_growth_rate": 4.32,  // 总负债同比增长率（%）
+        "debt_to_asset_ratio": 88.75,  // 资产负债率（%）
+        "total_equity": 1111111101.00,  // 股东权益合计（元）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 无效的股票代码格式或页码超出范围 |
+| 500 | 获取资产负债表数据失败 |
+
+---
+
+## 11. 获取利润表列表
+
+获取所有股票的利润表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/income-statements/`
+- **方法**: GET
+- **接口名称**: `income_statement_list`
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取利润表数据",
+  "data": {
+    "total": 4000,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 200,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "net_profit": 12345678901.23,  // 净利润（元）
+        "net_profit_growth_rate": 8.75,  // 净利润同比增长率（%）
+        "operating_revenue": 50123456789.12,  // 营业总收入（元）
+        "operating_revenue_growth_rate": 10.50,  // 营业总收入同比增长率（%）
+        "operating_expenses": 45000000000.00,  // 营业费用（元）
+        "sales_expenses": 2000000000.00,  // 销售费用（元）
+        "management_expenses": 3000000000.00,  // 管理费用（元）
+        "financial_expenses": 1500000000.00,  // 财务费用（元）
+        "total_operating_expenses": 51500000000.00,  // 营业总成本（元）
+        "operating_profit": 11000000000.00,  // 营业利润（元）
+        "total_profit": 12500000000.00,  // 利润总额（元）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 参数格式错误或页码超出范围 |
+| 500 | 获取利润表数据失败 |
+
+---
+
+## 12. 获取指定股票的利润表数据
+
+获取指定股票的所有利润表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/stocks/<str:stock_code>/income-statements/`
+- **方法**: GET
+- **接口名称**: `stock_income_statements`
+
+### 路径参数
+
+| 参数名 | 类型 | 必填 | 描述 |
+| --- | --- | --- | --- |
+| stock_code | string | 是 | 股票代码，如：600000 |
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取利润表数据",
+  "data": {
+    "total": 20,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "net_profit": 12345678901.23,  // 净利润（元）
+        "net_profit_growth_rate": 8.75,  // 净利润同比增长率（%）
+        "operating_revenue": 50123456789.12,  // 营业总收入（元）
+        "operating_revenue_growth_rate": 10.50,  // 营业总收入同比增长率（%）
+        "operating_expenses": 45000000000.00,  // 营业费用（元）
+        "sales_expenses": 2000000000.00,  // 销售费用（元）
+        "management_expenses": 3000000000.00,  // 管理费用（元）
+        "financial_expenses": 1500000000.00,  // 财务费用（元）
+        "total_operating_expenses": 51500000000.00,  // 营业总成本（元）
+        "operating_profit": 11000000000.00,  // 营业利润（元）
+        "total_profit": 12500000000.00,  // 利润总额（元）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 无效的股票代码格式或页码超出范围 |
+| 500 | 获取利润表数据失败 |
+
+---
+
+## 13. 获取现金流量表列表
+
+获取所有股票的现金流量表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/cash-flow-statements/`
+- **方法**: GET
+- **接口名称**: `cash_flow_statement_list`
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取现金流量表数据",
+  "data": {
+    "total": 4000,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 200,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "net_cash_flow": 5000000000.00,  // 现金及现金等价物净增加额（元）
+        "net_cash_flow_growth_rate": 12.50,  // 现金及现金等价物净增加额同比增长率（%）
+        "operating_cash_flow": 8000000000.00,  // 经营活动产生的现金流量净额（元）
+        "operating_cash_flow_ratio": 160.00,  // 经营活动现金流量净额占比（%）
+        "investing_cash_flow": -2000000000.00,  // 投资活动产生的现金流量净额（元）
+        "investing_cash_flow_ratio": -40.00,  // 投资活动现金流量净额占比（%）
+        "financing_cash_flow": -1000000000.00,  // 筹资活动产生的现金流量净额（元）
+        "financing_cash_flow_ratio": -20.00,  // 筹资活动现金流量净额占比（%）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 参数格式错误或页码超出范围 |
+| 500 | 获取现金流量表数据失败 |
+
+---
+
+## 14. 获取指定股票的现金流量表数据
+
+获取指定股票的所有现金流量表数据，支持分页和按报告期筛选。
+
+### 请求信息
+
+- **URL**: `/stocks/<str:stock_code>/cash-flow-statements/`
+- **方法**: GET
+- **接口名称**: `stock_cash_flow_statements`
+
+### 路径参数
+
+| 参数名 | 类型 | 必填 | 描述 |
+| --- | --- | --- | --- |
+| stock_code | string | 是 | 股票代码，如：600000 |
+
+### 请求参数
+
+| 参数名 | 类型 | 必填 | 默认值 | 描述 |
+| --- | --- | --- | --- | --- |
+| date | string | 否 | - | 报告期，格式：YYYYMMDD，如20240331 |
+| page | int | 否 | 1 | 页码 |
+| page_size | int | 否 | 20 | 每页记录数 |
+
+### 响应结果
+
+```json
+{
+  "code": 200,
+  "message": "成功获取现金流量表数据",
+  "data": {
+    "total": 20,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "data": [
+      {
+        "id": 1,  // 记录ID
+        "stock_code": "600000",  // 股票代码
+        "stock_name": "浦发银行",  // 股票名称
+        "report_date": "20240331",  // 报告期，格式：YYYYMMDD
+        "net_cash_flow": 5000000000.00,  // 现金及现金等价物净增加额（元）
+        "net_cash_flow_growth_rate": 12.50,  // 现金及现金等价物净增加额同比增长率（%）
+        "operating_cash_flow": 8000000000.00,  // 经营活动产生的现金流量净额（元）
+        "operating_cash_flow_ratio": 160.00,  // 经营活动现金流量净额占比（%）
+        "investing_cash_flow": -2000000000.00,  // 投资活动产生的现金流量净额（元）
+        "investing_cash_flow_ratio": -40.00,  // 投资活动现金流量净额占比（%）
+        "financing_cash_flow": -1000000000.00,  // 筹资活动产生的现金流量净额（元）
+        "financing_cash_flow_ratio": -20.00,  // 筹资活动现金流量净额占比（%）
+        "announcement_date": "2024-04-30",  // 公告日期
+        "created_at": "2024-04-30T16:00:00.000000Z",  // 创建时间
+        "updated_at": "2024-04-30T16:00:00.000000Z"  // 更新时间
+      }
+    ]
+  }
+}
+```
+
+### 错误码
+
+| 错误码 | 描述 |
+| --- | --- |
+| 400 | 无效的股票代码格式或页码超出范围 |
+| 500 | 获取现金流量表数据失败 |

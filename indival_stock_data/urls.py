@@ -31,4 +31,17 @@ urlpatterns = [
     path('performance-reports/', views.PerformanceReportView.as_view(), name='performance_report_list'),
     # 获取指定股票的业绩快报数据
     path('stocks/<str:stock_code>/performance-reports/', views.StockPerformanceReportView.as_view(), name='stock_performance_reports'),
+    
+    # 财务报表接口
+    # 资产负债表接口
+    path('balance-sheets/', views.BalanceSheetView.as_view(), name='balance_sheet_list'),
+    path('stocks/<str:stock_code>/balance-sheets/', views.BalanceSheetView.as_view(), name='stock_balance_sheets'),
+    
+    # 利润表接口
+    path('income-statements/', views.IncomeStatementView.as_view(), name='income_statement_list'),
+    path('stocks/<str:stock_code>/income-statements/', views.IncomeStatementView.as_view(), name='stock_income_statements'),
+    
+    # 现金流量表接口
+    path('cash-flow-statements/', views.CashFlowStatementView.as_view(), name='cash_flow_statement_list'),
+    path('stocks/<str:stock_code>/cash-flow-statements/', views.CashFlowStatementView.as_view(), name='stock_cash_flow_statements'),
 ]

@@ -307,3 +307,262 @@ class StrategyResult(models.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
+
+
+class BalanceSheet(models.Model):
+    """资产负债表模型
+    功能：存储个股在特定报告期的资产负债表数据。
+    参数（字段）：
+    - stock(ForeignKey[IndividualStock]): 所属股票；删除股票级联删除报告。
+    - report_date(CharField): 报告期，格式 YYYYMMDD。
+    - monetary_funds(DecimalField): 货币资金（元）。
+    - accounts_receivable(DecimalField): 应收账款（元）。
+    - inventory(DecimalField): 存货（元）。
+    - total_assets(DecimalField): 总资产（元）。
+    - total_assets_growth_rate(DecimalField): 总资产同比（%）。
+    - accounts_payable(DecimalField): 应付账款（元）。
+    - total_liabilities(DecimalField): 总负债（元）。
+    - advance_receipts(DecimalField): 预收账款（元）。
+    - total_liabilities_growth_rate(DecimalField): 总负债同比（%）。
+    - debt_to_asset_ratio(DecimalField): 资产负债率（%）。
+    - total_equity(DecimalField): 股东权益合计（元）。
+    - announcement_date(DateField): 公告日期。
+    - created_at(DateTimeField): 创建时间。
+    - updated_at(DateTimeField): 更新时间。
+    返回值：无（模型用于持久化数据）。
+    事件：无（模型不直接触发事件）。
+    """
+    stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='balance_sheets', verbose_name='所属股票')
+    report_date = models.CharField(max_length=8, verbose_name='报告期', help_text='格式：YYYYMMDD，如20240331')
+    
+    # 资产相关字段
+    monetary_funds = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='货币资金(元)')
+    accounts_receivable = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='应收账款(元)')
+    inventory = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='存货(元)')
+    total_assets = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='总资产(元)')
+    total_assets_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='总资产同比(%)')
+    
+    # 负债相关字段
+    accounts_payable = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='应付账款(元)')
+    total_liabilities = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='总负债(元)')
+    advance_receipts = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='预收账款(元)')
+    total_liabilities_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='总负债同比(%)')
+    
+    # 其他指标
+    debt_to_asset_ratio = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='资产负债率(%)')
+    total_equity = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='股东权益合计(元)')
+    
+    # 基本信息
+    announcement_date = models.DateField(null=True, blank=True, verbose_name='公告日期')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'balance_sheet'
+        verbose_name = '资产负债表'
+        verbose_name_plural = '资产负债表'
+        ordering = ['-report_date', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-report_date']),
+            models.Index(fields=['-report_date']),
+            models.Index(fields=['announcement_date']),
+        ]
+        unique_together = ['stock', 'report_date']
+    
+    def __str__(self):
+        return f'{self.stock.code} - {self.stock.name} - 资产负债表 - {self.report_date}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'report_date': self.report_date,
+            'monetary_funds': float(self.monetary_funds) if self.monetary_funds else None,
+            'accounts_receivable': float(self.accounts_receivable) if self.accounts_receivable else None,
+            'inventory': float(self.inventory) if self.inventory else None,
+            'total_assets': float(self.total_assets) if self.total_assets else None,
+            'total_assets_growth_rate': float(self.total_assets_growth_rate) if self.total_assets_growth_rate else None,
+            'accounts_payable': float(self.accounts_payable) if self.accounts_payable else None,
+            'total_liabilities': float(self.total_liabilities) if self.total_liabilities else None,
+            'advance_receipts': float(self.advance_receipts) if self.advance_receipts else None,
+            'total_liabilities_growth_rate': float(self.total_liabilities_growth_rate) if self.total_liabilities_growth_rate else None,
+            'debt_to_asset_ratio': float(self.debt_to_asset_ratio) if self.debt_to_asset_ratio else None,
+            'total_equity': float(self.total_equity) if self.total_equity else None,
+            'announcement_date': self.announcement_date.strftime('%Y-%m-%d') if self.announcement_date else None,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
+
+class IncomeStatement(models.Model):
+    """利润表模型
+    功能：存储个股在特定报告期的利润表数据。
+    参数（字段）：
+    - stock(ForeignKey[IndividualStock]): 所属股票；删除股票级联删除报告。
+    - report_date(CharField): 报告期，格式 YYYYMMDD。
+    - net_profit(DecimalField): 净利润（元）。
+    - net_profit_growth_rate(DecimalField): 净利润同比（%）。
+    - operating_revenue(DecimalField): 营业总收入（元）。
+    - operating_revenue_growth_rate(DecimalField): 营业总收入同比（%）。
+    - operating_expenses(DecimalField): 营业支出（元）。
+    - sales_expenses(DecimalField): 销售费用（元）。
+    - management_expenses(DecimalField): 管理费用（元）。
+    - financial_expenses(DecimalField): 财务费用（元）。
+    - total_operating_expenses(DecimalField): 营业总支出（元）。
+    - operating_profit(DecimalField): 营业利润（元）。
+    - total_profit(DecimalField): 利润总额（元）。
+    - announcement_date(DateField): 公告日期。
+    - created_at(DateTimeField): 创建时间。
+    - updated_at(DateTimeField): 更新时间。
+    返回值：无（模型用于持久化数据）。
+    事件：无（模型不直接触发事件）。
+    """
+    stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='income_statements', verbose_name='所属股票')
+    report_date = models.CharField(max_length=8, verbose_name='报告期', help_text='格式：YYYYMMDD，如20240331')
+    
+    # 利润相关字段
+    net_profit = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='净利润(元)')
+    net_profit_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='净利润同比(%)')
+    
+    # 收入相关字段
+    operating_revenue = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='营业总收入(元)')
+    operating_revenue_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='营业总收入同比(%)')
+    
+    # 支出相关字段
+    operating_expenses = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='营业支出(元)')
+    sales_expenses = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='销售费用(元)')
+    management_expenses = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='管理费用(元)')
+    financial_expenses = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='财务费用(元)')
+    total_operating_expenses = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='营业总支出(元)')
+    
+    # 其他利润指标
+    operating_profit = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='营业利润(元)')
+    total_profit = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='利润总额(元)')
+    
+    # 基本信息
+    announcement_date = models.DateField(null=True, blank=True, verbose_name='公告日期')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'income_statement'
+        verbose_name = '利润表'
+        verbose_name_plural = '利润表'
+        ordering = ['-report_date', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-report_date']),
+            models.Index(fields=['-report_date']),
+            models.Index(fields=['announcement_date']),
+        ]
+        unique_together = ['stock', 'report_date']
+    
+    def __str__(self):
+        return f'{self.stock.code} - {self.stock.name} - 利润表 - {self.report_date}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'report_date': self.report_date,
+            'net_profit': float(self.net_profit) if self.net_profit else None,
+            'net_profit_growth_rate': float(self.net_profit_growth_rate) if self.net_profit_growth_rate else None,
+            'operating_revenue': float(self.operating_revenue) if self.operating_revenue else None,
+            'operating_revenue_growth_rate': float(self.operating_revenue_growth_rate) if self.operating_revenue_growth_rate else None,
+            'operating_expenses': float(self.operating_expenses) if self.operating_expenses else None,
+            'sales_expenses': float(self.sales_expenses) if self.sales_expenses else None,
+            'management_expenses': float(self.management_expenses) if self.management_expenses else None,
+            'financial_expenses': float(self.financial_expenses) if self.financial_expenses else None,
+            'total_operating_expenses': float(self.total_operating_expenses) if self.total_operating_expenses else None,
+            'operating_profit': float(self.operating_profit) if self.operating_profit else None,
+            'total_profit': float(self.total_profit) if self.total_profit else None,
+            'announcement_date': self.announcement_date.strftime('%Y-%m-%d') if self.announcement_date else None,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
+
+class CashFlowStatement(models.Model):
+    """现金流量表模型
+    功能：存储个股在特定报告期的现金流量表数据。
+    参数（字段）：
+    - stock(ForeignKey[IndividualStock]): 所属股票；删除股票级联删除报告。
+    - report_date(CharField): 报告期，格式 YYYYMMDD。
+    - net_cash_flow(DecimalField): 净现金流（元）。
+    - net_cash_flow_growth_rate(DecimalField): 净现金流同比增长（%）。
+    - operating_cash_flow(DecimalField): 经营性现金流量净额（元）。
+    - operating_cash_flow_ratio(DecimalField): 经营性现金流净现金流占比（%）。
+    - investing_cash_flow(DecimalField): 投资性现金流量净额（元）。
+    - investing_cash_flow_ratio(DecimalField): 投资性现金流净现金流占比（%）。
+    - financing_cash_flow(DecimalField): 融资性现金流量净额（元）。
+    - financing_cash_flow_ratio(DecimalField): 融资性现金流净现金流占比（%）。
+    - announcement_date(DateField): 公告日期。
+    - created_at(DateTimeField): 创建时间。
+    - updated_at(DateTimeField): 更新时间。
+    返回值：无（模型用于持久化数据）。
+    事件：无（模型不直接触发事件）。
+    """
+    stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='cash_flow_statements', verbose_name='所属股票')
+    report_date = models.CharField(max_length=8, verbose_name='报告期', help_text='格式：YYYYMMDD，如20240331')
+    
+    # 净现金流相关字段
+    net_cash_flow = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='净现金流(元)')
+    net_cash_flow_growth_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='净现金流同比增长(%)')
+    
+    # 经营性现金流相关字段
+    operating_cash_flow = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='经营性现金流量净额(元)')
+    operating_cash_flow_ratio = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='经营性现金流净现金流占比(%)')
+    
+    # 投资性现金流相关字段
+    investing_cash_flow = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='投资性现金流量净额(元)')
+    investing_cash_flow_ratio = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='投资性现金流净现金流占比(%)')
+    
+    # 融资性现金流相关字段
+    financing_cash_flow = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True, verbose_name='融资性现金流量净额(元)')
+    financing_cash_flow_ratio = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='融资性现金流净现金流占比(%)')
+    
+    # 基本信息
+    announcement_date = models.DateField(null=True, blank=True, verbose_name='公告日期')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'cash_flow_statement'
+        verbose_name = '现金流量表'
+        verbose_name_plural = '现金流量表'
+        ordering = ['-report_date', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-report_date']),
+            models.Index(fields=['-report_date']),
+            models.Index(fields=['announcement_date']),
+        ]
+        unique_together = ['stock', 'report_date']
+    
+    def __str__(self):
+        return f'{self.stock.code} - {self.stock.name} - 现金流量表 - {self.report_date}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'report_date': self.report_date,
+            'net_cash_flow': float(self.net_cash_flow) if self.net_cash_flow else None,
+            'net_cash_flow_growth_rate': float(self.net_cash_flow_growth_rate) if self.net_cash_flow_growth_rate else None,
+            'operating_cash_flow': float(self.operating_cash_flow) if self.operating_cash_flow else None,
+            'operating_cash_flow_ratio': float(self.operating_cash_flow_ratio) if self.operating_cash_flow_ratio else None,
+            'investing_cash_flow': float(self.investing_cash_flow) if self.investing_cash_flow else None,
+            'investing_cash_flow_ratio': float(self.investing_cash_flow_ratio) if self.investing_cash_flow_ratio else None,
+            'financing_cash_flow': float(self.financing_cash_flow) if self.financing_cash_flow else None,
+            'financing_cash_flow_ratio': float(self.financing_cash_flow_ratio) if self.financing_cash_flow_ratio else None,
+            'announcement_date': self.announcement_date.strftime('%Y-%m-%d') if self.announcement_date else None,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
