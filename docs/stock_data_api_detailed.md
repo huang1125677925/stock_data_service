@@ -712,6 +712,115 @@
 }
 ```
 
+## 业绩快报相关接口
+
+### 19. 获取行业业绩快报汇聚数据
+
+获取按行业和报告期汇聚的业绩快报数据，支持多种报告类型筛选。
+
+**接口URL**：`/django/api/stock/industry/performance-reports/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| industry | string | 否 | 行业名称，支持模糊匹配，如"软件开发" |
+| report_type | string | 否 | 报告类型，可选值：annual(年报)、semi_annual(中报)、q1(一季报)、q3(三季报)、quarterly(季报，包含一季报和三季报) |
+| start_date | string | 否 | 开始日期，格式：YYYYMMDD |
+| end_date | string | 否 | 结束日期，格式：YYYYMMDD |
+
+**报告类型说明**：
+- `annual`: 年报，筛选报告期以1231结尾的数据
+- `semi_annual`: 中报，筛选报告期以0630结尾的数据  
+- `q1`: 一季报，筛选报告期以0331结尾的数据
+- `q3`: 三季报，筛选报告期以0930结尾的数据
+- `quarterly`: 季报，包含一季报和三季报数据（向后兼容）
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "total_records": 11,
+        "aggregated_reports": [
+            {
+                "report_date": "20240331",
+                "industry": "软件开发",
+                "company_count": 195,
+                "total_operating_revenue": 70969077274.93,
+                "total_net_profit": -2337025713.16,
+                "avg_earnings_per_share": -0.0327,
+                "avg_operating_revenue_growth_rate": 7.87,
+                "avg_net_profit_growth_rate": -28.39,
+                "avg_roe": -1.0688,
+                "avg_gross_profit_margin": 44.4228,
+                "avg_net_assets_per_share": 7.1994,
+                "avg_operating_cash_flow_per_share": -0.3102
+            },
+            {
+                "report_date": "20230331",
+                "industry": "软件开发",
+                "company_count": 195,
+                "total_operating_revenue": 67924252275.68,
+                "total_net_profit": -2814793582.1,
+                "avg_earnings_per_share": -0.0392,
+                "avg_operating_revenue_growth_rate": 11.54,
+                "avg_net_profit_growth_rate": -119.3,
+                "avg_roe": -1.8956,
+                "avg_gross_profit_margin": 43.7821,
+                "avg_net_assets_per_share": 7.0234,
+                "avg_operating_cash_flow_per_share": -0.2845
+            }
+            // 更多汇聚数据...
+        ],
+        "query_params": {
+            "industry": "软件开发",
+            "report_type": "q1",
+            "start_date": null,
+            "end_date": null
+        }
+    }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 描述 |
+| ------ | ---- | ---- |
+| report_date | string | 报告期，格式YYYYMMDD |
+| industry | string | 行业名称 |
+| company_count | int | 该行业该报告期的公司数量 |
+| total_operating_revenue | float | 总营业收入（元） |
+| total_net_profit | float | 总净利润（元） |
+| avg_earnings_per_share | float | 平均每股收益（元） |
+| avg_operating_revenue_growth_rate | float | 平均营业收入增长率（%） |
+| avg_net_profit_growth_rate | float | 平均净利润增长率（%） |
+| avg_roe | float | 平均净资产收益率（%） |
+| avg_gross_profit_margin | float | 平均毛利率（%） |
+| avg_net_assets_per_share | float | 平均每股净资产（元） |
+| avg_operating_cash_flow_per_share | float | 平均每股经营现金流（元） |
+
+**使用示例**：
+
+1. 获取软件开发行业一季报数据：
+   ```
+   GET /django/api/stock/industry/performance-reports/?report_type=q1&industry=软件开发
+   ```
+
+2. 获取所有行业年报数据：
+   ```
+   GET /django/api/stock/industry/performance-reports/?report_type=annual
+   ```
+
+3. 获取指定时间范围的季报数据：
+   ```
+   GET /django/api/stock/industry/performance-reports/?report_type=quarterly&start_date=20230101&end_date=20231231
+   ```
+
 ## 错误码说明
 
 | 错误码 | 描述 |
@@ -728,3 +837,5 @@
 3. 历史数据查询时间范围不应超过1年
 4. 股票代码格式应符合中国股市规范，如上交所股票以"6"开头，深交所股票以"0"或"3"开头
 5. 行业板块代码格式为"BK"开头加4位数字
+6. 业绩快报数据按报告期和行业进行汇聚，提供行业整体财务指标分析
+7. 日期参数格式为YYYYMMDD，如20240331表示2024年3月31日

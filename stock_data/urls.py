@@ -24,4 +24,7 @@ urlpatterns = [
     path('industry-sector/daily/<str:code>/', views.get_industry_sector_daily, name='industry_sector_daily'),
     path('industry-sector/realtime/<str:code>/', views.get_industry_sector_realtime, name='industry_sector_realtime'),
     path('industry-sector/constituents/<str:code>/', views.get_industry_sector_constituents, name='industry_sector_constituents'),
+    
+    # 业绩快报相关API
+    path('industry/performance-reports/', views.get_industry_performance_reports, name='industry_performance_reports'),
 ]

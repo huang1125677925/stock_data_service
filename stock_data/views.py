@@ -1,6 +1,7 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.db import models
 import json
 import logging
 import pandas as pd
@@ -810,3 +811,128 @@ def get_industries(request):
     except Exception as e:
         logger.error(f"获取行业分类失败: {str(e)}")
         return error_response(str(e), 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_performance_reports(request):
+    """
+    获取行业业绩快报汇聚数据
+    功能：根据行业和报告类型筛选业绩快报数据，按报告期和行业汇聚各类指标。
+    参数：
+    - industry (str, optional): 行业名称，不指定则获取所有行业
+    - report_type (str, optional): 报告类型，支持 'annual'(年报)、'semi_annual'(中报)、'quarterly'(季报)
+    - start_date (str, optional): 开始日期，格式YYYYMMDD
+    - end_date (str, optional): 结束日期，格式YYYYMMDD
+    返回值：
+    {
+        "code": 200,
+        "message": "success", 
+        "timestamp": "2024-01-01T12:00:00",
+        "data": {
+            "total_records": 50,
+            "aggregated_reports": [...],
+            "query_params": {...}
+        }
+    }
+    事件：无（视图函数不直接触发事件）
+    """
+    try:
+        # 导入模型
+        from indival_stock_data.models import PerformanceReport, IndividualStock
+        from django.db.models import Sum, Count, Avg
+        
+        # 获取查询参数
+        industry = request.GET.get('industry')
+        report_type = request.GET.get('report_type')
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+            
+        # 构建查询条件
+        queryset = PerformanceReport.objects.select_related('stock')
+        
+        # 按行业筛选
+        if industry:
+            queryset = queryset.filter(industry__icontains=industry)
+            
+        # 按报告类型筛选（根据报告期判断）
+        if report_type:
+            if report_type == 'annual':
+                # 年报：报告期以1231结尾
+                queryset = queryset.filter(report_date__endswith='1231')
+            elif report_type == 'semi_annual':
+                # 中报：报告期以0630结尾
+                queryset = queryset.filter(report_date__endswith='0630')
+            elif report_type == 'q1':
+                # 一季报：报告期以0331结尾
+                queryset = queryset.filter(report_date__endswith='0331')
+            elif report_type == 'q3':
+                # 三季报：报告期以0930结尾
+                queryset = queryset.filter(report_date__endswith='0930')
+            elif report_type == 'quarterly':
+                # 季报：报告期以0331或0930结尾（保持向后兼容）
+                queryset = queryset.filter(
+                    models.Q(report_date__endswith='0331') | 
+                    models.Q(report_date__endswith='0930')
+                )
+                
+        # 按日期范围筛选
+        if start_date:
+            queryset = queryset.filter(report_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(report_date__lte=end_date)
+            
+        # 按报告期和行业分组汇聚数据
+        aggregated_data = queryset.values('report_date', 'industry').annotate(
+            # 汇聚财务指标
+            total_operating_revenue=Sum('operating_revenue'),
+            total_net_profit=Sum('net_profit'),
+            avg_earnings_per_share=Avg('earnings_per_share'),
+            avg_operating_revenue_growth_rate=Avg('operating_revenue_growth_rate'),
+            avg_net_profit_growth_rate=Avg('net_profit_growth_rate'),
+            avg_roe=Avg('roe'),
+            avg_gross_profit_margin=Avg('gross_profit_margin'),
+            avg_net_assets_per_share=Avg('net_assets_per_share'),
+            avg_operating_cash_flow_per_share=Avg('operating_cash_flow_per_share'),
+            # 统计信息
+            company_count=Count('stock', distinct=True)
+        ).order_by('report_date', 'industry')
+        
+        # 转换为列表格式
+        reports_list = []
+        for item in aggregated_data:
+            report_dict = {
+                'report_date': item['report_date'],
+                'industry': item['industry'],
+                'company_count': item['company_count'],
+                'total_operating_revenue': float(item['total_operating_revenue']) if item['total_operating_revenue'] else 0,
+                'total_net_profit': float(item['total_net_profit']) if item['total_net_profit'] else 0,
+                'avg_earnings_per_share': round(float(item['avg_earnings_per_share']), 4) if item['avg_earnings_per_share'] else 0,
+                'avg_operating_revenue_growth_rate': round(float(item['avg_operating_revenue_growth_rate']), 2) if item['avg_operating_revenue_growth_rate'] else 0,
+                'avg_net_profit_growth_rate': round(float(item['avg_net_profit_growth_rate']), 2) if item['avg_net_profit_growth_rate'] else 0,
+                'avg_roe': round(float(item['avg_roe']), 4) if item['avg_roe'] else 0,
+                'avg_gross_profit_margin': round(float(item['avg_gross_profit_margin']), 4) if item['avg_gross_profit_margin'] else 0,
+                'avg_net_assets_per_share': round(float(item['avg_net_assets_per_share']), 4) if item['avg_net_assets_per_share'] else 0,
+                'avg_operating_cash_flow_per_share': round(float(item['avg_operating_cash_flow_per_share']), 4) if item['avg_operating_cash_flow_per_share'] else 0,
+            }
+            reports_list.append(report_dict)
+            
+        # 构建响应数据
+        data = {
+            'total_records': len(reports_list),
+            'aggregated_reports': reports_list,
+            'query_params': {
+                'industry': industry,
+                'report_type': report_type,
+                'start_date': start_date,
+                'end_date': end_date
+            }
+        }
+        
+        return success_response(data)
+        
+    except ValueError as e:
+        logger.error(f"参数错误: {str(e)}")
+        return error_response(f"参数错误: {str(e)}", 400)
+    except Exception as e:
+        logger.error(f"获取行业业绩快报数据失败: {str(e)}")
+        return error_response(f"获取数据失败: {str(e)}", 500)
