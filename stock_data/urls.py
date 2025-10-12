@@ -27,4 +27,7 @@ urlpatterns = [
     
     # 业绩快报相关API
     path('industry/performance-reports/', views.get_industry_performance_reports, name='industry_performance_reports'),
+    
+    # 行业热力图数据API
+    path('industry/heatmap-data/', views.get_industry_heatmap_data, name='industry_heatmap_data'),
 ]

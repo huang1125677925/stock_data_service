@@ -936,3 +936,204 @@ def get_industry_performance_reports(request):
     except Exception as e:
         logger.error(f"获取行业业绩快报数据失败: {str(e)}")
         return error_response(f"获取数据失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_heatmap_data(request):
+    """
+    获取行业热力图数据接口
+    功能：使用行业业绩数据的“报告期+行业”汇聚结果，返回适合前端热力图渲染的行业数据。
+    规则：
+    - 比率类指标（如 ROE、毛利率、营收/利润增速）直接使用当期行业均值作为热力图值；
+    - 非比率类指标（如营业收入、净利润、每股收益、每股净资产、每股经营现金流）按行业在时间序列中计算同比（相邻上一期）增速，返回该增速作为热力图值。
+    参数：
+    - metric_type (str, required): 指标类型，支持：
+      * 比率类：'roe'、'gross_profit_margin'、'operating_revenue_growth_rate'、'net_profit_growth_rate'
+      * 非比率类：'operating_revenue'、'net_profit'、'earnings_per_share'、'net_assets_per_share'、'operating_cash_flow_per_share'
+    - report_type (str, required): 报告类型：'annual'(年报, 1231)、'semi_annual'(中报, 0630)、'q1'(一季报, 0331)、'q3'(三季报, 0930)
+    返回值：
+    {
+        "code": 200,
+        "message": "success",
+        "timestamp": "2024-01-01T12:00:00",
+        "data": {
+            "metric_type": "roe",
+            "metric_name": "净资产收益率(%)",
+            "report_type": "annual",
+            "periods": [
+                {"report_date": "20231231", "heatmap_data": [{"industry": "银行", "value": 12.5, "company_count": 42, "rank": 1}], "statistics": {"total_industries": 30, "max_value": 25.8, "min_value": -5.2, "avg_value": 8.6}},
+                {"report_date": "20221231", "heatmap_data": [...], "statistics": {...}}
+            ],
+            "report_date": "20231231",
+            "heatmap_data": [{"industry": "银行", "value": 12.5, "company_count": 42, "rank": 1}],
+            "statistics": {"total_industries": 30, "max_value": 25.8, "min_value": -5.2, "avg_value": 8.6}
+        }
+    }
+    事件：无（视图函数不直接触发事件）
+    """
+    from indival_stock_data.models import PerformanceReport, IndividualStock
+    from django.db.models import Sum, Count, Avg
+    
+    # 获取查询参数
+    industry = request.GET.get('industry')
+    report_type = request.GET.get('report_type')
+        
+    # 构建查询条件
+    queryset = PerformanceReport.objects.select_related('stock')
+    
+    # 按行业筛选
+    if industry:
+        queryset = queryset.filter(industry__icontains=industry)
+        
+    # 按报告类型筛选（根据报告期判断）
+    if report_type:
+        if report_type == 'annual':
+            # 年报：报告期以1231结尾
+            queryset = queryset.filter(report_date__endswith='1231')
+        elif report_type == 'semi_annual':
+            # 中报：报告期以0630结尾
+            queryset = queryset.filter(report_date__endswith='0630')
+        elif report_type == 'q1':
+            # 一季报：报告期以0331结尾
+            queryset = queryset.filter(report_date__endswith='0331')
+        elif report_type == 'q3':
+            # 三季报：报告期以0930结尾
+            queryset = queryset.filter(report_date__endswith='0930')
+        elif report_type == 'quarterly':
+            # 季报：报告期以0331或0930结尾（保持向后兼容）
+            queryset = queryset.filter(
+                models.Q(report_date__endswith='0331') | 
+                models.Q(report_date__endswith='0930')
+            )
+        
+    # 按报告期和行业分组汇聚数据
+    aggregated_data = queryset.values('report_date', 'industry').annotate(
+        # 汇聚财务指标
+        total_operating_revenue=Sum('operating_revenue'),
+        total_net_profit=Sum('net_profit'),
+        avg_earnings_per_share=Avg('earnings_per_share'),
+        avg_operating_revenue_growth_rate=Avg('operating_revenue_growth_rate'),
+        avg_net_profit_growth_rate=Avg('net_profit_growth_rate'),
+        avg_roe=Avg('roe'),
+        avg_gross_profit_margin=Avg('gross_profit_margin'),
+        avg_net_assets_per_share=Avg('net_assets_per_share'),
+        avg_operating_cash_flow_per_share=Avg('operating_cash_flow_per_share'),
+        # 统计信息
+        company_count=Count('stock', distinct=True)
+    ).order_by('report_date', 'industry')
+    
+    # 转换为列表格式
+    reports_list = []
+    for item in aggregated_data:
+        report_dict = {
+            'report_date': item['report_date'],
+            'industry': item['industry'],
+            'company_count': item['company_count'],
+            'total_operating_revenue': float(item['total_operating_revenue']) if item['total_operating_revenue'] else 0,
+            'total_net_profit': float(item['total_net_profit']) if item['total_net_profit'] else 0,
+            'avg_earnings_per_share': round(float(item['avg_earnings_per_share']), 4) if item['avg_earnings_per_share'] else 0,
+            'avg_operating_revenue_growth_rate': round(float(item['avg_operating_revenue_growth_rate']), 2) if item['avg_operating_revenue_growth_rate'] else 0,
+            'avg_net_profit_growth_rate': round(float(item['avg_net_profit_growth_rate']), 2) if item['avg_net_profit_growth_rate'] else 0,
+            'avg_roe': round(float(item['avg_roe']), 4) if item['avg_roe'] else 0,
+            'avg_gross_profit_margin': round(float(item['avg_gross_profit_margin']), 4) if item['avg_gross_profit_margin'] else 0,
+            'avg_net_assets_per_share': round(float(item['avg_net_assets_per_share']), 4) if item['avg_net_assets_per_share'] else 0,
+            'avg_operating_cash_flow_per_share': round(float(item['avg_operating_cash_flow_per_share']), 4) if item['avg_operating_cash_flow_per_share'] else 0,
+        }
+        reports_list.append(report_dict)
+    
+    # 构建热力图数据格式
+    heatmap_data = convert_to_heatmap_format(reports_list)
+    
+    return success_response(heatmap_data)
+
+
+def convert_to_heatmap_format(reports_data):
+    """
+    将行业业绩数据转换为热力图格式
+    
+    参数:
+        reports_data: 行业业绩数据列表
+        
+    返回:
+        符合热力图要求的数据格式
+    """
+    # 直接使用原始数据中的行业名称
+    industry_names = list(set([item['industry'] for item in reports_data]))
+    industry_code_mapping = {}
+    for i, industry in enumerate(industry_names):
+        industry_code_mapping[industry] = f'801{str(i+1).zfill(3)}.SI'
+    
+    # 获取所有唯一的报告日期
+    unique_dates = sorted(list(set([item['report_date'] for item in reports_data])))
+    
+    # 获取所有唯一的行业
+    unique_industries = list(set([item['industry'] for item in reports_data]))
+    
+    # 构建行业代码名称映射
+    sw_code_names = []
+    for industry in unique_industries:
+        index_code = industry_code_mapping.get(industry, f'801{str(len(sw_code_names) + 1).zfill(3)}.SI')
+        sw_code_names.append({
+            'indexCode': index_code,
+            'indexName': industry
+        })
+    
+    # 构建拥堵度数据
+    congestions = {}
+    for industry in unique_industries:
+        index_code = industry_code_mapping.get(industry, f'801{str(unique_industries.index(industry) + 1).zfill(3)}.SI')
+        industry_data = []
+        
+        for date in unique_dates:
+            # 查找该行业在该日期的数据
+            industry_report = next((item for item in reports_data 
+                                  if item['industry'] == industry and item['report_date'] == date), None)
+            
+            if industry_report:
+                # 使用原始数据中的指标计算热力图值
+                # 使用原始数据中的指标计算热力图值
+                industry_data.append({
+                    'avg_operating_revenue_growth_rate': round(float(industry_report['avg_operating_revenue_growth_rate'] or 0), 2),
+                    'avg_net_profit_growth_rate': round(float(industry_report['avg_net_profit_growth_rate'] or 0), 2),
+                    'total_operating_revenue': float(industry_report['total_operating_revenue'] or 0),
+                    'total_net_profit': float(industry_report['total_net_profit'] or 0),
+                    'avg_earnings_per_share': round(float(industry_report['avg_earnings_per_share'] or 0), 4),
+                    'avg_roe': round(float(industry_report['avg_roe'] or 0), 4),
+                    'avg_gross_profit_margin': round(float(industry_report['avg_gross_profit_margin'] or 0), 4),
+                    'avg_net_assets_per_share': round(float(industry_report['avg_net_assets_per_share'] or 0), 4),
+                    'avg_operating_cash_flow_per_share': round(float(industry_report['avg_operating_cash_flow_per_share'] or 0), 4)
+                })
+            else:
+                # 如果没有数据，使用默认值
+                industry_data.append({
+                    'avg_operating_revenue_growth_rate': 0,
+                    'avg_net_profit_growth_rate': 0,
+                    'total_operating_revenue': 0,
+                    'total_net_profit': 0,
+                    'avg_earnings_per_share': 0,
+                    'avg_roe': 0,
+                    'avg_gross_profit_margin': 0,
+                    'avg_net_assets_per_share': 0,
+                    'avg_operating_cash_flow_per_share': 0
+                })
+        
+        congestions[index_code] = industry_data
+    
+    # 格式化日期（将YYYYMMDD转换为YYYY-MM-DD）
+    formatted_dates = []
+    for date in unique_dates:
+        if len(date) == 8:
+            formatted_dates.append(f"{date[:4]}-{date[4:6]}-{date[6:8]}")
+        else:
+            formatted_dates.append(date)
+    
+    return {
+        'dates': formatted_dates,
+        'swCodeNames': sw_code_names,
+        'congestions': congestions
+    }
+        
+    
+
+        

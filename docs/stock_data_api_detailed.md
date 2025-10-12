@@ -821,6 +821,115 @@
    GET /django/api/stock/industry/performance-reports/?report_type=quarterly&start_date=20230101&end_date=20231231
    ```
 
+### 20. 获取行业热力图数据
+
+获取行业业绩数据的热力图格式，用于可视化展示行业间的对比和时间序列变化。
+
+**接口URL**：`/django/api/stock/industry/heatmap-data/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| industry | string | 否 | 行业名称，支持模糊匹配，如"软件开发" |
+| report_type | string | 否 | 报告类型，可选值：annual(年报)、semi_annual(中报)、q1(一季报)、q3(三季报)、quarterly(季报) |
+| start_date | string | 否 | 开始日期，格式：YYYYMMDD |
+| end_date | string | 否 | 结束日期，格式：YYYYMMDD |
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "dates": [
+            "2023-03-31",
+            "2023-06-30",
+            "2023-09-30",
+            "2023-12-31",
+            "2024-03-31"
+        ],
+        "swCodeNames": [
+            {
+                "indexCode": "801001.SI",
+                "indexName": "软件开发"
+            },
+            {
+                "indexCode": "801002.SI",
+                "indexName": "电子设备"
+            },
+            {
+                "indexCode": "801003.SI",
+                "indexName": "医药生物"
+            }
+            // 更多行业...
+        ],
+        "congestions": {
+            "801001.SI": [
+                {
+                    "avg_operating_revenue_growth_rate": 11.54,
+                    "avg_net_profit_growth_rate": -119.3,
+                    "total_operating_revenue": 67924252275.68,
+                    "total_net_profit": -2814793582.1,
+                    "avg_earnings_per_share": -0.0392,
+                    "avg_roe": -1.8956,
+                    "avg_gross_profit_margin": 43.7821,
+                    "avg_net_assets_per_share": 7.0234,
+                    "avg_operating_cash_flow_per_share": -0.2845
+                },
+                // 更多日期数据...
+            ],
+            "801002.SI": [
+                // 电子设备行业各日期数据...
+            ],
+            "801003.SI": [
+                // 医药生物行业各日期数据...
+            ]
+            // 更多行业数据...
+        }
+    }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 描述 |
+| ------ | ---- | ---- |
+| dates | array | 报告期日期列表，格式YYYY-MM-DD |
+| swCodeNames | array | 行业代码和名称映射列表 |
+| swCodeNames[].indexCode | string | 行业代码 |
+| swCodeNames[].indexName | string | 行业名称 |
+| congestions | object | 行业热力图数据，键为行业代码，值为该行业在各报告期的指标数据数组 |
+| congestions[code][].avg_operating_revenue_growth_rate | float | 平均营业收入增长率（%） |
+| congestions[code][].avg_net_profit_growth_rate | float | 平均净利润增长率（%） |
+| congestions[code][].total_operating_revenue | float | 总营业收入（元） |
+| congestions[code][].total_net_profit | float | 总净利润（元） |
+| congestions[code][].avg_earnings_per_share | float | 平均每股收益（元） |
+| congestions[code][].avg_roe | float | 平均净资产收益率（%） |
+| congestions[code][].avg_gross_profit_margin | float | 平均毛利率（%） |
+| congestions[code][].avg_net_assets_per_share | float | 平均每股净资产（元） |
+| congestions[code][].avg_operating_cash_flow_per_share | float | 平均每股经营现金流（元） |
+
+**使用示例**：
+
+1. 获取所有行业的热力图数据：
+   ```
+   GET /django/api/stock/industry/heatmap-data/
+   ```
+
+2. 获取软件开发行业的热力图数据：
+   ```
+   GET /django/api/stock/industry/heatmap-data/?industry=软件开发
+   ```
+
+3. 获取指定时间范围的年报热力图数据：
+   ```
+   GET /django/api/stock/industry/heatmap-data/?report_type=annual&start_date=20230101&end_date=20231231
+   ```
+
 ## 错误码说明
 
 | 错误码 | 描述 |
