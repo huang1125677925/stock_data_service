@@ -378,7 +378,7 @@ class StockDataService:
                     pe_ratio=stock['pe_ratio'],
                     pb_ratio=stock['pb_ratio'],
                     market_cap=stock.get('total_market_cap', 0),
-                    circulating_market_cap=stock.get('circulation_market_cap', 0),
+                    circulation_market_cap=stock.get('circulation_market_cap', 0),
                 )
                 stock_objects.append(stock_obj)
                 
@@ -960,7 +960,269 @@ class StockDataService:
         # 直接调用 get_stock_type 方法，保持功能一致性
         return self.get_stock_type(stock_code)
 
-# 行业板块数据服务类
+class IndustryStatsService:
+    """
+    行业统计数据服务类
+    基于IndividualStock模型数据进行行业维度的统计分析
+    """
+    
+    def __init__(self):
+        self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 300)  # 缓存5分钟
+        logger.info("行业统计数据服务初始化")
+    
+    def get_industry_statistics(self, industry_name: str = None) -> Optional[Dict]:
+        """
+        获取行业统计数据
+        
+        Args:
+            industry_name: 行业名称，如果为None则返回所有行业统计
+        
+        Returns:
+            行业统计数据字典
+        """
+        cache_key = f'industry_stats_{industry_name or "all"}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业统计数据: {industry_name or '全部行业'}")
+            return cached_data
+        
+        try:
+            from indival_stock_data.models import IndividualStock
+            from django.db.models import Avg, Sum, Count, Max, Min
+            from datetime import datetime, date
+            
+            # 构建查询集
+            queryset = IndividualStock.objects.all()
+            if industry_name:
+                queryset = queryset.filter(industry=industry_name)
+            
+            # 过滤掉没有行业信息的股票
+            queryset = queryset.filter(industry__isnull=False).exclude(industry='')
+            
+            if not queryset.exists():
+                logger.warning(f"没有找到行业数据: {industry_name}")
+                return None
+            
+            # 按行业分组统计
+            industry_stats = queryset.values('industry').annotate(
+                # 股票数量
+                stock_count=Count('id'),
+                
+                # 市值统计（总数）
+                total_market_cap_sum=Sum('total_market_cap'),
+                circulating_market_cap_sum=Sum('circulating_market_cap'),
+                
+                # 价格统计（平均值）
+                avg_latest_price=Avg('latest_price'),
+                avg_change_percent=Avg('change_percent'),
+                avg_change_amount=Avg('change_amount'),
+                
+                # 成交量成交额统计（总数）
+                total_volume=Sum('volume'),
+                total_amount=Sum('amount'),
+                
+                # 比率统计（平均值）
+                avg_amplitude=Avg('amplitude'),
+                avg_turnover_rate=Avg('turnover_rate'),
+                avg_pe_ratio=Avg('pe_ratio'),
+                avg_pb_ratio=Avg('pb_ratio'),
+                avg_volume_ratio=Avg('volume_ratio'),
+                avg_price_change_speed=Avg('price_change_speed'),
+                avg_change_5min=Avg('change_5min'),
+                avg_change_60d=Avg('change_60d'),
+                avg_change_ytd=Avg('change_ytd'),
+                
+                # 价格区间统计
+                max_high=Max('high'),
+                min_low=Min('low'),
+                avg_open_price=Avg('open_price'),
+                avg_close_price=Avg('close_price'),
+                
+                # 股本统计（总数）
+                total_shares_sum=Sum('total_shares'),
+                circulating_shares_sum=Sum('circulating_shares'),
+            ).order_by('-total_market_cap_sum')
+            
+            # 计算平均上市年数
+            current_date = date.today()
+            for stat in industry_stats:
+                industry_stocks = queryset.filter(industry=stat['industry'])
+                
+                # 计算平均上市年数
+                listed_stocks = industry_stocks.filter(list_date__isnull=False)
+                if listed_stocks.exists():
+                    total_years = 0
+                    count = 0
+                    for stock in listed_stocks:
+                        if stock.list_date:
+                            years = (current_date - stock.list_date).days / 365.25
+                            total_years += years
+                            count += 1
+                    stat['avg_listing_years'] = round(total_years / count, 2) if count > 0 else 0
+                else:
+                    stat['avg_listing_years'] = 0
+                
+                # 格式化数值
+                stat['total_market_cap_sum'] = float(stat['total_market_cap_sum']) if stat['total_market_cap_sum'] else 0
+                stat['circulating_market_cap_sum'] = float(stat['circulating_market_cap_sum']) if stat['circulating_market_cap_sum'] else 0
+                stat['avg_latest_price'] = round(float(stat['avg_latest_price']), 3) if stat['avg_latest_price'] else 0
+                stat['avg_change_percent'] = round(float(stat['avg_change_percent']), 3) if stat['avg_change_percent'] else 0
+                stat['avg_change_amount'] = round(float(stat['avg_change_amount']), 3) if stat['avg_change_amount'] else 0
+                stat['total_volume'] = stat['total_volume'] if stat['total_volume'] else 0
+                stat['total_amount'] = float(stat['total_amount']) if stat['total_amount'] else 0
+                stat['avg_amplitude'] = round(float(stat['avg_amplitude']), 3) if stat['avg_amplitude'] else 0
+                stat['avg_turnover_rate'] = round(float(stat['avg_turnover_rate']), 3) if stat['avg_turnover_rate'] else 0
+                stat['avg_pe_ratio'] = round(float(stat['avg_pe_ratio']), 3) if stat['avg_pe_ratio'] else 0
+                stat['avg_pb_ratio'] = round(float(stat['avg_pb_ratio']), 3) if stat['avg_pb_ratio'] else 0
+                stat['avg_volume_ratio'] = round(float(stat['avg_volume_ratio']), 3) if stat['avg_volume_ratio'] else 0
+                stat['avg_price_change_speed'] = round(float(stat['avg_price_change_speed']), 3) if stat['avg_price_change_speed'] else 0
+                stat['avg_change_5min'] = round(float(stat['avg_change_5min']), 3) if stat['avg_change_5min'] else 0
+                stat['avg_change_60d'] = round(float(stat['avg_change_60d']), 3) if stat['avg_change_60d'] else 0
+                stat['avg_change_ytd'] = round(float(stat['avg_change_ytd']), 3) if stat['avg_change_ytd'] else 0
+                stat['max_high'] = float(stat['max_high']) if stat['max_high'] else 0
+                stat['min_low'] = float(stat['min_low']) if stat['min_low'] else 0
+                stat['avg_open_price'] = round(float(stat['avg_open_price']), 3) if stat['avg_open_price'] else 0
+                stat['avg_close_price'] = round(float(stat['avg_close_price']), 3) if stat['avg_close_price'] else 0
+                stat['total_shares_sum'] = stat['total_shares_sum'] if stat['total_shares_sum'] else 0
+                stat['circulating_shares_sum'] = stat['circulating_shares_sum'] if stat['circulating_shares_sum'] else 0
+            
+            result = {
+                'industries': list(industry_stats),
+                'total_industries': len(industry_stats),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # # 如果查询特定行业，只返回该行业数据
+            # if industry_name and industry_stats:
+            #     result = {
+            #         'industry': list(industry_stats),
+            #         'timestamp': datetime.now().isoformat()
+            #     }
+            
+            # 缓存数据
+            cache.set(cache_key, result, self.cache_timeout)
+            logger.info(f"获取行业统计数据成功: {industry_name or '全部行业'}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取行业统计数据失败: {str(e)}")
+            return None
+    
+    def get_industry_ranking(self, sort_by: str = 'total_market_cap_sum', order: str = 'desc', limit: int = 20) -> Optional[List[Dict]]:
+        """
+        获取行业排名数据
+        
+        Args:
+            sort_by: 排序字段
+            order: 排序方向 ('asc', 'desc')
+            limit: 返回数量限制
+        
+        Returns:
+            行业排名列表
+        """
+        cache_key = f'industry_ranking_{sort_by}_{order}_{limit}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业排名数据")
+            return cached_data
+        
+        try:
+            # 获取所有行业统计数据
+            all_stats = self.get_industry_statistics()
+            if not all_stats or 'industries' not in all_stats:
+                return None
+            
+            industries = all_stats['industries']
+            
+            # 验证排序字段
+            valid_sort_fields = [
+                'stock_count', 'total_market_cap_sum', 'circulating_market_cap_sum',
+                'avg_latest_price', 'avg_change_percent', 'total_volume', 'total_amount',
+                'avg_amplitude', 'avg_turnover_rate', 'avg_pe_ratio', 'avg_pb_ratio',
+                'avg_listing_years'
+            ]
+            
+            if sort_by not in valid_sort_fields:
+                sort_by = 'total_market_cap_sum'
+            
+            # 排序
+            reverse = order == 'desc'
+            industries.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=reverse)
+            
+            # 添加排名
+            for i, industry in enumerate(industries[:limit], 1):
+                industry['rank'] = i
+            
+            result = industries[:limit]
+            
+            # 缓存数据
+            cache.set(cache_key, result, self.cache_timeout)
+            logger.info(f"获取行业排名数据成功，排序字段: {sort_by}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取行业排名数据失败: {str(e)}")
+            return None
+    
+    def get_industry_comparison(self, industries: List[str]) -> Optional[Dict]:
+        """
+        获取多个行业对比数据
+        
+        Args:
+            industries: 行业名称列表
+        
+        Returns:
+            行业对比数据
+        """
+        if not industries or len(industries) < 2:
+            logger.warning("行业对比需要至少2个行业")
+            return None
+        
+        cache_key = f'industry_comparison_{"_".join(sorted(industries))}'
+        
+        # 尝试从缓存获取
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            logger.info(f"从缓存获取行业对比数据")
+            return cached_data
+        
+        try:
+            comparison_data = []
+            
+            for industry in industries:
+                industry_stat = self.get_industry_statistics(industry)
+                if industry_stat and 'industry' in industry_stat:
+                    comparison_data.append(industry_stat['industry'])
+            
+            if not comparison_data:
+                logger.warning("没有找到有效的行业对比数据")
+                return None
+            
+            result = {
+                'industries': comparison_data,
+                'comparison_count': len(comparison_data),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # 缓存数据
+            cache.set(cache_key, result, self.cache_timeout)
+            logger.info(f"获取行业对比数据成功，对比行业数: {len(comparison_data)}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取行业对比数据失败: {str(e)}")
+            return None
+
+# 创建服务实例
+industry_stats_service = IndustryStatsService()
+
 class IndustrySectorService:
     """行业板块数据服务类"""
     

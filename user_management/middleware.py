@@ -33,6 +33,9 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/individual_stock/strategy-results/',
             # '/django/api/stock/industry/performance-reports/',
             # '/django/api/stock/industry/heatmap-data/',
+            '/django/api/stock/industry/statistics/',
+            '/django/api/stock/industry/ranking/',
+            '/django/api/stock/industry/comparison/',
         ]
     
     def process_request(self, request):

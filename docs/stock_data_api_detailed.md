@@ -930,6 +930,319 @@
    GET /django/api/stock/industry/heatmap-data/?report_type=annual&start_date=20230101&end_date=20231231
    ```
 
+## 行业统计数据接口
+
+### 21. 获取行业统计数据
+
+获取基于个股数据汇聚的行业统计信息，包括市值、价格、交易量等各项指标的统计数据。
+
+**接口URL**：`/django/api/stock/industry/statistics/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| industry | string | 否 | 行业名称，如"银行"、"证券"等，不传则返回所有行业 |
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "statistics": [
+            {
+                "industry": "银行",
+                "stock_count": 42,
+                "total_market_cap_sum": 8765432109876.0,
+                "circulating_market_cap_sum": 7654321098765.0,
+                "avg_latest_price": 8.404,
+                "avg_change_percent": -0.84,
+                "avg_change_amount": 0.084,
+                "total_volume": 58616093,
+                "total_amount": 44305567876.89,
+                "avg_amplitude": 2.949,
+                "avg_turnover_rate": 1.02,
+                "avg_pe_ratio": 5.622,
+                "avg_pb_ratio": 0.605,
+                "avg_volume_ratio": 1.414,
+                "avg_price_change_speed": -0.125,
+                "avg_change_5min": -0.112,
+                "avg_change_60d": -10.676,
+                "avg_change_ytd": 6.962,
+                "max_high": 40.3,
+                "min_low": 1.98,
+                "avg_open_price": 8.355,
+                "avg_close_price": 8.404,
+                "total_shares_sum": 0,
+                "circulating_shares_sum": 0,
+                "avg_listing_years": 0
+            },
+            // 更多行业统计数据...
+        ],
+        "total_industries": 86,
+        "timestamp": "2024-01-01T12:00:00"
+    }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 描述 |
+| ------ | ---- | ---- |
+| industry | string | 行业名称 |
+| stock_count | int | 该行业股票数量 |
+| total_market_cap_sum | float | 总市值合计（元） |
+| circulating_market_cap_sum | float | 流通市值合计（元） |
+| avg_latest_price | float | 平均最新价格（元） |
+| avg_change_percent | float | 平均涨跌幅（%） |
+| avg_change_amount | float | 平均涨跌额（元） |
+| total_volume | int | 总成交量（手） |
+| total_amount | float | 总成交额（元） |
+| avg_amplitude | float | 平均振幅（%） |
+| avg_turnover_rate | float | 平均换手率（%） |
+| avg_pe_ratio | float | 平均市盈率 |
+| avg_pb_ratio | float | 平均市净率 |
+| avg_volume_ratio | float | 平均量比 |
+| avg_price_change_speed | float | 平均价格变化速度 |
+| avg_change_5min | float | 平均5分钟涨跌幅（%） |
+| avg_change_60d | float | 平均60日涨跌幅（%） |
+| avg_change_ytd | float | 平均年初至今涨跌幅（%） |
+| max_high | float | 行业内最高价（元） |
+| min_low | float | 行业内最低价（元） |
+| avg_open_price | float | 平均开盘价（元） |
+| avg_close_price | float | 平均收盘价（元） |
+| total_shares_sum | int | 总股本合计（股） |
+| circulating_shares_sum | int | 流通股本合计（股） |
+| avg_listing_years | float | 平均上市年限 |
+
+### 22. 获取行业排名数据
+
+根据指定指标对行业进行排名，支持多种排序指标和排序方向。
+
+**接口URL**：`/django/api/stock/industry/ranking/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| metric | string | 否 | 排序指标，默认为total_market_cap_sum，可选值见下表 |
+| order | string | 否 | 排序方向，desc(降序)或asc(升序)，默认desc |
+| limit | int | 否 | 返回行业数量，默认10，最大100 |
+
+**可选排序指标**：
+
+| 指标名称 | 描述 |
+| -------- | ---- |
+| total_market_cap_sum | 总市值合计 |
+| circulating_market_cap_sum | 流通市值合计 |
+| avg_change_percent | 平均涨跌幅 |
+| total_volume | 总成交量 |
+| total_amount | 总成交额 |
+| avg_turnover_rate | 平均换手率 |
+| avg_pe_ratio | 平均市盈率 |
+| avg_pb_ratio | 平均市净率 |
+| stock_count | 股票数量 |
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "ranking": [
+            {
+                "industry": "银行",
+                "stock_count": 42,
+                "total_market_cap_sum": 8765432109876.0,
+                "circulating_market_cap_sum": 7654321098765.0,
+                "avg_latest_price": 8.404,
+                "avg_change_percent": -0.84,
+                "rank": 1
+            },
+            {
+                "industry": "证券",
+                "stock_count": 49,
+                "total_market_cap_sum": 3765837035771.0,
+                "circulating_market_cap_sum": 3098110107424.0,
+                "avg_latest_price": 12.582,
+                "avg_change_percent": -0.787,
+                "rank": 2
+            },
+            // 更多排名数据...
+        ],
+        "ranking_params": {
+            "metric": "total_market_cap_sum",
+            "order": "desc",
+            "limit": 10
+        }
+    }
+}
+```
+
+### 23. 获取行业比较数据
+
+比较指定多个行业的统计数据，用于行业间的对比分析。
+
+**接口URL**：`/django/api/stock/industry/comparison/`
+
+**请求方式**：POST
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| industries | array | 是 | 要比较的行业名称列表，如["银行", "证券", "保险"] |
+
+**请求体示例**：
+```json
+{
+    "industries": ["银行", "证券", "保险"]
+}
+```
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "comparison": [
+            {
+                "industry": "银行",
+                "stock_count": 42,
+                "total_market_cap_sum": 8765432109876.0,
+                "circulating_market_cap_sum": 7654321098765.0,
+                "avg_latest_price": 8.404,
+                "avg_change_percent": -0.84,
+                "avg_change_amount": 0.084,
+                "total_volume": 58616093,
+                "total_amount": 44305567876.89,
+                "avg_amplitude": 2.949,
+                "avg_turnover_rate": 1.02,
+                "avg_pe_ratio": 5.622,
+                "avg_pb_ratio": 0.605,
+                "avg_volume_ratio": 1.414,
+                "avg_price_change_speed": -0.125,
+                "avg_change_5min": -0.112,
+                "avg_change_60d": -10.676,
+                "avg_change_ytd": 6.962,
+                "max_high": 40.3,
+                "min_low": 1.98,
+                "avg_open_price": 8.355,
+                "avg_close_price": 8.404,
+                "total_shares_sum": 0,
+                "circulating_shares_sum": 0,
+                "avg_listing_years": 0
+            },
+            {
+                "industry": "证券",
+                "stock_count": 49,
+                "total_market_cap_sum": 3765837035771.0,
+                "circulating_market_cap_sum": 3098110107424.0,
+                "avg_latest_price": 12.582,
+                "avg_change_percent": -0.787,
+                "avg_change_amount": -0.093,
+                "total_volume": 37611785,
+                "total_amount": 48292191390.71,
+                "avg_amplitude": 3.167,
+                "avg_turnover_rate": 1.874,
+                "avg_pe_ratio": 49.65,
+                "avg_pb_ratio": 1.825,
+                "avg_volume_ratio": 0.884,
+                "avg_price_change_speed": -0.009,
+                "avg_change_5min": -0.004,
+                "avg_change_60d": 8.237,
+                "avg_change_ytd": 12.863,
+                "max_high": 37.92,
+                "min_low": 4.43,
+                "avg_open_price": 12.339,
+                "avg_close_price": 12.676,
+                "total_shares_sum": 0,
+                "circulating_shares_sum": 0,
+                "avg_listing_years": 0
+            },
+            {
+                "industry": "保险",
+                "stock_count": 6,
+                "total_market_cap_sum": 2981049146237.0,
+                "circulating_market_cap_sum": 2049676155988.0,
+                "avg_latest_price": 39.84,
+                "avg_change_percent": -0.88,
+                "avg_change_amount": -0.336,
+                "total_volume": 2191069,
+                "total_amount": 7278062381.0,
+                "avg_amplitude": 2.076,
+                "avg_turnover_rate": 0.415,
+                "avg_pe_ratio": 7.99,
+                "avg_pb_ratio": 1.592,
+                "avg_volume_ratio": 0.754,
+                "avg_price_change_speed": -0.066,
+                "avg_change_5min": 0.004,
+                "avg_change_60d": -7.483,
+                "avg_change_ytd": -3.733,
+                "max_high": 63.06,
+                "min_low": 7.72,
+                "avg_open_price": 39.442,
+                "avg_close_price": 33.743,
+                "total_shares_sum": 0,
+                "circulating_shares_sum": 0,
+                "avg_listing_years": 0
+            }
+        ],
+        "comparison_count": 3,
+        "timestamp": "2024-01-01T12:00:00"
+    }
+}
+```
+
+**使用示例**：
+
+1. 获取所有行业统计数据：
+   ```
+   GET /django/api/stock/industry/statistics/
+   ```
+
+2. 获取银行行业统计数据：
+   ```
+   GET /django/api/stock/industry/statistics/?industry=银行
+   ```
+
+3. 按总市值排名前5的行业：
+   ```
+   GET /django/api/stock/industry/ranking/?metric=total_market_cap_sum&limit=5
+   ```
+
+4. 按平均涨跌幅升序排列：
+   ```
+   GET /django/api/stock/industry/ranking/?metric=avg_change_percent&order=asc&limit=10
+   ```
+
+5. 比较金融相关行业：
+   ```
+   POST /django/api/stock/industry/comparison/
+   Content-Type: application/json
+   
+   {
+       "industries": ["银行", "证券", "保险", "信托"]
+   }
+   ```
+
+**特性说明**：
+
+1. **数据来源**：基于IndividualStock模型中的个股数据进行实时汇聚计算
+2. **统计方式**：比率类指标（如涨跌幅、换手率、市盈率等）使用平均值，数量类指标（如市值、成交量等）使用总和
+3. **缓存机制**：统计数据支持缓存，提高查询性能
+4. **实时性**：数据基于最新的个股行情数据计算，保证时效性
+5. **完整性**：涵盖市值、价格、交易、估值等多维度指标
+
 ## 错误码说明
 
 | 错误码 | 描述 |

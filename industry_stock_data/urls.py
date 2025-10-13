@@ -30,4 +30,9 @@ urlpatterns = [
     
     # 行业热力图数据API
     path('industry/heatmap-data/', views.get_industry_heatmap_data, name='industry_heatmap_data'),
+    
+    # 行业统计数据API
+    path('industry/statistics/', views.get_industry_statistics, name='industry_statistics'),
+    path('industry/ranking/', views.get_industry_ranking, name='industry_ranking'),
+    path('industry/comparison/', views.get_industry_comparison, name='industry_comparison'),
 ]

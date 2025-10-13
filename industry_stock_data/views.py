@@ -1133,6 +1133,225 @@ def convert_to_heatmap_format(reports_data):
         'swCodeNames': sw_code_names,
         'congestions': congestions
     }
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_statistics(request):
+    """
+    获取行业统计数据
+    
+    Query Parameters:
+        industry (str): 行业名称，可选，不传则返回所有行业统计
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "industries": [...] | "industry": {...},
+                "total_industries": 50,
+                "timestamp": "2024-01-01T12:00:00"
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        industry_name = request.GET.get('industry')
+        
+        # 导入服务
+        from .services import industry_stats_service
+        
+        # 获取行业统计数据
+        result = industry_stats_service.get_industry_statistics(industry_name)
+        
+        if result is None:
+            return error_response(
+                message=f"未找到行业统计数据: {industry_name or '全部行业'}",
+                code=404
+            )
+        
+        return success_response(
+            data=result,
+            message="获取行业统计数据成功"
+        )
+        
+    except Exception as e:
+        logger.error(f"获取行业统计数据失败: {str(e)}")
+        return error_response(
+            message=f"获取行业统计数据失败: {str(e)}",
+            code=500
+        )
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_ranking(request):
+    """
+    获取行业排名数据
+    
+    Query Parameters:
+        sort_by (str): 排序字段，默认为total_market_cap_sum
+        order (str): 排序方向，asc或desc，默认desc
+        limit (int): 返回数量限制，默认20
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": [
+                {
+                    "industry": "电子",
+                    "rank": 1,
+                    "stock_count": 100,
+                    "total_market_cap_sum": 1000000000,
+                    ...
+                }
+            ]
+        }
+    """
+    try:
+        # 获取查询参数
+        sort_by = request.GET.get('sort_by', 'total_market_cap_sum')
+        order = request.GET.get('order', 'desc')
+        limit = int(request.GET.get('limit', 20))
+        
+        # 验证参数
+        if limit <= 0 or limit > 100:
+            return error_response(
+                message="limit参数必须在1-100之间",
+                code=400
+            )
+        
+        if order not in ['asc', 'desc']:
+            return error_response(
+                message="order参数必须是asc或desc",
+                code=400
+            )
+        
+        # 导入服务
+        from .services import industry_stats_service
+        
+        # 获取行业排名数据
+        result = industry_stats_service.get_industry_ranking(sort_by, order, limit)
+        
+        if result is None:
+            return error_response(
+                message="未找到行业排名数据",
+                code=404
+            )
+        
+        return success_response(
+            data=result,
+            message="获取行业排名数据成功"
+        )
+        
+    except ValueError as e:
+        return error_response(
+            message=f"参数错误: {str(e)}",
+            code=400
+        )
+    except Exception as e:
+        logger.error(f"获取行业排名数据失败: {str(e)}")
+        return error_response(
+            message=f"获取行业排名数据失败: {str(e)}",
+            code=500
+        )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def get_industry_comparison(request):
+    """
+    获取多个行业对比数据
+    
+    Request Body:
+        {
+            "industries": ["电子", "医药生物", "计算机"]
+        }
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "industries": [...],
+                "comparison_count": 3,
+                "timestamp": "2024-01-01T12:00:00"
+            }
+        }
+    """
+    try:
+        # 解析请求体
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            return error_response(
+                message="请求头Content-Type必须为application/json",
+                code=400
+            )
+        
+        # 获取行业列表
+        industries = data.get('industries', [])
+        
+        # 验证参数
+        if not industries or not isinstance(industries, list):
+            return error_response(
+                message="industries参数必须是非空数组",
+                code=400
+            )
+        
+        if len(industries) < 2:
+            return error_response(
+                message="行业对比需要至少2个行业",
+                code=400
+            )
+        
+        if len(industries) > 10:
+            return error_response(
+                message="最多支持对比10个行业",
+                code=400
+            )
+        
+        # 验证行业名称
+        for industry in industries:
+            if not isinstance(industry, str) or not industry.strip():
+                return error_response(
+                    message="行业名称必须是非空字符串",
+                    code=400
+                )
+        
+        # 导入服务
+        from .services import industry_stats_service
+        
+        # 获取行业对比数据
+        result = industry_stats_service.get_industry_comparison(industries)
+        
+        if result is None:
+            return error_response(
+                message="未找到有效的行业对比数据",
+                code=404
+            )
+        
+        return success_response(
+            data=result,
+            message="获取行业对比数据成功"
+        )
+        
+    except json.JSONDecodeError:
+        return error_response(
+            message="请求体JSON格式错误",
+            code=400
+        )
+    except Exception as e:
+        logger.error(f"获取行业对比数据失败: {str(e)}")
+        return error_response(
+            message=f"获取行业对比数据失败: {str(e)}",
+            code=500
+        )
         
     
 
