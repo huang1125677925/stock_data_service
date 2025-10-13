@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
-from stock_data.models import IndustrySector, IndustrySectorDaily
-from stock_data.services import industry_sector_service
+from industry_stock_data.models import IndustrySector, IndustrySectorDaily
+from industry_stock_data.services import industry_sector_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class IndustryTurnoverStrategy:
             sector_map = {sector['code']: sector['name'] for sector in sectors}
             
             # 从数据库中获取指定日期范围内的所有行业日频数据
-            from stock_data.models import IndustrySectorDaily, IndustrySector
+            from industry_stock_data.models import IndustrySectorDaily, IndustrySector
             from django.db.models import F
             
             start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()

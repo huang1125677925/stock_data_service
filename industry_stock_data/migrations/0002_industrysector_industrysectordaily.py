@@ -6,7 +6,7 @@ import django.db.models.deletion
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("stock_data", "0001_initial"),
+        ("industry_stock_data", "0001_initial"),
     ]
 
     operations = [
@@ -148,7 +148,7 @@ class Migration(migrations.Migration):
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
                         related_name="daily_data",
-                        to="stock_data.industrysector",
+                        to="industry_stock_data.industrysector",
                         verbose_name="所属板块",
                     ),
                 ),

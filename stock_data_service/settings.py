@@ -37,7 +37,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'django_crontab',
-    'stock_data',
+    'industry_stock_data',
     'cctv_news',
     'stock_strategy',
     'user_management',

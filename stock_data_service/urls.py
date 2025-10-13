@@ -49,7 +49,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', index, name='index'),
     path('health/', health_check, name='health_check'),
-    path('django/api/stock/', include('stock_data.urls')),
+    path('django/api/stock/', include('industry_stock_data.urls')),
     path('django/api/individual_stock/', include('indival_stock_data.urls')),
     path('django/api/news/', include('cctv_news.urls')),
     path('django/api/strategy/', include('stock_strategy.urls')),

@@ -23,11 +23,11 @@ from datetime import datetime, timedelta
 import time
 
 # 导入行业板块服务和模型
-from stock_data.services import industry_sector_service
-from stock_data.models import IndustrySector
+from industry_stock_data.services import industry_sector_service
+from industry_stock_data.models import IndustrySector
 import akshare as ak
 import pandas as pd
-from stock_data.models import IndustrySectorDaily
+from industry_stock_data.models import IndustrySectorDaily
 
 
 from django.utils import timezone
@@ -99,8 +99,8 @@ def fetch_industry_sector_daily_data():
     
     try:
         # 导入行业板块服务和模型
-        from stock_data.services import industry_sector_service
-        from stock_data.models import IndustrySector
+        from industry_stock_data.services import industry_sector_service
+        from industry_stock_data.models import IndustrySector
         
         # 获取所有行业板块
         sectors = IndustrySector.objects.all()

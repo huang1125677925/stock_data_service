@@ -128,7 +128,7 @@ def get_available_task_functions():
     # 这里可以实现动态扫描项目中的函数
     # 简化起见，先返回一些预定义的函数
     return [
-        'stock_data.services.update_stock_data',
+        'industry_stock_data.services.update_stock_data',
         'stock_strategy.services.calculate_strategy_signals',
         'cctv_news.services.fetch_latest_news',
     ]
