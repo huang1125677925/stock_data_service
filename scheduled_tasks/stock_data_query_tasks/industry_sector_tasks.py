@@ -24,7 +24,7 @@ import time
 
 # 导入行业板块服务和模型
 from industry_stock_data.services import industry_sector_service
-from industry_stock_data.models import IndustrySector
+from industry_stock_data.models import IndustrySector, IndustrySectorFundFlow
 import akshare as ak
 import pandas as pd
 from industry_stock_data.models import IndustrySectorDaily
@@ -374,5 +374,237 @@ def mark_stock_industry():
         logger.error(f"个股行业标记任务执行失败: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+def fetch_industry_sector_fund_flow_data():
+    """
+    获取所有行业板块的资金流数据并保存到数据库
+    每天收盘后执行一次，获取最近30天的资金流数据
+    """
+    logger.info("开始执行行业板块资金流数据获取任务")
+    
+    try:
+        # 获取所有行业板块
+        sectors = IndustrySector.objects.all()
+        
+        if not sectors.exists():
+            # 如果数据库中没有行业板块数据，先获取行业板块列表
+            logger.warning("获取行业板块列表失败，无法获取资金流数据")
+            return {"status": "error", "message": "获取行业板块列表失败，无法获取资金流数据"}
+        
+        # 获取每个行业板块的资金流数据
+        success_count = 0
+        error_count = 0
+        total_count = sectors.count()
+        total_records = 0
+        
+        for sector in sectors:
+            time.sleep(2)  # 避免请求过于频繁
+            try:
+                logger.info(f"获取行业板块 {sector.code} ({sector.name}) 的资金流数据")
+                
+                # 从akshare获取资金流数据
+                df = ak.stock_sector_fund_flow_hist(symbol=sector.name)
+                
+                if df is None or df.empty:
+                    logger.warning(f"行业板块 {sector.name} 的资金流数据为空")
+                    error_count += 1
+                    continue
+                
+                # 准备批量创建的数据列表
+                fund_flow_objects = []
+                records_count = 0
+                
+                for _, row in df.iterrows():
+                    try:
+                        # 解析日期
+                        date_str = str(row['日期'])
+                        if len(date_str) == 8:  # YYYYMMDD格式
+                            date = datetime.strptime(date_str, '%Y%m%d').date()
+                        else:  # YYYY-MM-DD格式
+                            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        
+                        # 创建IndustrySectorFundFlow对象
+                        fund_flow_obj = IndustrySectorFundFlow(
+                            sector=sector,
+                            date=date,
+                            main_net_inflow_amount=float(row['主力净流入-净额']) if not pd.isna(row['主力净流入-净额']) else 0.0,
+                            main_net_inflow_ratio=float(row['主力净流入-净占比']) if not pd.isna(row['主力净流入-净占比']) else 0.0,
+                            super_large_net_inflow_amount=float(row['超大单净流入-净额']) if not pd.isna(row['超大单净流入-净额']) else 0.0,
+                            super_large_net_inflow_ratio=float(row['超大单净流入-净占比']) if not pd.isna(row['超大单净流入-净占比']) else 0.0,
+                            large_net_inflow_amount=float(row['大单净流入-净额']) if not pd.isna(row['大单净流入-净额']) else 0.0,
+                            large_net_inflow_ratio=float(row['大单净流入-净占比']) if not pd.isna(row['大单净流入-净占比']) else 0.0,
+                            medium_net_inflow_amount=float(row['中单净流入-净额']) if not pd.isna(row['中单净流入-净额']) else 0.0,
+                            medium_net_inflow_ratio=float(row['中单净流入-净占比']) if not pd.isna(row['中单净流入-净占比']) else 0.0,
+                            small_net_inflow_amount=float(row['小单净流入-净额']) if not pd.isna(row['小单净流入-净额']) else 0.0,
+                            small_net_inflow_ratio=float(row['小单净流入-净占比']) if not pd.isna(row['小单净流入-净占比']) else 0.0,
+                        )
+                        fund_flow_objects.append(fund_flow_obj)
+                        records_count += 1
+                        
+                    except Exception as e:
+                        logger.error(f"处理行业板块 {sector.name} 日期 {row['日期']} 的资金流数据失败: {str(e)}")
+                        continue
+                
+                # 批量创建数据，使用ignore_conflicts=True避免重复数据错误
+                if fund_flow_objects:
+                    IndustrySectorFundFlow.objects.bulk_create(fund_flow_objects, batch_size=500, ignore_conflicts=True)
+                
+                logger.info(f"成功获取行业板块 {sector.name} 的 {records_count} 条资金流数据")
+                success_count += 1
+                total_records += records_count
+                
+            except Exception as e:
+                logger.error(f"获取行业板块 {sector.name} 的资金流数据失败: {str(e)}")
+                error_count += 1
+        
+        logger.info(f"行业板块资金流数据获取任务完成，成功: {success_count}，失败: {error_count}，总计: {total_count}，总记录数: {total_records}")
+        return {
+            "status": "success" if error_count == 0 else "partial",
+            "message": f"行业板块资金流数据获取任务完成，成功: {success_count}，失败: {error_count}，总计: {total_count}，总记录数: {total_records}"
+        }
+        
+    except Exception as e:
+        logger.error(f"行业板块资金流数据获取任务执行失败: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+def update_industry_sector_fund_flow_data():
+    """
+    更新最近7天行业板块资金流数据
+    每个交易日收盘后执行，只更新最近的数据
+    """
+    logger.info("开始执行最近7天行业板块资金流数据更新任务")
+    
+    try:
+        # 获取所有行业板块
+        sectors = IndustrySector.objects.all()
+        
+        if not sectors.exists():
+            logger.warning("数据库中没有行业板块数据，无法更新资金流数据")
+            return {"status": "error", "message": "数据库中没有行业板块数据，无法更新资金流数据"}
+        
+        # 更新每个行业板块的最近7天资金流数据
+        success_count = 0
+        error_count = 0
+        total_count = sectors.count()
+        total_records = 0
+        
+        for sector in sectors:
+            time.sleep(0.5)  # 避免请求过于频繁
+            try:
+                logger.info(f"更新行业板块 {sector.code} ({sector.name}) 的最近7天资金流数据")
+                
+                # 从akshare获取资金流数据
+                df = ak.stock_sector_fund_flow_hist(symbol=sector.name)
+                
+                if df is None or df.empty:
+                    logger.warning(f"行业板块 {sector.name} 的资金流数据为空")
+                    error_count += 1
+                    continue
+                
+                # 只处理最近7天的数据
+                recent_date = datetime.now().date() - timedelta(days=7)
+                
+                # 获取该板块已存在的资金流数据日期
+                existing_dates = set(
+                    IndustrySectorFundFlow.objects.filter(
+                        sector=sector,
+                        date__gte=recent_date
+                    ).values_list('date', flat=True)
+                )
+                
+                # 准备批量创建和更新的数据
+                fund_flow_objects_to_create = []
+                fund_flow_objects_to_update = []
+                records_count = 0
+                
+                for _, row in df.iterrows():
+                    try:
+                        # 解析日期
+                        date_str = str(row['日期'])
+                        if len(date_str) == 8:  # YYYYMMDD格式
+                            date = datetime.strptime(date_str, '%Y%m%d').date()
+                        else:  # YYYY-MM-DD格式
+                            date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        
+                        # 只处理最近7天的数据
+                        if date < recent_date:
+                            continue
+                        
+                        # 准备数据
+                        fund_flow_data = {
+                            'main_net_inflow_amount': float(row['主力净流入-净额']) if not pd.isna(row['主力净流入-净额']) else 0.0,
+                            'main_net_inflow_ratio': float(row['主力净流入-净占比']) if not pd.isna(row['主力净流入-净占比']) else 0.0,
+                            'super_large_net_inflow_amount': float(row['超大单净流入-净额']) if not pd.isna(row['超大单净流入-净额']) else 0.0,
+                            'super_large_net_inflow_ratio': float(row['超大单净流入-净占比']) if not pd.isna(row['超大单净流入-净占比']) else 0.0,
+                            'large_net_inflow_amount': float(row['大单净流入-净额']) if not pd.isna(row['大单净流入-净额']) else 0.0,
+                            'large_net_inflow_ratio': float(row['大单净流入-净占比']) if not pd.isna(row['大单净流入-净占比']) else 0.0,
+                            'medium_net_inflow_amount': float(row['中单净流入-净额']) if not pd.isna(row['中单净流入-净额']) else 0.0,
+                            'medium_net_inflow_ratio': float(row['中单净流入-净占比']) if not pd.isna(row['中单净流入-净占比']) else 0.0,
+                            'small_net_inflow_amount': float(row['小单净流入-净额']) if not pd.isna(row['小单净流入-净额']) else 0.0,
+                            'small_net_inflow_ratio': float(row['小单净流入-净占比']) if not pd.isna(row['小单净流入-净占比']) else 0.0,
+                        }
+                        
+                        if date in existing_dates:
+                            # 如果记录已存在，准备更新
+                            try:
+                                existing_obj = IndustrySectorFundFlow.objects.get(sector=sector, date=date)
+                                for field, value in fund_flow_data.items():
+                                    setattr(existing_obj, field, value)
+                                fund_flow_objects_to_update.append(existing_obj)
+                            except IndustrySectorFundFlow.DoesNotExist:
+                                # 如果查询时记录不存在，创建新记录
+                                fund_flow_obj = IndustrySectorFundFlow(
+                                    sector=sector,
+                                    date=date,
+                                    **fund_flow_data
+                                )
+                                fund_flow_objects_to_create.append(fund_flow_obj)
+                        else:
+                            # 如果记录不存在，准备创建
+                            fund_flow_obj = IndustrySectorFundFlow(
+                                sector=sector,
+                                date=date,
+                                **fund_flow_data
+                            )
+                            fund_flow_objects_to_create.append(fund_flow_obj)
+                        
+                        records_count += 1
+                        
+                    except Exception as e:
+                        logger.error(f"处理行业板块 {sector.name} 日期 {row['日期']} 的资金流数据失败: {str(e)}")
+                        continue
+                
+                # 批量创建新记录
+                if fund_flow_objects_to_create:
+                    IndustrySectorFundFlow.objects.bulk_create(fund_flow_objects_to_create, ignore_conflicts=True)
+                
+                # 批量更新已存在的记录
+                if fund_flow_objects_to_update:
+                    IndustrySectorFundFlow.objects.bulk_update(
+                        fund_flow_objects_to_update,
+                        ['main_net_inflow_amount', 'main_net_inflow_ratio', 'super_large_net_inflow_amount', 
+                         'super_large_net_inflow_ratio', 'large_net_inflow_amount', 'large_net_inflow_ratio',
+                         'medium_net_inflow_amount', 'medium_net_inflow_ratio', 'small_net_inflow_amount', 
+                         'small_net_inflow_ratio']
+                    )
+                
+                logger.info(f"成功更新行业板块 {sector.name} 的 {records_count} 条资金流数据")
+                success_count += 1
+                total_records += records_count
+                
+            except Exception as e:
+                logger.error(f"更新行业板块 {sector.name} 的资金流数据失败: {str(e)}")
+                error_count += 1
+        
+        logger.info(f"行业板块资金流数据更新任务完成，成功: {success_count}，失败: {error_count}，总计: {total_count}，总记录数: {total_records}")
+        return {
+            "status": "success" if error_count == 0 else "partial",
+            "message": f"行业板块资金流数据更新任务完成，成功: {success_count}，失败: {error_count}，总计: {total_count}，总记录数: {total_records}"
+        }
+        
+    except Exception as e:
+        logger.error(f"行业板块资金流数据更新任务执行失败: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
 if __name__ == '__main__':
-    fetch_industry_sectors()
+    fetch_industry_sector_fund_flow_data()

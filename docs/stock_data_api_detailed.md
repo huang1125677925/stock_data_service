@@ -1252,6 +1252,254 @@
 | 404 | 资源不存在 |
 | 500 | 服务器内部错误 |
 
+## 行业资金流向相关接口
+
+### 24. 获取行业资金流向数据
+
+获取行业板块的资金流向数据，支持时间范围查询，返回格式化的资金流向数据结构。
+
+**接口URL**：`/industry_stock_data/industry/fund-flow/data/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| start_date | string | 否 | 开始日期，格式：YYYY-MM-DD，默认为30天前 |
+| end_date | string | 否 | 结束日期，格式：YYYY-MM-DD，默认为当前日期 |
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "dates": ["2024-01-01", "2024-01-02", "2024-01-03"],
+        "swCodeNames": [
+            {"indexCode": "BK0001", "indexName": "农业"},
+            {"indexCode": "BK0002", "indexName": "林业"},
+            {"indexCode": "BK0003", "indexName": "畜牧业"}
+        ],
+        "congestions": {
+            "BK0001.SI": [
+                {
+                    "main_net_inflow_amount": 12345678.90,
+                    "main_net_inflow_ratio": 2.34,
+                    "super_large_net_inflow_amount": 8765432.10,
+                    "super_large_net_inflow_ratio": 1.56,
+                    "large_net_inflow_amount": 3580246.80,
+                    "large_net_inflow_ratio": 0.78,
+                    "medium_net_inflow_amount": -2345678.90,
+                    "medium_net_inflow_ratio": -0.45,
+                    "small_net_inflow_amount": -10000000.00,
+                    "small_net_inflow_ratio": -1.89
+                }
+            ]
+        }
+    }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 描述 |
+| ------ | ---- | ---- |
+| dates | array | 查询时间范围内的日期列表 |
+| swCodeNames | array | 行业板块代码和名称映射 |
+| congestions | object | 各行业板块的资金流向数据，键为"板块代码.SI"格式 |
+| main_net_inflow_amount | float | 主力净流入金额（元） |
+| main_net_inflow_ratio | float | 主力净流入占比（%） |
+| super_large_net_inflow_amount | float | 超大单净流入金额（元） |
+| super_large_net_inflow_ratio | float | 超大单净流入占比（%） |
+| large_net_inflow_amount | float | 大单净流入金额（元） |
+| large_net_inflow_ratio | float | 大单净流入占比（%） |
+| medium_net_inflow_amount | float | 中单净流入金额（元） |
+| medium_net_inflow_ratio | float | 中单净流入占比（%） |
+| small_net_inflow_amount | float | 小单净流入金额（元） |
+| small_net_inflow_ratio | float | 小单净流入占比（%） |
+
+### 25. 获取行业板块资金流排行榜
+
+获取指定日期的行业板块资金流排行榜，支持多种排序字段和排序方式。
+
+**接口URL**：`/industry_stock_data/industry/fund-flow/ranking/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| date | string | 否 | 日期，格式：YYYYMMDD，默认为当前日期 |
+| sort_by | string | 否 | 排序字段，默认为main_net_inflow_amount |
+| order | string | 否 | 排序方式，desc/asc，默认为desc |
+| limit | int | 否 | 返回数量限制，默认为20，最大100 |
+
+**可选排序字段**：
+- `main_net_inflow_amount`: 主力净流入金额
+- `main_net_inflow_ratio`: 主力净流入占比
+- `super_large_net_inflow_amount`: 超大单净流入金额
+- `super_large_net_inflow_ratio`: 超大单净流入占比
+- `large_net_inflow_amount`: 大单净流入金额
+- `large_net_inflow_ratio`: 大单净流入占比
+- `medium_net_inflow_amount`: 中单净流入金额
+- `medium_net_inflow_ratio`: 中单净流入占比
+- `small_net_inflow_amount`: 小单净流入金额
+- `small_net_inflow_ratio`: 小单净流入占比
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "date": "20240101",
+        "ranking": [
+            {
+                "rank": 1,
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "date": "2024-01-01",
+                "main_net_inflow_amount": 123456789.12,
+                "main_net_inflow_ratio": 3.45,
+                "super_large_net_inflow_amount": 87654321.09,
+                "super_large_net_inflow_ratio": 2.34,
+                "large_net_inflow_amount": 35802468.03,
+                "large_net_inflow_ratio": 1.11,
+                "medium_net_inflow_amount": -23456789.01,
+                "medium_net_inflow_ratio": -0.67,
+                "small_net_inflow_amount": -100000000.00,
+                "small_net_inflow_ratio": -2.78,
+                "created_at": "2024-01-01T08:00:00"
+            }
+        ],
+        "total": 20,
+        "sort_by": "main_net_inflow_amount",
+        "order": "desc"
+    }
+}
+```
+
+### 26. 获取行业板块资金流汇总数据
+
+获取指定日期所有行业板块的资金流汇总数据，按主力净流入金额降序排列。
+
+**接口URL**：`/industry_stock_data/industry/fund-flow/summary/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| date | string | 否 | 日期，格式：YYYYMMDD，默认为当前日期 |
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "date": "20240101",
+        "summary": [
+            {
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "date": "2024-01-01",
+                "main_net_inflow_amount": 123456789.12,
+                "main_net_inflow_ratio": 3.45,
+                "super_large_net_inflow_amount": 87654321.09,
+                "super_large_net_inflow_ratio": 2.34,
+                "large_net_inflow_amount": 35802468.03,
+                "large_net_inflow_ratio": 1.11,
+                "medium_net_inflow_amount": -23456789.01,
+                "medium_net_inflow_ratio": -0.67,
+                "small_net_inflow_amount": -100000000.00,
+                "small_net_inflow_ratio": -2.78,
+                "created_at": "2024-01-01T08:00:00"
+            }
+        ],
+        "total": 50
+    }
+}
+```
+
+### 27. 获取资金流排行榜（通用版本）
+
+获取行业板块资金流排行榜的通用版本，支持更多筛选和排序选项。
+
+**接口URL**：`/industry_stock_data/fund-flow/ranking/`
+
+**请求方式**：GET
+
+**请求参数**：
+
+| 参数名 | 类型 | 必选 | 描述 |
+| ------ | ---- | ---- | ---- |
+| date | string | 否 | 查询日期，格式YYYY-MM-DD，默认为今天 |
+| metric | string | 否 | 排行指标，默认main_net_inflow |
+| top_n | int | 否 | 返回前N名，默认20，范围1-100 |
+| include_negative | bool | 否 | 是否包含负值（资金流出），默认true |
+
+**可选排行指标**：
+- `main_net_inflow`: 主力净流入
+- `super_large_net_inflow`: 超大单净流入
+- `large_net_inflow`: 大单净流入
+- `medium_net_inflow`: 中单净流入
+- `small_net_inflow`: 小单净流入
+
+**返回示例**：
+```json
+{
+    "code": 200,
+    "message": "success",
+    "timestamp": "2024-01-01T12:00:00",
+    "data": {
+        "ranking": [
+            {
+                "rank": 1,
+                "sector_code": "BK0001",
+                "sector_name": "农业",
+                "date": "2024-01-01",
+                "main_net_inflow_amount": 123456789.12,
+                "main_net_inflow_ratio": 3.45,
+                "super_large_net_inflow_amount": 87654321.09,
+                "super_large_net_inflow_ratio": 2.34,
+                "large_net_inflow_amount": 35802468.03,
+                "large_net_inflow_ratio": 1.11,
+                "medium_net_inflow_amount": -23456789.01,
+                "medium_net_inflow_ratio": -0.67,
+                "small_net_inflow_amount": -100000000.00,
+                "small_net_inflow_ratio": -2.78,
+                "created_at": "2024-01-01T08:00:00"
+            }
+        ],
+        "metric": "main_net_inflow",
+        "query_date": "2024-01-01",
+        "total_inflow": 5000000000.00,
+        "total_outflow": -2000000000.00
+    }
+}
+```
+
+**字段说明**：
+
+| 字段名 | 类型 | 描述 |
+| ------ | ---- | ---- |
+| ranking | array | 排行榜数据列表 |
+| rank | int | 排名 |
+| sector_code | string | 行业板块代码 |
+| sector_name | string | 行业板块名称 |
+| date | string | 数据日期 |
+| metric | string | 排行指标 |
+| query_date | string | 查询日期 |
+| total_inflow | float | 总流入金额 |
+| total_outflow | float | 总流出金额 |
+
 ## 注意事项
 
 1. 所有接口均支持HTTPS安全访问
@@ -1261,3 +1509,6 @@
 5. 行业板块代码格式为"BK"开头加4位数字
 6. 业绩快报数据按报告期和行业进行汇聚，提供行业整体财务指标分析
 7. 日期参数格式为YYYYMMDD，如20240331表示2024年3月31日
+8. 行业资金流向数据包含主力、超大单、大单、中单、小单五个维度的净流入数据
+9. 资金流向数据中正值表示净流入，负值表示净流出
+10. 行业板块资金流数据按交易日更新，非交易日无数据

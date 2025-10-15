@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
 from django.db import models
-from .models import StockInfo, StockRealtime, MarketSummary, IndustrySector, IndustrySectorDaily
+from .models import StockInfo, StockRealtime, MarketSummary, IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 from common.validators import validate_stock_symbol
 from indival_stock_data.models import IndividualStock
 
@@ -1451,6 +1451,363 @@ class IndustrySectorService:
             
         except Exception as e:
             logger.error(f"获取行业板块{sector_code}成分股失败: {str(e)}")
+            return None
+
+    def get_industry_sector_fund_flow(self, sector_code: str, start_date: str = None, end_date: str = None) -> Optional[List[Dict]]:
+        """获取行业板块资金流数据（仅从数据库查询）
+        
+        Args:
+            sector_code: 行业板块代码
+            start_date: 开始日期，格式：YYYYMMDD
+            end_date: 结束日期，格式：YYYYMMDD
+        
+        Returns:
+            行业板块资金流数据列表
+        """
+        if not start_date:
+            # 默认获取最近60天数据
+            start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
+        
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+        
+        try:
+            # 从数据库获取
+            start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
+            end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
+            
+            sector = IndustrySector.objects.filter(code=sector_code).first()
+            if not sector:
+                logger.warning(f"行业板块{sector_code}不存在")
+                return None
+            
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                sector=sector,
+                date__gte=start_date_obj,
+                date__lte=end_date_obj
+            ).order_by('-date')
+            
+            if fund_flow_data.exists():
+                result = [item.to_dict() for item in fund_flow_data]
+                logger.info(f"从数据库获取行业板块{sector_code}的{len(result)}条资金流数据")
+                return result
+            
+            logger.info(f"数据库无行业板块{sector_code}资金流数据")
+            return []
+            
+        except Exception as e:
+            logger.error(f"获取行业板块{sector_code}资金流数据失败: {str(e)}")
+            return None
+
+    def get_all_sectors_fund_flow_summary(self, date: str = None) -> Optional[List[Dict]]:
+        """获取所有行业板块指定日期的资金流汇总数据
+        
+        Args:
+            date: 日期，格式：YYYYMMDD，默认为最新交易日
+        
+        Returns:
+            所有行业板块资金流汇总数据列表
+        """
+        if not date:
+            date = datetime.now().strftime('%Y%m%d')
+        
+        try:
+            date_obj = datetime.strptime(date, '%Y%m%d').date()
+            
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                date=date_obj
+            ).select_related('sector').order_by('-main_net_inflow_amount')
+            
+            if fund_flow_data.exists():
+                result = [item.to_dict() for item in fund_flow_data]
+                logger.info(f"获取{date}日{len(result)}个行业板块资金流汇总数据")
+                return result
+            
+            logger.info(f"数据库无{date}日行业板块资金流数据")
+            return []
+            
+        except Exception as e:
+            logger.error(f"获取{date}日行业板块资金流汇总数据失败: {str(e)}")
+            return None
+
+    def get_fund_flow_ranking(self, date: str = None, sort_by: str = 'main_net_inflow_amount', order: str = 'desc', limit: int = 20) -> Optional[List[Dict]]:
+        """获取行业板块资金流排行榜
+        
+        Args:
+            date: 日期，格式：YYYYMMDD，默认为最新交易日
+            sort_by: 排序字段，可选值：main_net_inflow_amount, main_net_inflow_ratio, 
+                    super_large_net_inflow_amount, large_net_inflow_amount等
+            order: 排序方式，'desc'降序，'asc'升序
+            limit: 返回数量限制
+        
+        Returns:
+            行业板块资金流排行榜
+        """
+        if not date:
+            date = datetime.now().strftime('%Y%m%d')
+        
+        try:
+            date_obj = datetime.strptime(date, '%Y%m%d').date()
+            
+            # 构建排序字段
+            order_field = f'-{sort_by}' if order == 'desc' else sort_by
+            
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                date=date_obj
+            ).select_related('sector').order_by(order_field)[:limit]
+            
+            if fund_flow_data.exists():
+                result = []
+                for i, item in enumerate(fund_flow_data, 1):
+                    data = item.to_dict()
+                    data['rank'] = i
+                    result.append(data)
+                
+                logger.info(f"获取{date}日行业板块资金流排行榜，共{len(result)}条")
+                return result
+            
+            logger.info(f"数据库无{date}日行业板块资金流数据")
+            return []
+            
+        except Exception as e:
+            logger.error(f"获取{date}日行业板块资金流排行榜失败: {str(e)}")
+            return None
+
+    def get_industry_fund_flow_data(self, start_date: str = None, end_date: str = None) -> Optional[Dict]:
+        """
+        获取行业资金流向数据
+        
+        Args:
+            start_date: 开始日期，格式YYYY-MM-DD
+            end_date: 结束日期，格式YYYY-MM-DD
+            
+        Returns:
+            包含日期、行业代码名称和资金流向数据的字典
+        """
+        try:
+            from datetime import datetime, timedelta
+            from django.db.models import Q
+            
+            # 设置默认日期范围（最近30天）
+            if not end_date:
+                end_date = datetime.now().strftime('%Y-%m-%d')
+            if not start_date:
+                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            
+            logger.info(f"获取行业资金流向数据，日期范围: {start_date} 到 {end_date}")
+            
+            # 查询数据库中的资金流向数据
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                date__gte=start_date,
+                date__lte=end_date
+            ).select_related('sector').order_by('date', 'sector__code')
+            
+            if not fund_flow_data.exists():
+                logger.warning("数据库中没有找到资金流向数据，尝试从akshare获取")
+                # 如果数据库没有数据，尝试从akshare获取并保存
+                self._fetch_and_save_fund_flow_data(start_date, end_date)
+                # 重新查询
+                fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                    date__gte=start_date,
+                    date__lte=end_date
+                ).select_related('sector').order_by('date', 'sector__code')
+            
+            # 构建返回数据结构
+            dates = []
+            sw_code_names = []
+            congestions = {}
+            
+            # 收集所有唯一的日期和行业代码
+            date_set = set()
+            sector_dict = {}
+            
+            for item in fund_flow_data:
+                date_str = item.date.strftime('%Y-%m-%d')
+                date_set.add(date_str)
+                
+                sector_key = item.sector.code
+                if sector_key not in sector_dict:
+                    sector_dict[sector_key] = {
+                        'indexCode': item.sector.code,
+                        'indexName': item.sector.name
+                    }
+                    congestions[sector_key] = []
+                
+                # 添加资金流向数据
+                congestions[sector_key].append({
+                    'main_net_inflow_amount': float(item.main_net_inflow_amount),
+                    'main_net_inflow_ratio': float(item.main_net_inflow_ratio),
+                    'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount),
+                    'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio),
+                    'large_net_inflow_amount': float(item.large_net_inflow_amount),
+                    'large_net_inflow_ratio': float(item.large_net_inflow_ratio),
+                    'medium_net_inflow_amount': float(item.medium_net_inflow_amount),
+                    'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio),
+                    'small_net_inflow_amount': float(item.small_net_inflow_amount),
+                    'small_net_inflow_ratio': float(item.small_net_inflow_ratio),
+                })
+            
+            # 转换为列表并排序
+            dates = sorted(list(date_set))
+            sw_code_names = list(sector_dict.values())
+            
+            result = {
+                'dates': dates,
+                'swCodeNames': sw_code_names,
+                'congestions': congestions
+            }
+            
+            logger.info(f"成功获取行业资金流向数据，包含{len(dates)}个日期，{len(sw_code_names)}个行业")
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取行业资金流向数据失败: {str(e)}")
+            return None
+    
+    def _fetch_and_save_fund_flow_data(self, start_date: str, end_date: str) -> None:
+        """
+        从akshare获取并保存行业资金流向数据
+        
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+        """
+        try:
+            import akshare as ak
+            from datetime import datetime
+            
+            logger.info(f"从akshare获取行业资金流向数据: {start_date} 到 {end_date}")
+            
+            # 获取行业资金流向数据
+            # 注意：这里使用akshare的行业资金流向接口
+            df = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业板块")
+            
+            if df is None or df.empty:
+                logger.warning("从akshare获取的行业资金流向数据为空")
+                return
+            
+            # 获取或创建行业板块记录
+            sectors_to_create = []
+            fund_flows_to_create = []
+            current_date = datetime.now().date()
+            
+            for _, row in df.iterrows():
+                sector_name = str(row.get('名称', ''))
+                sector_code = str(row.get('代码', ''))
+                
+                if not sector_code or not sector_name:
+                    continue
+                
+                # 获取或创建行业板块
+                sector, created = IndustrySector.objects.get_or_create(
+                    code=sector_code,
+                    defaults={'name': sector_name}
+                )
+                
+                if created:
+                    logger.info(f"创建新的行业板块: {sector_code} - {sector_name}")
+                
+                # 创建资金流向记录
+                main_net_inflow = float(row.get('主力净流入-净额', 0))
+                main_net_inflow_ratio = float(row.get('主力净流入-净占比', 0))
+                
+                fund_flow, created = IndustrySectorFundFlow.objects.get_or_create(
+                    sector=sector,
+                    date=current_date,
+                    defaults={
+                        'main_net_inflow_amount': main_net_inflow,
+                        'main_net_inflow_ratio': main_net_inflow_ratio,
+                        'super_large_net_inflow_amount': float(row.get('超大单净流入-净额', 0)),
+                        'super_large_net_inflow_ratio': float(row.get('超大单净流入-净占比', 0)),
+                        'large_net_inflow_amount': float(row.get('大单净流入-净额', 0)),
+                        'large_net_inflow_ratio': float(row.get('大单净流入-净占比', 0)),
+                        'medium_net_inflow_amount': float(row.get('中单净流入-净额', 0)),
+                        'medium_net_inflow_ratio': float(row.get('中单净流入-净占比', 0)),
+                        'small_net_inflow_amount': float(row.get('小单净流入-净额', 0)),
+                        'small_net_inflow_ratio': float(row.get('小单净流入-净占比', 0)),
+                    }
+                )
+                
+                if created:
+                    logger.info(f"保存行业资金流向数据: {sector_name} - {current_date}")
+            
+            logger.info(f"成功从akshare获取并保存行业资金流向数据")
+            
+        except Exception as e:
+            logger.error(f"从akshare获取行业资金流向数据失败: {str(e)}")
+
+    def get_all_sectors_fund_flow_summary(self, date: str = None) -> Optional[List[Dict]]:
+        """获取所有行业板块指定日期的资金流汇总数据
+        
+        Args:
+            date: 日期，格式：YYYYMMDD，默认为最新交易日
+        
+        Returns:
+            所有行业板块资金流汇总数据列表
+        """
+        if not date:
+            date = datetime.now().strftime('%Y%m%d')
+        
+        try:
+            date_obj = datetime.strptime(date, '%Y%m%d').date()
+            
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                date=date_obj
+            ).select_related('sector').order_by('-main_net_inflow_amount')
+            
+            if fund_flow_data.exists():
+                result = [item.to_dict() for item in fund_flow_data]
+                logger.info(f"获取{date}日{len(result)}个行业板块资金流汇总数据")
+                return result
+            
+            logger.info(f"数据库无{date}日行业板块资金流数据")
+            return []
+            
+        except Exception as e:
+            logger.error(f"获取{date}日行业板块资金流汇总数据失败: {str(e)}")
+            return None
+
+    def get_fund_flow_ranking(self, date: str = None, sort_by: str = 'main_net_inflow_amount', order: str = 'desc', limit: int = 20) -> Optional[List[Dict]]:
+        """获取行业板块资金流排行榜
+        
+        Args:
+            date: 日期，格式：YYYYMMDD，默认为最新交易日
+            sort_by: 排序字段，可选值：main_net_inflow_amount, main_net_inflow_ratio, 
+                    super_large_net_inflow_amount, large_net_inflow_amount等
+            order: 排序方式，'desc'降序，'asc'升序
+            limit: 返回数量限制
+        
+        Returns:
+            行业板块资金流排行榜
+        """
+        if not date:
+            date = datetime.now().strftime('%Y%m%d')
+        
+        try:
+            date_obj = datetime.strptime(date, '%Y%m%d').date()
+            
+            # 构建排序字段
+            order_field = f'-{sort_by}' if order == 'desc' else sort_by
+            
+            fund_flow_data = IndustrySectorFundFlow.objects.filter(
+                date=date_obj
+            ).select_related('sector').order_by(order_field)[:limit]
+            
+            if fund_flow_data.exists():
+                result = []
+                for i, item in enumerate(fund_flow_data, 1):
+                    data = item.to_dict()
+                    data['rank'] = i
+                    result.append(data)
+                
+                logger.info(f"获取{date}日行业板块资金流排行榜，共{len(result)}条")
+                return result
+            
+            logger.info(f"数据库无{date}日行业板块资金流数据")
+            return []
+            
+        except Exception as e:
+            logger.error(f"获取{date}日行业板块资金流排行榜失败: {str(e)}")
             return None
 
 # 全局服务实例

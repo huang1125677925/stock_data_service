@@ -1356,3 +1356,422 @@ def get_industry_comparison(request):
     
 
         
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_sector_fund_flow(request, code):
+    """
+    获取指定行业板块的资金流数据
+    
+    Args:
+        code (str): 行业板块代码
+    
+    Query Parameters:
+        start_date (str): 开始日期，格式YYYY-MM-DD，默认为30天前
+        end_date (str): 结束日期，格式YYYY-MM-DD，默认为今天
+        limit (int): 返回记录数量限制，默认100
+        offset (int): 偏移量，默认0
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "total": 30,
+                "fund_flow_data": [...],
+                "sector_info": {...}
+            }
+        }
+    """
+    try:
+        # 验证行业板块代码
+        if not validate_sector_code(code):
+            return error_response('无效的行业板块代码', 400)
+        
+        # 获取查询参数
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        limit = int(request.GET.get('limit', 100))
+        offset = int(request.GET.get('offset', 0))
+        
+        # 验证分页参数
+        limit, offset = validate_pagination_params(limit, offset)
+        
+        # 获取资金流数据
+        result = industry_sector_service.get_industry_sector_fund_flow(
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            offset=offset
+        )
+        
+        if result is None:
+            return error_response('获取行业资金流数据失败', 500)
+        
+        return success_response(result)
+        
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取行业资金流数据失败: {str(e)}")
+        return error_response(f'获取行业资金流数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_all_sectors_fund_flow_summary(request):
+    """
+    获取所有行业板块的资金流汇总数据
+    
+    Query Parameters:
+        date (str): 查询日期，格式YYYY-MM-DD，默认为今天
+        sort_by (str): 排序字段，可选值：main_net_inflow, super_large_net_inflow, 
+                      large_net_inflow, medium_net_inflow, small_net_inflow，默认main_net_inflow
+        ascending (bool): 是否升序，默认false（降序）
+        limit (int): 返回记录数量限制，默认50
+        offset (int): 偏移量，默认0
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "total": 50,
+                "summary_data": [...],
+                "query_date": "2024-01-01"
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        date = request.GET.get('date')
+        sort_by = request.GET.get('sort_by', 'main_net_inflow')
+        ascending = request.GET.get('ascending', 'false').lower() == 'true'
+        limit = int(request.GET.get('limit', 50))
+        offset = int(request.GET.get('offset', 0))
+        
+        # 验证分页参数
+        limit, offset = validate_pagination_params(limit, offset)
+        
+        # 验证排序字段
+        valid_sort_fields = [
+            'main_net_inflow', 'super_large_net_inflow', 'large_net_inflow',
+            'medium_net_inflow', 'small_net_inflow'
+        ]
+        if sort_by not in valid_sort_fields:
+            return error_response(f'无效的排序字段，可选值: {", ".join(valid_sort_fields)}', 400)
+        
+        # 获取汇总数据
+        result = industry_sector_service.get_all_sectors_fund_flow_summary(
+            date=date,
+            sort_by=sort_by,
+            ascending=ascending,
+            limit=limit,
+            offset=offset
+        )
+        
+        if result is None:
+            return error_response('获取行业资金流汇总数据失败', 500)
+        
+        return success_response(result)
+        
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取行业资金流汇总数据失败: {str(e)}")
+        return error_response(f'获取行业资金流汇总数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_fund_flow_ranking(request):
+    """
+    获取行业板块资金流排行榜
+    
+    Query Parameters:
+        date (str): 查询日期，格式YYYY-MM-DD，默认为今天
+        metric (str): 排行指标，可选值：main_net_inflow, super_large_net_inflow,
+                     large_net_inflow, medium_net_inflow, small_net_inflow，默认main_net_inflow
+        top_n (int): 返回前N名，默认20
+        include_negative (bool): 是否包含负值（资金流出），默认true
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "ranking": [...],
+                "metric": "main_net_inflow",
+                "query_date": "2024-01-01",
+                "total_inflow": 1000000000,
+                "total_outflow": -500000000
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        date = request.GET.get('date')
+        metric = request.GET.get('metric', 'main_net_inflow')
+        top_n = int(request.GET.get('top_n', 20))
+        include_negative = request.GET.get('include_negative', 'true').lower() == 'true'
+        
+        # 验证参数
+        valid_metrics = [
+            'main_net_inflow', 'super_large_net_inflow', 'large_net_inflow',
+            'medium_net_inflow', 'small_net_inflow'
+        ]
+        if metric not in valid_metrics:
+            return error_response(f'无效的排行指标，可选值: {", ".join(valid_metrics)}', 400)
+        
+        if top_n <= 0 or top_n > 100:
+            return error_response('top_n参数必须在1-100之间', 400)
+        
+        # 获取排行数据
+        result = industry_sector_service.get_fund_flow_ranking(
+            date=date,
+            metric=metric,
+            top_n=top_n,
+            include_negative=include_negative
+        )
+        
+        if result is None:
+            return error_response('获取资金流排行数据失败', 500)
+        
+        return success_response(result)
+        
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取资金流排行数据失败: {str(e)}")
+        return error_response(f'获取资金流排行数据失败: {str(e)}', 500)
+        
+    
+
+        
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_fund_flow_data(request):
+    """
+    获取行业资金流向数据
+    
+    Query Parameters:
+        start_date (str): 开始日期，格式：YYYY-MM-DD，默认为30天前
+        end_date (str): 结束日期，格式：YYYY-MM-DD，默认为当前日期
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "dates": ["2024-01-01", "2024-01-02", ...],
+                "swCodeNames": [
+                    {"indexCode": "BK0001", "indexName": "农业"},
+                    ...
+                ],
+                "congestions": {
+                    "BK0001.SI": [
+                        {"main_net_inflow_amount": 85, "main_net_inflow_ratio": 76},
+                        ...
+                    ]
+                }
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        
+        # 从服务层获取行业资金流向数据
+        fund_flow_data = industry_sector_service.get_industry_fund_flow_data(start_date, end_date)
+        if fund_flow_data is None:
+            return error_response('获取行业资金流向数据失败', 500)
+        
+        return success_response(fund_flow_data)
+        
+    except Exception as e:
+        logger.error(f"获取行业资金流向数据失败: {str(e)}")
+        return error_response(f'获取行业资金流向数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_fund_flow_ranking(request):
+    """
+    获取行业板块资金流排行榜
+    
+    Query Parameters:
+        date (str): 日期，格式：YYYYMMDD，默认为当前日期
+        sort_by (str): 排序字段，默认为main_net_inflow_amount
+        order (str): 排序方式，desc/asc，默认为desc
+        limit (int): 返回数量限制，默认为20
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "date": "20240101",
+                "ranking": [...],
+                "total": 20
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        date = request.GET.get('date')
+        sort_by = request.GET.get('sort_by', 'main_net_inflow_amount')
+        order = request.GET.get('order', 'desc')
+        limit = int(request.GET.get('limit', 20))
+        
+        # 验证参数
+        if limit > 100:
+            limit = 100
+        
+        valid_sort_fields = [
+            'main_net_inflow_amount', 'main_net_inflow_ratio',
+            'super_large_net_inflow_amount', 'super_large_net_inflow_ratio',
+            'large_net_inflow_amount', 'large_net_inflow_ratio',
+            'medium_net_inflow_amount', 'medium_net_inflow_ratio',
+            'small_net_inflow_amount', 'small_net_inflow_ratio'
+        ]
+        
+        if sort_by not in valid_sort_fields:
+            sort_by = 'main_net_inflow_amount'
+        
+        if order not in ['desc', 'asc']:
+            order = 'desc'
+        
+        # 从服务层获取排行榜数据
+        ranking_data = industry_sector_service.get_fund_flow_ranking(date, sort_by, order, limit)
+        if ranking_data is None:
+            return error_response('获取行业板块资金流排行榜失败', 500)
+        
+        return success_response({
+            'date': date or datetime.now().strftime('%Y%m%d'),
+            'ranking': ranking_data,
+            'total': len(ranking_data),
+            'sort_by': sort_by,
+            'order': order
+        })
+        
+    except ValueError as e:
+        logger.error(f"参数格式错误: {str(e)}")
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取行业板块资金流排行榜失败: {str(e)}")
+        return error_response(f'获取行业板块资金流排行榜失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_fund_flow_summary(request):
+    """
+    获取所有行业板块资金流汇总数据
+    
+    Query Parameters:
+        date (str): 日期，格式：YYYYMMDD，默认为当前日期
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "date": "20240101",
+                "summary": [...],
+                "total": 50
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        date = request.GET.get('date')
+        
+        # 从服务层获取汇总数据
+        summary_data = industry_sector_service.get_all_sectors_fund_flow_summary(date)
+        if summary_data is None:
+            return error_response('获取行业板块资金流汇总数据失败', 500)
+        
+        return success_response({
+            'date': date or datetime.now().strftime('%Y%m%d'),
+            'summary': summary_data,
+            'total': len(summary_data)
+        })
+        
+    except Exception as e:
+        logger.error(f"获取行业板块资金流汇总数据失败: {str(e)}")
+        return error_response(f'获取行业板块资金流汇总数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_fund_flow_ranking(request):
+    """
+    获取行业板块资金流排行榜
+    
+    Query Parameters:
+        date (str): 查询日期，格式YYYY-MM-DD，默认为今天
+        metric (str): 排行指标，可选值：main_net_inflow, super_large_net_inflow,
+                     large_net_inflow, medium_net_inflow, small_net_inflow，默认main_net_inflow
+        top_n (int): 返回前N名，默认20
+        include_negative (bool): 是否包含负值（资金流出），默认true
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "timestamp": "2024-01-01T12:00:00",
+            "data": {
+                "ranking": [...],
+                "metric": "main_net_inflow",
+                "query_date": "2024-01-01",
+                "total_inflow": 1000000000,
+                "total_outflow": -500000000
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        date = request.GET.get('date')
+        metric = request.GET.get('metric', 'main_net_inflow')
+        top_n = int(request.GET.get('top_n', 20))
+        include_negative = request.GET.get('include_negative', 'true').lower() == 'true'
+        
+        # 验证参数
+        valid_metrics = [
+            'main_net_inflow', 'super_large_net_inflow', 'large_net_inflow',
+            'medium_net_inflow', 'small_net_inflow'
+        ]
+        if metric not in valid_metrics:
+            return error_response(f'无效的排行指标，可选值: {", ".join(valid_metrics)}', 400)
+        
+        if top_n <= 0 or top_n > 100:
+            return error_response('top_n参数必须在1-100之间', 400)
+        
+        # 获取排行数据
+        result = industry_sector_service.get_fund_flow_ranking(
+            date=date,
+            metric=metric,
+            top_n=top_n,
+            include_negative=include_negative
+        )
+        
+        if result is None:
+            return error_response('获取资金流排行数据失败', 500)
+        
+        return success_response(result)
+        
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取资金流排行数据失败: {str(e)}")
+        return error_response(f'获取资金流排行数据失败: {str(e)}', 500)
+        
+    
+
+        

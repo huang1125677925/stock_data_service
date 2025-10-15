@@ -96,6 +96,70 @@ class IndustrySectorDaily(models.Model):
             'created_at': self.created_at.isoformat()
         }
 
+
+class IndustrySectorFundFlow(models.Model):
+    """
+    行业板块资金流数据模型
+    存储行业板块的历史资金流向数据
+    """
+    sector = models.ForeignKey(IndustrySector, on_delete=models.CASCADE, related_name='fund_flow_data', verbose_name='所属板块')
+    date = models.DateField(verbose_name='交易日期')
+    
+    # 主力净流入数据
+    main_net_inflow_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='主力净流入-净额')
+    main_net_inflow_ratio = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='主力净流入-净占比(%)')
+    
+    # 超大单净流入数据
+    super_large_net_inflow_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='超大单净流入-净额')
+    super_large_net_inflow_ratio = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='超大单净流入-净占比(%)')
+    
+    # 大单净流入数据
+    large_net_inflow_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='大单净流入-净额')
+    large_net_inflow_ratio = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='大单净流入-净占比(%)')
+    
+    # 中单净流入数据
+    medium_net_inflow_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='中单净流入-净额')
+    medium_net_inflow_ratio = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='中单净流入-净占比(%)')
+    
+    # 小单净流入数据
+    small_net_inflow_amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='小单净流入-净额')
+    small_net_inflow_ratio = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='小单净流入-净占比(%)')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    
+    class Meta:
+        db_table = 'industry_sector_fund_flow'
+        verbose_name = '行业板块资金流数据'
+        verbose_name_plural = '行业板块资金流数据'
+        ordering = ['-date', 'sector']
+        indexes = [
+            models.Index(fields=['sector', '-date']),
+            models.Index(fields=['-date']),
+        ]
+        unique_together = ['sector', 'date']
+    
+    def __str__(self):
+        return f'{self.sector.name} - {self.date} - 主力净流入: {self.main_net_inflow_amount}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'sector_code': self.sector.code,
+            'sector_name': self.sector.name,
+            'date': self.date.isoformat(),
+            'main_net_inflow_amount': float(self.main_net_inflow_amount),
+            'main_net_inflow_ratio': float(self.main_net_inflow_ratio),
+            'super_large_net_inflow_amount': float(self.super_large_net_inflow_amount),
+            'super_large_net_inflow_ratio': float(self.super_large_net_inflow_ratio),
+            'large_net_inflow_amount': float(self.large_net_inflow_amount),
+            'large_net_inflow_ratio': float(self.large_net_inflow_ratio),
+            'medium_net_inflow_amount': float(self.medium_net_inflow_amount),
+            'medium_net_inflow_ratio': float(self.medium_net_inflow_ratio),
+            'small_net_inflow_amount': float(self.small_net_inflow_amount),
+            'small_net_inflow_ratio': float(self.small_net_inflow_ratio),
+            'created_at': self.created_at.isoformat()
+        }
+
 class StockInfo(models.Model):
     """股票基本信息模型"""
     code = models.CharField(max_length=10, unique=True, verbose_name='股票代码')

@@ -35,4 +35,10 @@ urlpatterns = [
     path('industry/statistics/', views.get_industry_statistics, name='industry_statistics'),
     path('industry/ranking/', views.get_industry_ranking, name='industry_ranking'),
     path('industry/comparison/', views.get_industry_comparison, name='industry_comparison'),
+    
+    # 行业资金流向相关API
+    path('industry/fund-flow/data/', views.get_industry_fund_flow_data, name='industry_fund_flow_data'),
+    path('industry/fund-flow/ranking/', views.get_industry_fund_flow_ranking, name='industry_fund_flow_ranking'),
+    path('industry/fund-flow/summary/', views.get_industry_fund_flow_summary, name='industry_fund_flow_summary'),
+    path('fund-flow/ranking/', views.get_fund_flow_ranking, name='fund_flow_ranking'),
 ]
