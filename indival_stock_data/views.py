@@ -27,12 +27,13 @@ class StockListView(APIView):
     """
     def get(self, request):
         """
-        功能：获取股票列表，支持关键词搜索与分页，提高查询性能。
+        功能：获取股票列表，支持关键词搜索、行业筛选与分页，提高查询性能。
         参数：
         - request(HttpRequest): 请求对象，查询参数包括：
           - page(int, 可选): 页码，默认1
           - page_size(int, 可选): 每页数量，默认20
           - keyword(str, 可选): 关键词，按股票名称或代码模糊匹配
+          - industry(str, 可选): 行业名称，按行业精确匹配
         返回值：
         - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息。
         事件：
@@ -43,11 +44,17 @@ class StockListView(APIView):
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
             keyword = request.query_params.get('keyword', None)
+            industry = request.query_params.get('industry', None)
 
             # 使用数据库层面的过滤与分页，避免一次性加载全部数据
             queryset = IndividualStock.objects.all().order_by('code')
             if keyword:
                 queryset = queryset.filter(Q(name__icontains=keyword) | Q(code__icontains=keyword))
+            if industry:
+                queryset = queryset.filter(industry__icontains=industry)
+
+            if queryset.count() == 0:
+                return error_response("没有搜索到相关股票", 404)
 
             # 分页处理（数据库分页）
             paginator = Paginator(queryset, page_size)
