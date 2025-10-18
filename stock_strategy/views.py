@@ -4,7 +4,7 @@ from django.views.decorators.http import require_http_methods
 import json
 import pandas as pd
 from datetime import datetime
-from .services import rps_service
+from .services import rps_service, StockScreeningService
 from .models import IndexRPS
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response
@@ -142,3 +142,113 @@ def get_industry_turnover_percentile(request):
         
     except Exception as e:
         return error_response(f'获取行业成交额占比分位数数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def screen_stocks_by_previous_high(request):
+    """
+    使用前高突破策略筛选股票
+    
+    功能：根据窗口大小和成交量倍数筛选符合条件的股票
+    参数：
+    - window_size: 分析窗口大小（交易日数量），默认20
+    - volume_multiplier: 成交量放大倍数，默认1.5
+    - stock_codes: 指定股票代码列表，可选
+    - limit: 返回结果数量限制，默认50
+    
+    返回值：
+    - 成功时返回筛选结果和统计信息
+    - 失败时返回错误信息
+    
+    事件：
+    - 参数验证失败时记录错误日志
+    - 筛选过程中出现异常时记录错误日志
+    """
+    try:
+        # 解析请求数据
+        data = json.loads(request.body) if request.body else {}
+        
+        # 获取参数
+        window_size = data.get('window_size', 60)
+        volume_multiplier = data.get('volume_multiplier', 1.5)
+        stock_codes = data.get('stock_codes', None)
+        limit = data.get('limit', 50)
+        
+        # 创建服务实例
+        screening_service = StockScreeningService()
+        
+        # 验证参数
+        validation_result = screening_service.validate_parameters(window_size, volume_multiplier)
+        if not validation_result['valid']:
+            return error_response(f"参数验证失败: {', '.join(validation_result['errors'])}", 400)
+        
+        # 执行筛选
+        result = screening_service.screen_stocks_by_previous_high(
+            window_size=window_size,
+            volume_multiplier=volume_multiplier,
+            stock_codes=stock_codes,
+            limit=limit
+        )
+        
+        if result['success']:
+            return success_response(result['data'], result['message'])
+        else:
+            return error_response(result['message'], 500)
+            
+    except json.JSONDecodeError:
+        return error_response('请求数据格式错误', 400)
+    except Exception as e:
+        return error_response(f'股票筛选失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_stock_analysis_detail(request, stock_code):
+    """
+    获取单只股票的详细分析结果
+    
+    功能：分析指定股票是否符合前高突破策略条件
+    参数：
+    - stock_code: 股票代码（URL路径参数）
+    - window_size: 分析窗口大小，默认20
+    - volume_multiplier: 成交量放大倍数，默认1.5
+    
+    返回值：
+    - 成功时返回股票详细分析结果和交易数据
+    - 失败时返回错误信息
+    
+    事件：
+    - 股票不存在时返回404错误
+    - 股票不符合条件时返回相应提示
+    """
+    try:
+        # 获取查询参数
+        window_size = int(request.GET.get('window_size', 20))
+        volume_multiplier = float(request.GET.get('volume_multiplier', 1.5))
+        
+        # 创建服务实例
+        screening_service = StockScreeningService()
+        
+        # 验证参数
+        validation_result = screening_service.validate_parameters(window_size, volume_multiplier)
+        if not validation_result['valid']:
+            return error_response(f"参数验证失败: {', '.join(validation_result['errors'])}", 400)
+        
+        # 获取分析详情
+        result = screening_service.get_stock_analysis_detail(
+            stock_code=stock_code,
+            window_size=window_size,
+            volume_multiplier=volume_multiplier
+        )
+        
+        if result['success']:
+            return success_response(result['data'], result['message'])
+        else:
+            status_code = 404 if '不存在' in result['message'] else 400
+            return error_response(result['message'], status_code)
+            
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except Exception as e:
+        return error_response(f'获取股票分析详情失败: {str(e)}', 500)
