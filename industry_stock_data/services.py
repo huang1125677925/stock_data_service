@@ -1633,18 +1633,36 @@ class IndustrySectorService:
                     }
                     congestions[sector_key] = []
                 
+                # 计算各项净流入金额和占比
+                main_amount = float(item.main_net_inflow_amount)
+                main_ratio = float(item.main_net_inflow_ratio)
+                super_large_amount = float(item.super_large_net_inflow_amount)
+                super_large_ratio = float(item.super_large_net_inflow_ratio)
+                large_amount = float(item.large_net_inflow_amount)
+                large_ratio = float(item.large_net_inflow_ratio)
+                medium_amount = float(item.medium_net_inflow_amount)
+                medium_ratio = float(item.medium_net_inflow_ratio)
+                small_amount = float(item.small_net_inflow_amount)
+                small_ratio = float(item.small_net_inflow_ratio)
+                
+                # 计算全部净流入金额和占比
+                total_amount = main_amount + super_large_amount + large_amount + medium_amount + small_amount
+                total_ratio = main_ratio + super_large_ratio + large_ratio + medium_ratio + small_ratio
+                
                 # 添加资金流向数据
                 congestions[sector_key].append({
-                    'main_net_inflow_amount': float(item.main_net_inflow_amount),
-                    'main_net_inflow_ratio': float(item.main_net_inflow_ratio),
-                    'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount),
-                    'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio),
-                    'large_net_inflow_amount': float(item.large_net_inflow_amount),
-                    'large_net_inflow_ratio': float(item.large_net_inflow_ratio),
-                    'medium_net_inflow_amount': float(item.medium_net_inflow_amount),
-                    'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio),
-                    'small_net_inflow_amount': float(item.small_net_inflow_amount),
-                    'small_net_inflow_ratio': float(item.small_net_inflow_ratio),
+                    'main_net_inflow_amount': main_amount,
+                    'main_net_inflow_ratio': main_ratio,
+                    'super_large_net_inflow_amount': super_large_amount,
+                    'super_large_net_inflow_ratio': super_large_ratio,
+                    'large_net_inflow_amount': large_amount,
+                    'large_net_inflow_ratio': large_ratio,
+                    'medium_net_inflow_amount': medium_amount,
+                    'medium_net_inflow_ratio': medium_ratio,
+                    'small_net_inflow_amount': small_amount,
+                    'small_net_inflow_ratio': small_ratio,
+                    'total_net_inflow_amount': total_amount,  # 全部净流入金额（元）- 计算字段
+                    'total_net_inflow_ratio': total_ratio,   # 全部净流入占比（%）- 计算字段
                 })
             
             # 转换为列表并排序
