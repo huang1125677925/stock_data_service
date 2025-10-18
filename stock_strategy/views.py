@@ -1,9 +1,12 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.cache import cache_page
+from django.core.cache import cache
 import json
 import pandas as pd
 from datetime import datetime
+import hashlib
 from .services import rps_service, StockScreeningService
 from .models import IndexRPS
 from .industry_turnover_strategy import industry_turnover_strategy
@@ -145,16 +148,16 @@ def get_industry_turnover_percentile(request):
 
 
 @csrf_exempt
-@require_http_methods(["POST"])
+@require_http_methods(["GET"])
 def screen_stocks_by_previous_high(request):
     """
     使用前高突破策略筛选股票
     
     功能：根据窗口大小和成交量倍数筛选符合条件的股票
     参数：
-    - window_size: 分析窗口大小（交易日数量），默认20
+    - window_size: 分析窗口大小（交易日数量），默认60
     - volume_multiplier: 成交量放大倍数，默认1.5
-    - stock_codes: 指定股票代码列表，可选
+    - stock_codes: 指定股票代码列表，可选（通过逗号分隔的字符串传递）
     - limit: 返回结果数量限制，默认50
     
     返回值：
@@ -166,14 +169,25 @@ def screen_stocks_by_previous_high(request):
     - 筛选过程中出现异常时记录错误日志
     """
     try:
-        # 解析请求数据
-        data = json.loads(request.body) if request.body else {}
+        # 获取GET参数
+        window_size = int(request.GET.get('window_size', 60))
+        volume_multiplier = float(request.GET.get('volume_multiplier', 1.5))
+        stock_codes_str = request.GET.get('stock_codes', None)
+        limit = int(request.GET.get('limit', 50))
         
-        # 获取参数
-        window_size = data.get('window_size', 60)
-        volume_multiplier = data.get('volume_multiplier', 1.5)
-        stock_codes = data.get('stock_codes', None)
-        limit = data.get('limit', 50)
+        # 处理股票代码列表
+        stock_codes = None
+        if stock_codes_str:
+            stock_codes = [code.strip() for code in stock_codes_str.split(',') if code.strip()]
+        
+        # 生成缓存键
+        cache_key_data = f"screen_stocks_{window_size}_{volume_multiplier}_{stock_codes_str or 'all'}_{limit}"
+        cache_key = hashlib.md5(cache_key_data.encode()).hexdigest()
+        
+        # 尝试从缓存获取结果
+        cached_result = cache.get(cache_key)
+        if cached_result:
+            return success_response(cached_result, "股票筛选成功（缓存数据）")
         
         # 创建服务实例
         screening_service = StockScreeningService()
@@ -192,12 +206,14 @@ def screen_stocks_by_previous_high(request):
         )
         
         if result['success']:
+            # 将结果缓存15分钟
+            cache.set(cache_key, result['data'], 3600 * 24)
             return success_response(result['data'], result['message'])
         else:
             return error_response(result['message'], 500)
             
-    except json.JSONDecodeError:
-        return error_response('请求数据格式错误', 400)
+    except (ValueError, TypeError) as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
     except Exception as e:
         return error_response(f'股票筛选失败: {str(e)}', 500)
 
