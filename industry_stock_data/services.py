@@ -1573,13 +1573,14 @@ class IndustrySectorService:
             logger.error(f"获取{date}日行业板块资金流排行榜失败: {str(e)}")
             return None
 
-    def get_industry_fund_flow_data(self, start_date: str = None, end_date: str = None) -> Optional[Dict]:
+    def get_industry_fund_flow_data(self, start_date: str = None, end_date: str = None, weekly_flag: bool = False) -> Optional[Dict]:
         """
         获取行业资金流向数据
         
         Args:
             start_date: 开始日期，格式YYYY-MM-DD
             end_date: 结束日期，格式YYYY-MM-DD
+            weekly_flag: 是否按周汇聚数据，为True时获取最近20周的周平均值
             
         Returns:
             包含日期、行业代码名称和资金流向数据的字典
@@ -1587,14 +1588,24 @@ class IndustrySectorService:
         try:
             from datetime import datetime, timedelta
             from django.db.models import Q
+            from collections import defaultdict
+            import calendar
             
-            # 设置默认日期范围（最近30天）
-            if not end_date:
-                end_date = datetime.now().strftime('%Y-%m-%d')
-            if not start_date:
-                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            # 设置默认日期范围
+            if weekly_flag:
+                # 按周汇聚时，获取最近20周的数据（约140天）
+                if not end_date:
+                    end_date = datetime.now().strftime('%Y-%m-%d')
+                if not start_date:
+                    start_date = (datetime.now() - timedelta(weeks=20)).strftime('%Y-%m-%d')
+            else:
+                # 默认最近30天
+                if not end_date:
+                    end_date = datetime.now().strftime('%Y-%m-%d')
+                if not start_date:
+                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
             
-            logger.info(f"获取行业资金流向数据，日期范围: {start_date} 到 {end_date}")
+            logger.info(f"获取行业资金流向数据，日期范围: {start_date} 到 {end_date}，按周汇聚: {weekly_flag}")
             
             # 查询数据库中的资金流向数据
             fund_flow_data = IndustrySectorFundFlow.objects.filter(
@@ -1612,75 +1623,214 @@ class IndustrySectorService:
                     date__lte=end_date
                 ).select_related('sector').order_by('date', 'sector__code')
             
-            # 构建返回数据结构
-            dates = []
-            sw_code_names = []
-            congestions = {}
-            
-            # 收集所有唯一的日期和行业代码
-            date_set = set()
-            sector_dict = {}
-            
-            for item in fund_flow_data:
-                date_str = item.date.strftime('%Y-%m-%d')
-                date_set.add(date_str)
-                
-                sector_key = item.sector.code
-                if sector_key not in sector_dict:
-                    sector_dict[sector_key] = {
-                        'indexCode': item.sector.code,
-                        'indexName': item.sector.name
-                    }
-                    congestions[sector_key] = []
-                
-                # 计算各项净流入金额和占比
-                main_amount = float(item.main_net_inflow_amount)
-                main_ratio = float(item.main_net_inflow_ratio)
-                super_large_amount = float(item.super_large_net_inflow_amount)
-                super_large_ratio = float(item.super_large_net_inflow_ratio)
-                large_amount = float(item.large_net_inflow_amount)
-                large_ratio = float(item.large_net_inflow_ratio)
-                medium_amount = float(item.medium_net_inflow_amount)
-                medium_ratio = float(item.medium_net_inflow_ratio)
-                small_amount = float(item.small_net_inflow_amount)
-                small_ratio = float(item.small_net_inflow_ratio)
-                
-                # 计算全部净流入金额和占比
-                total_amount = main_amount + super_large_amount + large_amount + medium_amount + small_amount
-                total_ratio = main_ratio + super_large_ratio + large_ratio + medium_ratio + small_ratio
-                
-                # 添加资金流向数据
-                congestions[sector_key].append({
-                    'main_net_inflow_amount': main_amount,
-                    'main_net_inflow_ratio': main_ratio,
-                    'super_large_net_inflow_amount': super_large_amount,
-                    'super_large_net_inflow_ratio': super_large_ratio,
-                    'large_net_inflow_amount': large_amount,
-                    'large_net_inflow_ratio': large_ratio,
-                    'medium_net_inflow_amount': medium_amount,
-                    'medium_net_inflow_ratio': medium_ratio,
-                    'small_net_inflow_amount': small_amount,
-                    'small_net_inflow_ratio': small_ratio,
-                    'total_net_inflow_amount': total_amount,  # 全部净流入金额（元）- 计算字段
-                    'total_net_inflow_ratio': total_ratio,   # 全部净流入占比（%）- 计算字段
-                })
-            
-            # 转换为列表并排序
-            dates = sorted(list(date_set))
-            sw_code_names = list(sector_dict.values())
-            
-            result = {
-                'dates': dates,
-                'swCodeNames': sw_code_names,
-                'congestions': congestions
-            }
-            
-            logger.info(f"成功获取行业资金流向数据，包含{len(dates)}个日期，{len(sw_code_names)}个行业")
-            return result
+            if weekly_flag:
+                # 按周汇聚数据处理
+                return self._process_weekly_fund_flow_data(fund_flow_data)
+            else:
+                # 原有的日数据处理逻辑
+                return self._process_daily_fund_flow_data(fund_flow_data)
             
         except Exception as e:
             logger.error(f"获取行业资金流向数据失败: {str(e)}")
             return None
+    
+    def _process_daily_fund_flow_data(self, fund_flow_data) -> Dict:
+        """
+        处理日度资金流向数据
+        
+        Args:
+            fund_flow_data: 查询到的资金流向数据
+            
+        Returns:
+            包含日期、行业代码名称和资金流向数据的字典
+        """
+        # 构建返回数据结构
+        dates = []
+        sw_code_names = []
+        congestions = {}
+        
+        # 收集所有唯一的日期和行业代码
+        date_set = set()
+        sector_dict = {}
+        
+        for item in fund_flow_data:
+            date_str = item.date.strftime('%Y-%m-%d')
+            date_set.add(date_str)
+            
+            sector_key = item.sector.code
+            if sector_key not in sector_dict:
+                sector_dict[sector_key] = {
+                    'indexCode': item.sector.code,
+                    'indexName': item.sector.name
+                }
+                congestions[sector_key] = []
+            
+            # 计算各项净流入金额和占比
+            main_amount = float(item.main_net_inflow_amount)
+            main_ratio = float(item.main_net_inflow_ratio)
+            super_large_amount = float(item.super_large_net_inflow_amount)
+            super_large_ratio = float(item.super_large_net_inflow_ratio)
+            large_amount = float(item.large_net_inflow_amount)
+            large_ratio = float(item.large_net_inflow_ratio)
+            medium_amount = float(item.medium_net_inflow_amount)
+            medium_ratio = float(item.medium_net_inflow_ratio)
+            small_amount = float(item.small_net_inflow_amount)
+            small_ratio = float(item.small_net_inflow_ratio)
+            
+            # 计算全部净流入金额和占比
+            total_amount = main_amount + super_large_amount + large_amount + medium_amount + small_amount
+            total_ratio = main_ratio + super_large_ratio + large_ratio + medium_ratio + small_ratio
+            
+            # 添加资金流向数据
+            congestions[sector_key].append({
+                'main_net_inflow_amount': main_amount,
+                'main_net_inflow_ratio': main_ratio,
+                'super_large_net_inflow_amount': super_large_amount,
+                'super_large_net_inflow_ratio': super_large_ratio,
+                'large_net_inflow_amount': large_amount,
+                'large_net_inflow_ratio': large_ratio,
+                'medium_net_inflow_amount': medium_amount,
+                'medium_net_inflow_ratio': medium_ratio,
+                'small_net_inflow_amount': small_amount,
+                'small_net_inflow_ratio': small_ratio,
+                'total_net_inflow_amount': total_amount,  # 全部净流入金额（元）- 计算字段
+                'total_net_inflow_ratio': total_ratio,   # 全部净流入占比（%）- 计算字段
+            })
+        
+        # 转换为列表并排序
+        dates = sorted(list(date_set))
+        sw_code_names = list(sector_dict.values())
+        
+        result = {
+            'dates': dates,
+            'swCodeNames': sw_code_names,
+            'congestions': congestions
+        }
+        
+        logger.info(f"成功获取行业资金流向数据，包含{len(dates)}个日期，{len(sw_code_names)}个行业")
+        return result
+    
+    def _process_weekly_fund_flow_data(self, fund_flow_data) -> Dict:
+        """
+        处理按周汇聚的资金流向数据
+        
+        Args:
+            fund_flow_data: 查询到的资金流向数据
+            
+        Returns:
+            包含周日期、行业代码名称和周平均资金流向数据的字典
+        """
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+        import calendar
+        
+        # 按周分组数据
+        weekly_data = defaultdict(lambda: defaultdict(list))
+        sector_dict = {}
+        
+        for item in fund_flow_data:
+            # 获取该日期所在的周（周一为一周的开始）
+            date_obj = item.date
+            # 计算该日期所在周的周一日期
+            days_since_monday = date_obj.weekday()
+            week_start = date_obj - timedelta(days=days_since_monday)
+            week_key = week_start.strftime('%Y-%m-%d')
+            
+            sector_key = item.sector.code
+            if sector_key not in sector_dict:
+                sector_dict[sector_key] = {
+                    'indexCode': item.sector.code,
+                    'indexName': item.sector.name
+                }
+            
+            # 将数据按周和行业分组
+            weekly_data[week_key][sector_key].append({
+                'main_net_inflow_amount': float(item.main_net_inflow_amount),
+                'main_net_inflow_ratio': float(item.main_net_inflow_ratio),
+                'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount),
+                'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio),
+                'large_net_inflow_amount': float(item.large_net_inflow_amount),
+                'large_net_inflow_ratio': float(item.large_net_inflow_ratio),
+                'medium_net_inflow_amount': float(item.medium_net_inflow_amount),
+                'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio),
+                'small_net_inflow_amount': float(item.small_net_inflow_amount),
+                'small_net_inflow_ratio': float(item.small_net_inflow_ratio),
+            })
+        
+        # 计算每周每个行业的平均值
+        congestions = {}
+        dates = []
+        
+        # 获取最近20周的数据
+        sorted_weeks = sorted(weekly_data.keys())[-20:]  # 取最近20周
+        dates = sorted_weeks
+        
+        for sector_key in sector_dict.keys():
+            congestions[sector_key] = []
+            
+            for week_key in sorted_weeks:
+                if sector_key in weekly_data[week_key] and weekly_data[week_key][sector_key]:
+                    # 计算该周该行业的平均值
+                    week_sector_data = weekly_data[week_key][sector_key]
+                    num_days = len(week_sector_data)
+                    
+                    # 计算各项指标的平均值
+                    avg_main_amount = sum(d['main_net_inflow_amount'] for d in week_sector_data) / num_days
+                    avg_main_ratio = sum(d['main_net_inflow_ratio'] for d in week_sector_data) / num_days
+                    avg_super_large_amount = sum(d['super_large_net_inflow_amount'] for d in week_sector_data) / num_days
+                    avg_super_large_ratio = sum(d['super_large_net_inflow_ratio'] for d in week_sector_data) / num_days
+                    avg_large_amount = sum(d['large_net_inflow_amount'] for d in week_sector_data) / num_days
+                    avg_large_ratio = sum(d['large_net_inflow_ratio'] for d in week_sector_data) / num_days
+                    avg_medium_amount = sum(d['medium_net_inflow_amount'] for d in week_sector_data) / num_days
+                    avg_medium_ratio = sum(d['medium_net_inflow_ratio'] for d in week_sector_data) / num_days
+                    avg_small_amount = sum(d['small_net_inflow_amount'] for d in week_sector_data) / num_days
+                    avg_small_ratio = sum(d['small_net_inflow_ratio'] for d in week_sector_data) / num_days
+                    
+                    # 计算全部净流入金额和占比的平均值
+                    avg_total_amount = avg_main_amount + avg_super_large_amount + avg_large_amount + avg_medium_amount + avg_small_amount
+                    avg_total_ratio = avg_main_ratio + avg_super_large_ratio + avg_large_ratio + avg_medium_ratio + avg_small_ratio
+                    
+                    congestions[sector_key].append({
+                        'main_net_inflow_amount': avg_main_amount,
+                        'main_net_inflow_ratio': avg_main_ratio,
+                        'super_large_net_inflow_amount': avg_super_large_amount,
+                        'super_large_net_inflow_ratio': avg_super_large_ratio,
+                        'large_net_inflow_amount': avg_large_amount,
+                        'large_net_inflow_ratio': avg_large_ratio,
+                        'medium_net_inflow_amount': avg_medium_amount,
+                        'medium_net_inflow_ratio': avg_medium_ratio,
+                        'small_net_inflow_amount': avg_small_amount,
+                        'small_net_inflow_ratio': avg_small_ratio,
+                        'total_net_inflow_amount': avg_total_amount,  # 全部净流入金额（元）- 周平均值
+                        'total_net_inflow_ratio': avg_total_ratio,   # 全部净流入占比（%）- 周平均值
+                    })
+                else:
+                    # 如果该周该行业没有数据，填充0值
+                    congestions[sector_key].append({
+                        'main_net_inflow_amount': 0.0,
+                        'main_net_inflow_ratio': 0.0,
+                        'super_large_net_inflow_amount': 0.0,
+                        'super_large_net_inflow_ratio': 0.0,
+                        'large_net_inflow_amount': 0.0,
+                        'large_net_inflow_ratio': 0.0,
+                        'medium_net_inflow_amount': 0.0,
+                        'medium_net_inflow_ratio': 0.0,
+                        'small_net_inflow_amount': 0.0,
+                        'small_net_inflow_ratio': 0.0,
+                        'total_net_inflow_amount': 0.0,
+                        'total_net_inflow_ratio': 0.0,
+                    })
+        
+        sw_code_names = list(sector_dict.values())
+        
+        result = {
+            'dates': dates,
+            'swCodeNames': sw_code_names,
+            'congestions': congestions
+        }
+        
+        logger.info(f"成功获取行业资金流向周汇聚数据，包含{len(dates)}周，{len(sw_code_names)}个行业")
+        return result
     
     def _fetch_and_save_fund_flow_data(self, start_date: str, end_date: str) -> None:
         """

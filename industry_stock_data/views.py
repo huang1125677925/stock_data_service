@@ -1585,9 +1585,10 @@ def get_industry_fund_flow_data(request):
         # 获取查询参数
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
+        week_flag = request.GET.get('week_flag', 'false').lower() == 'true'
         
         # 从服务层获取行业资金流向数据
-        fund_flow_data = industry_sector_service.get_industry_fund_flow_data(start_date, end_date)
+        fund_flow_data = industry_sector_service.get_industry_fund_flow_data(start_date, end_date, week_flag)
         if fund_flow_data is None:
             return error_response('获取行业资金流向数据失败', 500)
         
