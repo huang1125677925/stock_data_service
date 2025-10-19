@@ -1,6 +1,6 @@
-import akshare as ak
-from datetime import datetime, timedelta
 import pandas as pd
+from decimal import Decimal
+from .models import IndexHighLowStatistics
 
 def get_latest_trading_date():
     """
@@ -105,3 +105,79 @@ def get_sse_daily_overview(date=None):
         dict: 包含上证和深证指数数据的字典
     """
     return get_market_daily_overview(date)
+
+
+def get_rise_fall_ratio_data(index_code=None, start_date=None, end_date=None, limit=30):
+    """
+    查询指数涨跌比数据
+    
+    功能：从数据库查询指定条件的涨跌比数据
+    参数：
+        index_code (str, optional): 指数代码，不指定则查询所有
+        start_date (str, optional): 开始日期，格式YYYY-MM-DD
+        end_date (str, optional): 结束日期，格式YYYY-MM-DD  
+        limit (int): 返回记录数限制，默认30条
+    返回值：
+        list: 涨跌比数据列表
+    事件：数据库查询操作
+    """
+    try:
+        queryset = IndexHighLowStatistics.objects.all()
+        
+        # 按指数代码过滤
+        if index_code:
+            queryset = queryset.filter(index_code=index_code)
+        
+        # 按日期范围过滤
+        if start_date:
+            queryset = queryset.filter(date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(date__lte=end_date)
+        
+        # 排序并限制数量
+        queryset = queryset.order_by('-date')[:limit]
+        
+        # 转换为字典列表并计算涨跌比
+        results = []
+        for obj in queryset:
+            # 计算20天涨跌比
+            high20 = obj.high20 or 0
+            low20 = obj.low20 or 0
+            total20 = high20 + low20
+            rise_fall_ratio_20 = round(high20 / total20, 4) if total20 > 0 else 0
+            
+            # 计算60天涨跌比
+            high60 = obj.high60 or 0
+            low60 = obj.low60 or 0
+            total60 = high60 + low60
+            rise_fall_ratio_60 = round(high60 / total60, 4) if total60 > 0 else 0
+            
+            # 计算120天涨跌比
+            high120 = obj.high120 or 0
+            low120 = obj.low120 or 0
+            total120 = high120 + low120
+            rise_fall_ratio_120 = round(high120 / total120, 4) if total120 > 0 else 0
+            
+            results.append({
+                'id': obj.id,
+                'date': obj.date.strftime('%Y-%m-%d'),
+                'index_code': obj.index_code,
+                'index_name': obj.get_index_code_display(),
+                'close': float(obj.close) if obj.close else None,
+                'high20': obj.high20,
+                'low20': obj.low20,
+                'high60': obj.high60,
+                'low60': obj.low60,
+                'high120': obj.high120,
+                'low120': obj.low120,
+                'rise_fall_ratio_20': rise_fall_ratio_20,
+                'rise_fall_ratio_60': rise_fall_ratio_60,
+                'rise_fall_ratio_120': rise_fall_ratio_120,
+                'created_at': obj.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'updated_at': obj.updated_at.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        return results
+        
+    except Exception as e:
+        raise Exception(f"查询涨跌比数据失败: {str(e)}")

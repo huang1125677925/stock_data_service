@@ -7,6 +7,26 @@ class IndividualStock(models.Model):
     code = models.CharField(max_length=10, unique=True, verbose_name='股票代码')
     name = models.CharField(max_length=50, verbose_name='股票名称')
     industry = models.CharField(max_length=50, null=True, blank=True, verbose_name='所属行业')
+    
+    # 指数类型选择
+    INDEX_TYPE_CHOICES = [
+        ('SH_MAIN', '上证主板'),
+        ('SZ_MAIN', '深证主板'),
+        ('SZ_SME', '深证中小板'),
+        ('SZ_GEM', '深证创业板'),
+        ('BJ_MAIN', '北交所主板'),
+        ('SH_INDEX', '上证指数'),
+        ('SZ_INDEX', '深证指数'),
+        ('CSI_INDEX', '中证指数'),
+        ('OTHER', '其他'),
+    ]
+    index_type = models.CharField(
+        max_length=20, 
+        choices=INDEX_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='指数类型'
+    )
     total_shares = models.BigIntegerField(null=True, blank=True, verbose_name='总股本')
     circulating_shares = models.BigIntegerField(null=True, blank=True, verbose_name='流通股本')
     list_date = models.DateField(null=True, blank=True, verbose_name='上市日期')
@@ -51,6 +71,8 @@ class IndividualStock(models.Model):
             'code': self.code,
             'name': self.name,
             'industry': self.industry,
+            'index_type': self.index_type,
+            'index_type_display': self.get_index_type_display() if self.index_type else None,
             'total_shares': self.total_shares,
             'circulating_shares': self.circulating_shares,
             'list_date': self.list_date.isoformat() if self.list_date else None,

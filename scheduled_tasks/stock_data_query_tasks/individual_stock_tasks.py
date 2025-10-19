@@ -152,13 +152,13 @@ def update_individual_stock_daily_data():
     
     try:
         # 获取所有个股
-        stocks = IndividualStock.objects.all()
+        stocks = IndividualStock.objects.filter()
         
         if not stocks.exists():
             # 如果数据库中没有个股数据，先获取个股列表
             logger.info("数据库中没有个股数据，先获取个股列表")
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
-        stock_code_list = [stock.code for stock in stocks]
+        stock_code_list = [stock.code for stock in stocks if stock.index_type is None]
         # 更新所有个股的历史数据（最近30天）
         updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=30)
         
@@ -240,9 +240,6 @@ def update_stock_history(
 
         updated_stocks = 0
         updated_history = 0
-        
-        # 获取要更新的股票列表
-        stocks = IndividualStock.objects.all()
 
         start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
         end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
@@ -253,12 +250,12 @@ def update_stock_history(
         #             date__lte=start_date_obj
         #         ).values_list('stock_id', flat=True))
         
-        if not stocks.exists():
-            logger.warning("没有找到需要更新的股票")
+        if not stock_code_list:
+            logger.warning("需要更新的股票")
             return 0, 0
         
         # 遍历股票列表更新历史数据
-        for stock in stocks:
+        for stock in stock_code_list:
             # if stock.id in stock_code_list:
             #     print(f"股票 {stock.code} 已存在历史数据，无需更新")
             #     continue
@@ -280,8 +277,8 @@ def update_stock_history(
                     continue
 
 
-                exchange_prefix = judge_stock_type(stock.code)
-                daily_data_list = fetch_stock_daily_data(exchange_prefix + stock.code, start_date, end_date)
+                stock_code = judge_stock_type(stock.code)
+                daily_data_list = fetch_stock_daily_data(stock_code, start_date, end_date)
                 
                 print(f"股票 {stock.code} 从akshare获取到的历史数据数量: {len(daily_data_list)}")
                 if not daily_data_list:
@@ -472,14 +469,22 @@ def judge_stock_type(stock_code: str) -> str:
     :param stock_code: 股票代码，例如：000001
     :return: 交易所前缀，例如：sh. 或 sz.
     """
+    # 指数股票
+    if stock_code.startswith(('sh000', 'sz399')):
+        return "sh." + stock_code[2:]
+    elif stock_code.startswith(('sz399',)):
+        return "sz." + stock_code[2:]
+
+    
+    # 普通股票
     if stock_code.startswith(('60', '68')):
-        return "sh."
+        return "sh." + stock_code
     elif stock_code.startswith(('00', '30', '002', '003')):
-        return "sz."
+        return "sz." + stock_code
     elif stock_code.startswith(('83', '87', '88', '82')):
-        return "bj."  # 北交所股票
+        return "bj." + stock_code  # 北交所股票
     else:
-        return "sh."  # 默认使用上海交易所
+        return "sh." + stock_code  # 默认使用上海交易所
 
 def fetch_performance_report(date: str):
     """
@@ -1262,6 +1267,35 @@ def fetch_all_financial_statements(start_year=2015, end_date='20240930'):
     logger.info(summary["message"])
     return summary
 
+def update_index_stock_daily_data():
+    """
+    更新所有个股的日频数据
+    每天收盘后执行一次
+    只获取最近30天的数据
+    """
+    logger.info("开始执行个股日频数据更新任务")
+    
+    try:
+        # 获取所有个股
+        stocks = IndividualStock.objects.all()
+        
+        if not stocks.exists():
+            # 如果数据库中没有个股数据，先获取个股列表
+            logger.info("数据库中没有个股数据，先获取个股列表")
+            return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
+        stock_code_list = [stock for stock in stocks if stock.index_type]
+        # 更新所有个股的历史数据（最近30天）
+        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=500)
+        
+        logger.info(f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
+        return {
+            "status": "success",
+            "message": f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据"
+        }
+    except Exception as e:
+        logger.error(f"个股日频数据更新任务执行失败: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
 
 if __name__ == '__main__':
     # update_individual_stock_daily_data()
@@ -1275,4 +1309,11 @@ if __name__ == '__main__':
 
     # fetch_cash_flow_statement('20250630')
 
-    fetch_balance_sheet('20250630')
+    # fetch_balance_sheet('20250630')
+
+
+    # fetch_stock_daily_data('sh.000001', '2024-09-30', '2025-10-18')
+    # update_individual_stock_daily_data()
+    # update_index_stock_daily_data()
+    update_individual_stock_daily_data()
+    
