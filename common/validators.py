@@ -23,8 +23,8 @@ def validate_stock_symbol(symbol: str) -> bool:
     if not symbol or not isinstance(symbol, str):
         return False
     
-    # 支持A股和美股格式
-    pattern = r'^[A-Z]{1,6}$|^\d{6}$'
+    # 支持A股和美股格式，包括sz000001、sh600000等格式
+    pattern = r'^[A-Z]{1,6}$|^\d{6}$|^[a-zA-Z]{2}\d{6}$'
     return bool(re.match(pattern, symbol.upper()))
 
 def validate_date_range(start_date: str, end_date: str) -> bool:
