@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.core.paginator import Paginator
 from .services import get_sse_daily_overview, get_rise_fall_ratio_data
-from .models import IndexBasicData
+from .models import IndexBasicData, StockMarketFundFlow
 import logging
 from common.response import success_response, error_response
 
@@ -347,3 +347,121 @@ class RiseFallRatioView(APIView):
         except Exception as e:
             logger.error(f"查询涨跌比数据失败: {str(e)}")
             return error_response(f'查询涨跌比数据失败: {str(e)}', 500)
+
+
+class StockMarketFundFlowView(APIView):
+    """
+    大盘资金流数据查询接口
+    
+    功能：提供大盘资金流数据的查询操作（仅从数据库查询）
+    支持的操作：
+        - GET: 查询大盘资金流数据（支持分页、日期范围查询）
+    参数：
+        - start_date: 开始日期，格式：YYYY-MM-DD
+        - end_date: 结束日期，格式：YYYY-MM-DD
+        - page: 页码，默认为1
+        - page_size: 每页数量，默认为20，最大100
+        - order_by: 排序字段，默认按日期倒序
+    返回值：包含资金流数据和分页信息的JSON响应
+    事件：数据库查询操作
+    """
+    
+    def get(self, request):
+        """
+        查询大盘资金流数据
+        
+        参数:
+            start_date (str, optional): 开始日期，格式：YYYY-MM-DD
+            end_date (str, optional): 结束日期，格式：YYYY-MM-DD
+            page (int, optional): 页码，默认为1
+            page_size (int, optional): 每页数量，默认为20，最大100
+            order_by (str, optional): 排序字段，可选值：date, -date（默认）
+        
+        返回:
+            包含资金流数据列表和分页信息的响应
+        """
+        try:
+            # 获取查询参数
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            order_by = request.query_params.get('order_by', '-date')
+            
+            # 验证参数
+            if page <= 0:
+                return error_response('页码必须大于0', 400)
+            if page_size <= 0:
+                return error_response('每页数量必须大于0', 400)
+            
+            # 构建查询集
+            queryset = StockMarketFundFlow.objects.all()
+            
+            # 日期范围过滤
+            if start_date:
+                try:
+                    queryset = queryset.filter(date__gte=start_date)
+                except ValueError:
+                    return error_response('开始日期格式错误，请使用YYYY-MM-DD格式', 400)
+            
+            if end_date:
+                try:
+                    queryset = queryset.filter(date__lte=end_date)
+                except ValueError:
+                    return error_response('结束日期格式错误，请使用YYYY-MM-DD格式', 400)
+            
+            # 排序
+            if order_by in ['date', 'created_at', '-created_at']:
+                queryset = queryset.order_by(order_by)
+            else:
+                queryset = queryset.order_by('date')  # 默认按日期倒序
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # 序列化数据
+            data = []
+            for item in page_obj:
+                data.append({
+                    'id': item.id,
+                    'date': item.date.isoformat(),
+                    'main_net_inflow_amount': float(item.main_net_inflow_amount) if item.main_net_inflow_amount else None,
+                    'small_net_inflow_amount': float(item.small_net_inflow_amount) if item.small_net_inflow_amount else None,
+                    'medium_net_inflow_amount': float(item.medium_net_inflow_amount) if item.medium_net_inflow_amount else None,
+                    'large_net_inflow_amount': float(item.large_net_inflow_amount) if item.large_net_inflow_amount else None,
+                    'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount) if item.super_large_net_inflow_amount else None,
+                    'main_net_inflow_ratio': float(item.main_net_inflow_ratio) if item.main_net_inflow_ratio else None,
+                    'small_net_inflow_ratio': float(item.small_net_inflow_ratio) if item.small_net_inflow_ratio else None,
+                    'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio) if item.medium_net_inflow_ratio else None,
+                    'large_net_inflow_ratio': float(item.large_net_inflow_ratio) if item.large_net_inflow_ratio else None,
+                    'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio) if item.super_large_net_inflow_ratio else None,
+                    'shanghai_close_price': float(item.shanghai_close_price) if item.shanghai_close_price else None,
+                    'shanghai_change_rate': float(item.shanghai_change_rate) if item.shanghai_change_rate else None,
+                    'shenzhen_close_price': float(item.shenzhen_close_price) if item.shenzhen_close_price else None,
+                    'shenzhen_change_rate': float(item.shenzhen_change_rate) if item.shenzhen_change_rate else None,
+                    'created_at': item.created_at.isoformat(),
+                    'updated_at': item.updated_at.isoformat()
+                })
+            
+            # 构建响应数据
+            result = {
+                'list': data,
+                'pagination': {
+                    'current_page': page_obj.number,
+                    'total_pages': paginator.num_pages,
+                    'total_count': paginator.count,
+                    'page_size': page_size,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous()
+                }
+            }
+            
+            return success_response(result, '查询大盘资金流数据成功')
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询大盘资金流数据失败: {str(e)}")
+            return error_response(f'查询大盘资金流数据失败: {str(e)}', 500)

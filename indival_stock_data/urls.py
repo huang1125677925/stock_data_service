@@ -44,4 +44,14 @@ urlpatterns = [
     # 现金流量表接口
     path('cash-flow-statements/', views.CashFlowStatementView.as_view(), name='cash_flow_statement_list'),
     path('stocks/<str:stock_code>/cash-flow-statements/', views.CashFlowStatementView.as_view(), name='stock_cash_flow_statements'),
+    
+    # 股票标记接口
+    # 获取股票标记列表或创建新的股票标记
+    path('stock-tags/', views.StockTagView.as_view(), name='stock_tag_list'),
+    # 获取、更新或删除单个股票标记
+    path('stock-tags/<int:tag_id>/', views.StockTagView.as_view(), name='stock_tag_detail'),
+    # 获取标记因子选择项
+    path('stock-tags/choices/', views.StockTagChoicesView.as_view(), name='stock_tag_choices'),
+    # 获取指定股票的所有标记
+    path('stocks/<str:stock_code>/tags/', views.StockTagByStockView.as_view(), name='stock_tags_by_stock'),
 ]

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import IndividualStock, IndividualStockDaily, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement
+from .models import IndividualStock, IndividualStockDaily, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement, StockTag
 import json
 
 
@@ -262,3 +262,166 @@ class CashFlowStatementSerializer(serializers.ModelSerializer):
     class Meta:
         model = CashFlowStatement
         fields = '__all__'
+
+
+class StockTagSerializer(serializers.ModelSerializer):
+    """
+    股票标记序列化器
+    用于将 StockTag 模型实例序列化为 JSON 格式
+    支持多种标记因子的序列化和反序列化
+    """
+    # 处理日期字段格式
+    created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    
+    # 添加股票信息字段
+    stock_code = serializers.CharField(source='stock.code', read_only=True)
+    stock_name = serializers.CharField(source='stock.name', read_only=True)
+    
+    # 添加选择字段的显示名称
+    pattern_type_display = serializers.CharField(source='get_pattern_type_display', read_only=True)
+    technical_indicator_type_display = serializers.CharField(source='get_technical_indicator_type_display', read_only=True)
+    stock_type_display = serializers.CharField(source='get_stock_type_display', read_only=True)
+    market_cap_type_display = serializers.CharField(source='get_market_cap_type_display', read_only=True)
+    pe_range_type_display = serializers.CharField(source='get_pe_range_type_display', read_only=True)
+    pb_range_type_display = serializers.CharField(source='get_pb_range_type_display', read_only=True)
+    industry_type_display = serializers.CharField(source='get_industry_type_display', read_only=True)
+    volume_type_display = serializers.CharField(source='get_volume_type_display', read_only=True)
+    volatility_type_display = serializers.CharField(source='get_volatility_type_display', read_only=True)
+    trend_type_display = serializers.CharField(source='get_trend_type_display', read_only=True)
+    
+    class Meta:
+        model = StockTag
+        fields = '__all__'
+    
+    def validate(self, data):
+        """
+        验证整个对象，确保至少有一个标记因子被设置
+        """
+        tag_fields = [
+            'pattern_type', 'technical_indicator_type', 'stock_type',
+            'market_cap_type', 'pe_range_type', 'pb_range_type',
+            'industry_type', 'volume_type', 'volatility_type', 'trend_type'
+        ]
+        
+        # 检查是否至少有一个标记因子被设置
+        has_tag = any(data.get(field) for field in tag_fields)
+        if not has_tag:
+            raise serializers.ValidationError("至少需要设置一个标记因子")
+        
+        return data
+
+
+class StockTagQuerySerializer(serializers.Serializer):
+    """
+    股票标记查询序列化器
+    用于处理查询参数的验证和序列化
+    支持多种标记因子的单选和多选查询
+    """
+    # 股票代码查询
+    stock_codes = serializers.ListField(
+        child=serializers.CharField(max_length=10),
+        required=False,
+        help_text="股票代码列表，支持多选"
+    )
+    
+    # 各种标记因子查询字段
+    pattern_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.PATTERN_TYPE_CHOICES),
+        required=False,
+        help_text="形态类型列表，支持多选"
+    )
+    
+    technical_indicator_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.TECHNICAL_INDICATOR_TYPE_CHOICES),
+        required=False,
+        help_text="技术指标类型列表，支持多选"
+    )
+    
+    stock_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.STOCK_TYPE_CHOICES),
+        required=False,
+        help_text="股票类型列表，支持多选"
+    )
+    
+    market_cap_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.MARKET_CAP_TYPE_CHOICES),
+        required=False,
+        help_text="市值大小类型列表，支持多选"
+    )
+    
+    pe_range_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.PE_RANGE_TYPE_CHOICES),
+        required=False,
+        help_text="PE区间类型列表，支持多选"
+    )
+    
+    pb_range_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.PB_RANGE_TYPE_CHOICES),
+        required=False,
+        help_text="PB区间类型列表，支持多选"
+    )
+    
+    industry_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.INDUSTRY_TYPE_CHOICES),
+        required=False,
+        help_text="行业类型列表，支持多选"
+    )
+    
+    volume_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.VOLUME_TYPE_CHOICES),
+        required=False,
+        help_text="成交量类型列表，支持多选"
+    )
+    
+    volatility_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.VOLATILITY_TYPE_CHOICES),
+        required=False,
+        help_text="波动率类型列表，支持多选"
+    )
+    
+    trend_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=StockTag.TREND_TYPE_CHOICES),
+        required=False,
+        help_text="趋势类型列表，支持多选"
+    )
+    
+    # 日期范围查询
+    start_date = serializers.DateField(
+        required=False,
+        help_text="开始日期，格式：YYYY-MM-DD"
+    )
+    
+    end_date = serializers.DateField(
+        required=False,
+        help_text="结束日期，格式：YYYY-MM-DD"
+    )
+    
+    # 分页参数
+    page = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        default=1,
+        help_text="页码，从1开始"
+    )
+    
+    page_size = serializers.IntegerField(
+        min_value=1,
+        max_value=100,
+        required=False,
+        default=20,
+        help_text="每页数量，最大100"
+    )
+    
+    def validate(self, data):
+        """
+        验证查询参数
+        """
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        
+        # 验证日期范围
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError("开始日期不能大于结束日期")
+        
+        return data

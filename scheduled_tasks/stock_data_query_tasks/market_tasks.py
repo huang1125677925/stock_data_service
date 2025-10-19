@@ -17,12 +17,13 @@ from indival_stock_data.models import IndividualStock, PerformanceReport, Balanc
 import time
 from django.db import transaction
 from typing import Tuple, List
+import decimal
 
 from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
 
 from django.utils import timezone
 from decimal import Decimal
-from stock_market.models import IndexHighLowStatistics
+from stock_market.models import IndexHighLowStatistics, StockMarketFundFlow
 
 logger = logging.getLogger(__name__)
 
@@ -316,5 +317,160 @@ def fetch_all_index_high_low_statistics(save_to_db=True):
     }
 
 
+def fetch_stock_a_congestion_lg():
+    ak.stock_a_congestion_lg()
+
+def fetch_stock_market_fund_flow(save_to_db=True):
+    """
+    获取股票市场资金流数据并存储到数据库
+    
+    功能：从akshare获取大盘资金流数据，包括主力、大单、中单、小单、超大单的净流入情况
+    参数：
+        - save_to_db: 是否保存到数据库，默认True
+    返回值：包含状态、消息和数据的字典
+    事件：数据获取成功后自动保存到StockMarketFundFlow表
+    
+    数据字段说明：
+    "日期",
+    "主力净流入-净额",
+    "小单净流入-净额", 
+    "中单净流入-净额",
+    "大单净流入-净额",
+    "超大单净流入-净额",
+    "主力净流入-净占比",
+    "小单净流入-净占比",
+    "中单净流入-净占比", 
+    "大单净流入-净占比",
+    "超大单净流入-净占比",
+    "上证-收盘价",
+    "上证-涨跌幅",
+    "深证-收盘价",
+    "深证-涨跌幅"
+    """
+    try:
+        logger.info("开始获取股票市场资金流数据")
+        
+        # 获取数据
+        df = ak.stock_market_fund_flow()
+        
+        if df is None or df.empty:
+            logger.warning("未获取到股票市场资金流数据")
+            return {
+                "status": "warning",
+                "message": "未获取到数据",
+                "data": None
+            }
+        
+        logger.info(f"获取到{len(df)}条股票市场资金流数据")
+        
+        if save_to_db:
+            saved_count = 0
+            skipped_count = 0
+            
+            # 先获取数据库中已存在的所有日期
+            existing_dates = set(StockMarketFundFlow.objects.values_list('date', flat=True))
+            logger.info(f"数据库中已存在{len(existing_dates)}条资金流数据")
+            
+            # 收集需要批量创建的新数据
+            new_records = []
+            
+            for index, row in df.iterrows():
+                try:
+                    # 解析日期
+                    date_str = str(row['日期'])
+                    if pd.isna(row['日期']) or date_str == 'nan':
+                        continue
+                        
+                    # 尝试不同的日期格式
+                    try:
+                        if '-' in date_str:
+                            date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                        else:
+                            date_obj = datetime.strptime(date_str, '%Y%m%d').date()
+                    except ValueError:
+                        logger.warning(f"无法解析日期: {date_str}")
+                        continue
+                    
+                    # 检查日期是否已存在
+                    if date_obj in existing_dates:
+                        skipped_count += 1
+                        continue
+                    
+                    # 准备新记录数据
+                    new_record = StockMarketFundFlow(
+                        date=date_obj,
+                        main_net_inflow_amount=_safe_decimal(row.get('主力净流入-净额')),
+                        small_net_inflow_amount=_safe_decimal(row.get('小单净流入-净额')),
+                        medium_net_inflow_amount=_safe_decimal(row.get('中单净流入-净额')),
+                        large_net_inflow_amount=_safe_decimal(row.get('大单净流入-净额')),
+                        super_large_net_inflow_amount=_safe_decimal(row.get('超大单净流入-净额')),
+                        main_net_inflow_ratio=_safe_decimal(row.get('主力净流入-净占比')),
+                        small_net_inflow_ratio=_safe_decimal(row.get('小单净流入-净占比')),
+                        medium_net_inflow_ratio=_safe_decimal(row.get('中单净流入-净占比')),
+                        large_net_inflow_ratio=_safe_decimal(row.get('大单净流入-净占比')),
+                        super_large_net_inflow_ratio=_safe_decimal(row.get('超大单净流入-净占比')),
+                        shanghai_close_price=_safe_decimal(row.get('上证-收盘价')),
+                        shanghai_change_rate=_safe_decimal(row.get('上证-涨跌幅')),
+                        shenzhen_close_price=_safe_decimal(row.get('深证-收盘价')),
+                        shenzhen_change_rate=_safe_decimal(row.get('深证-涨跌幅')),
+                    )
+                    new_records.append(new_record)
+                        
+                except Exception as e:
+                    logger.error(f"处理第{index}行数据失败: {str(e)}")
+                    continue
+            
+            # 批量创建新记录
+            if new_records:
+                with transaction.atomic():
+                    StockMarketFundFlow.objects.bulk_create(new_records, batch_size=1000)
+                    saved_count = len(new_records)
+                logger.info(f"批量创建了{saved_count}条新的资金流数据")
+            
+            logger.info(f"股票市场资金流数据处理完成，新增{saved_count}条，跳过{skipped_count}条已存在数据")
+            
+            return {
+                "status": "success",
+                "message": f"成功获取并保存股票市场资金流数据，新增{saved_count}条，跳过{skipped_count}条已存在数据",
+                "data": {
+                    "total_records": len(df),
+                    "saved_count": saved_count,
+                    "skipped_count": skipped_count
+                }
+            }
+        else:
+            return {
+                "status": "success", 
+                "message": f"成功获取{len(df)}条股票市场资金流数据",
+                "data": df.to_dict('records')
+            }
+            
+    except Exception as e:
+        logger.error(f"获取股票市场资金流数据失败: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"获取数据失败: {str(e)}",
+            "data": None
+        }
+
+
+def _safe_decimal(value):
+    """
+    安全转换为Decimal类型
+    
+    功能：将各种类型的数值安全转换为Decimal，处理NaN、None等特殊值
+    参数：
+        - value: 待转换的值
+    返回值：Decimal对象或None
+    """
+    if pd.isna(value) or value is None or str(value).lower() in ['nan', 'none', '']:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ValueError, TypeError, decimal.InvalidOperation):
+        return None
+
+
 if __name__ == '__main__':
+    # fetch_all_index_high_low_statistics()
     fetch_all_index_high_low_statistics()

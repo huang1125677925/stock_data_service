@@ -213,7 +213,4 @@ class StockScreeningStrategy:
         """
         candidates = self.screen_stocks(stock_codes)
         
-        # 按最新成交量降序排序
-        candidates.sort(key=lambda x: x['latest_volume'], reverse=True)
-        
-        return candidates[:limit]
+        return candidates

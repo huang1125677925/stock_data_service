@@ -461,6 +461,313 @@ class IndividualStockService:
             
         except ValueError:
             return False
+
+class StockTagService:
+    """
+    股票标记服务类
+    提供股票标记的查询、创建、更新、删除等功能
+    支持多种标记因子的单选和多选查询
+    """
     
+    def __init__(self):
+        self.cache_timeout = getattr(settings, 'STOCK_TAG_CACHE_TIMEOUT', 300)  # 缓存5分钟
+        logger.info(f"股票标记服务初始化: cache_timeout={self.cache_timeout}s")
+    
+    def query_stock_tags(self, **filters) -> Dict:
+        """
+        查询股票标记
+        支持多种标记因子的单选和多选查询
+        
+        Args:
+            **filters: 查询过滤条件
+                - stock_codes: 股票代码列表
+                - pattern_types: 形态类型列表
+                - technical_indicator_types: 技术指标类型列表
+                - stock_types: 股票类型列表
+                - market_cap_types: 市值大小类型列表
+                - pe_range_types: PE区间类型列表
+                - pb_range_types: PB区间类型列表
+                - industry_types: 行业类型列表
+                - volume_types: 成交量类型列表
+                - volatility_types: 波动率类型列表
+                - trend_types: 趋势类型列表
+                - start_date: 开始日期
+                - end_date: 结束日期
+                - page: 页码
+                - page_size: 每页数量
+        
+        Returns:
+            包含查询结果和分页信息的字典
+        """
+        from django.core.paginator import Paginator
+        from django.db.models import Q
+        from .models import StockTag
+        
+        try:
+            # 构建查询条件
+            query = Q()
+            
+            # 股票代码过滤
+            stock_codes = filters.get('stock_codes')
+            if stock_codes:
+                query &= Q(stock__code__in=stock_codes)
+            
+            # 各种标记因子过滤
+            pattern_types = filters.get('pattern_types')
+            if pattern_types:
+                query &= Q(pattern_type__in=pattern_types)
+            
+            technical_indicator_types = filters.get('technical_indicator_types')
+            if technical_indicator_types:
+                query &= Q(technical_indicator_type__in=technical_indicator_types)
+            
+            stock_types = filters.get('stock_types')
+            if stock_types:
+                query &= Q(stock_type__in=stock_types)
+            
+            market_cap_types = filters.get('market_cap_types')
+            if market_cap_types:
+                query &= Q(market_cap_type__in=market_cap_types)
+            
+            pe_range_types = filters.get('pe_range_types')
+            if pe_range_types:
+                query &= Q(pe_range_type__in=pe_range_types)
+            
+            pb_range_types = filters.get('pb_range_types')
+            if pb_range_types:
+                query &= Q(pb_range_type__in=pb_range_types)
+            
+            industry_types = filters.get('industry_types')
+            if industry_types:
+                query &= Q(industry_type__in=industry_types)
+            
+            volume_types = filters.get('volume_types')
+            if volume_types:
+                query &= Q(volume_type__in=volume_types)
+            
+            volatility_types = filters.get('volatility_types')
+            if volatility_types:
+                query &= Q(volatility_type__in=volatility_types)
+            
+            trend_types = filters.get('trend_types')
+            if trend_types:
+                query &= Q(trend_type__in=trend_types)
+            
+            # 日期范围过滤
+            start_date = filters.get('start_date')
+            if start_date:
+                query &= Q(created_at__date__gte=start_date)
+            
+            end_date = filters.get('end_date')
+            if end_date:
+                query &= Q(created_at__date__lte=end_date)
+            
+            # 执行查询
+            queryset = StockTag.objects.filter(query).select_related('stock').order_by('-created_at')
+            
+            # 分页处理
+            page = filters.get('page', 1)
+            page_size = filters.get('page_size', 20)
+            
+            paginator = Paginator(queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # 构建返回结果
+            result = {
+                'total': paginator.count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': paginator.num_pages,
+                'has_next': page_obj.has_next(),
+                'has_previous': page_obj.has_previous(),
+                'results': list(page_obj.object_list)
+            }
+            
+            logger.info(f"查询股票标记成功，共{result['total']}条记录，当前第{page}页")
+            return result
+            
+        except Exception as e:
+            logger.error(f"查询股票标记失败: {str(e)}")
+            raise
+    
+    def create_stock_tag(self, stock_code: str, tag_data: Dict) -> 'StockTag':
+        """
+        创建股票标记
+        
+        Args:
+            stock_code: 股票代码
+            tag_data: 标记数据
+        
+        Returns:
+            创建的股票标记对象
+        """
+        from .models import StockTag, IndividualStock
+        
+        try:
+            # 获取股票对象
+            stock = IndividualStock.objects.get(code=stock_code)
+            
+            # 创建标记
+            tag_data['stock'] = stock
+            stock_tag = StockTag.objects.create(**tag_data)
+            
+            logger.info(f"创建股票{stock_code}标记成功，ID: {stock_tag.id}")
+            return stock_tag
+            
+        except IndividualStock.DoesNotExist:
+            logger.error(f"股票{stock_code}不存在")
+            raise ValueError(f"股票{stock_code}不存在")
+        except Exception as e:
+            logger.error(f"创建股票{stock_code}标记失败: {str(e)}")
+            raise
+    
+    def update_stock_tag(self, tag_id: int, tag_data: Dict) -> 'StockTag':
+        """
+        更新股票标记
+        
+        Args:
+            tag_id: 标记ID
+            tag_data: 更新的标记数据
+        
+        Returns:
+            更新后的股票标记对象
+        """
+        from .models import StockTag
+        
+        try:
+            stock_tag = StockTag.objects.get(id=tag_id)
+            
+            # 更新字段
+            for field, value in tag_data.items():
+                if hasattr(stock_tag, field):
+                    setattr(stock_tag, field, value)
+            
+            stock_tag.save()
+            
+            logger.info(f"更新股票标记成功，ID: {tag_id}")
+            return stock_tag
+            
+        except StockTag.DoesNotExist:
+            logger.error(f"股票标记{tag_id}不存在")
+            raise ValueError(f"股票标记{tag_id}不存在")
+        except Exception as e:
+            logger.error(f"更新股票标记{tag_id}失败: {str(e)}")
+            raise
+    
+    def delete_stock_tag(self, tag_id: int) -> bool:
+        """
+        删除股票标记
+        
+        Args:
+            tag_id: 标记ID
+        
+        Returns:
+            删除是否成功
+        """
+        from .models import StockTag
+        
+        try:
+            stock_tag = StockTag.objects.get(id=tag_id)
+            stock_tag.delete()
+            
+            logger.info(f"删除股票标记成功，ID: {tag_id}")
+            return True
+            
+        except StockTag.DoesNotExist:
+            logger.error(f"股票标记{tag_id}不存在")
+            raise ValueError(f"股票标记{tag_id}不存在")
+        except Exception as e:
+            logger.error(f"删除股票标记{tag_id}失败: {str(e)}")
+            raise
+    
+    def get_stock_tag(self, tag_id: int) -> Optional['StockTag']:
+        """
+        获取单个股票标记
+        
+        Args:
+            tag_id: 标记ID
+        
+        Returns:
+            股票标记对象或None
+        """
+        from .models import StockTag
+        
+        try:
+            stock_tag = StockTag.objects.select_related('stock').get(id=tag_id)
+            logger.info(f"获取股票标记成功，ID: {tag_id}")
+            return stock_tag
+            
+        except StockTag.DoesNotExist:
+            logger.warning(f"股票标记{tag_id}不存在")
+            return None
+        except Exception as e:
+            logger.error(f"获取股票标记{tag_id}失败: {str(e)}")
+            raise
+    
+    def get_tag_choices(self) -> Dict:
+        """
+        获取所有标记因子的选择项
+        
+        Returns:
+            包含所有标记因子选择项的字典
+        """
+        from .models import StockTag
+        
+        try:
+            choices = {
+                'pattern_types': StockTag.PATTERN_TYPE_CHOICES,
+                'technical_indicator_types': StockTag.TECHNICAL_INDICATOR_TYPE_CHOICES,
+                'stock_types': StockTag.STOCK_TYPE_CHOICES,
+                'market_cap_types': StockTag.MARKET_CAP_TYPE_CHOICES,
+                'pe_range_types': StockTag.PE_RANGE_TYPE_CHOICES,
+                'pb_range_types': StockTag.PB_RANGE_TYPE_CHOICES,
+                'industry_types': StockTag.INDUSTRY_TYPE_CHOICES,
+                'volume_types': StockTag.VOLUME_TYPE_CHOICES,
+                'volatility_types': StockTag.VOLATILITY_TYPE_CHOICES,
+                'trend_types': StockTag.TREND_TYPE_CHOICES,
+            }
+            
+            logger.info("获取标记因子选择项成功")
+            return choices
+            
+        except Exception as e:
+            logger.error(f"获取标记因子选择项失败: {str(e)}")
+            raise
+    
+    def get_stock_tags_by_stock(self, stock_code: str, start_date: str = None, end_date: str = None) -> List['StockTag']:
+        """
+        获取指定股票的所有标记
+        
+        Args:
+            stock_code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+        
+        Returns:
+            股票标记列表
+        """
+        from django.db.models import Q
+        from .models import StockTag
+        
+        try:
+            query = Q(stock__code=stock_code)
+            
+            if start_date:
+                query &= Q(created_at__date__gte=start_date)
+            
+            if end_date:
+                query &= Q(created_at__date__lte=end_date)
+            
+            stock_tags = StockTag.objects.filter(query).select_related('stock').order_by('-created_at')
+            
+            logger.info(f"获取股票{stock_code}标记成功，共{len(stock_tags)}条")
+            return list(stock_tags)
+            
+        except Exception as e:
+            logger.error(f"获取股票{stock_code}标记失败: {str(e)}")
+            raise
+
+
 # 创建服务实例
 individual_stock_service = IndividualStockService()
+stock_tag_service = StockTagService()

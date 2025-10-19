@@ -588,3 +588,273 @@ class CashFlowStatement(models.Model):
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
         }
+
+
+class StockTag(models.Model):
+    """股票标记表模型
+    功能：存储股票的各种标记因子，用于股票筛选和分类。
+    参数（字段）：
+    - stock(ForeignKey[IndividualStock]): 所属股票；删除股票级联删除标记。
+    - pattern_type(CharField): 形态类型标记。
+    - technical_indicator_type(CharField): 技术指标类型标记。
+    - stock_type(CharField): 股票类型标记。
+    - market_cap_type(CharField): 市值大小类型标记。
+    - pe_range_type(CharField): PE区间类型标记。
+    - pb_range_type(CharField): PB区间类型标记。
+    - industry_type(CharField): 行业类型标记。
+    - volume_type(CharField): 成交量类型标记。
+    - volatility_type(CharField): 波动率类型标记。
+    - trend_type(CharField): 趋势类型标记。
+    - created_at(DateTimeField): 创建时间。
+    - updated_at(DateTimeField): 更新时间。
+    返回值：无（模型用于持久化数据）。
+    事件：无（模型不直接触发事件）。
+    """
+    
+    # 形态类型选择
+    PATTERN_TYPE_CHOICES = [
+        ('BREAKOUT', '突破形态'),
+        ('REVERSAL', '反转形态'),
+        ('CONSOLIDATION', '整理形态'),
+        ('HEAD_SHOULDERS', '头肩形态'),
+        ('DOUBLE_TOP', '双顶形态'),
+        ('DOUBLE_BOTTOM', '双底形态'),
+        ('TRIANGLE', '三角形态'),
+        ('FLAG', '旗形形态'),
+        ('WEDGE', '楔形形态'),
+        ('CHANNEL', '通道形态'),
+        ('BOX_BREAKOUT', '箱型突破'),
+        ('OTHER', '其他形态'),
+    ]
+    
+    # 技术指标类型选择
+    TECHNICAL_INDICATOR_TYPE_CHOICES = [
+        ('MACD_BULLISH', 'MACD多头'),
+        ('MACD_BEARISH', 'MACD空头'),
+        ('RSI_OVERSOLD', 'RSI超卖'),
+        ('RSI_OVERBOUGHT', 'RSI超买'),
+        ('KDJ_GOLDEN_CROSS', 'KDJ金叉'),
+        ('KDJ_DEATH_CROSS', 'KDJ死叉'),
+        ('MA_BULLISH', '均线多头排列'),
+        ('MA_BEARISH', '均线空头排列'),
+        ('BOLL_UPPER', '布林上轨'),
+        ('BOLL_LOWER', '布林下轨'),
+        ('VOLUME_SURGE', '放量突破'),
+        ('VOLUME_SHRINK', '缩量整理'),
+        ('OTHER', '其他指标'),
+    ]
+    
+    # 股票类型选择
+    STOCK_TYPE_CHOICES = [
+        ('BLUE_CHIP', '蓝筹股'),
+        ('GROWTH', '成长股'),
+        ('VALUE', '价值股'),
+        ('SMALL_CAP', '小盘股'),
+        ('MID_CAP', '中盘股'),
+        ('LARGE_CAP', '大盘股'),
+        ('CONCEPT', '概念股'),
+        ('THEME', '题材股'),
+        ('ST', 'ST股票'),
+        ('NEW_STOCK', '次新股'),
+        ('DIVIDEND', '高股息'),
+        ('OTHER', '其他类型'),
+    ]
+    
+    # 市值大小类型选择
+    MARKET_CAP_TYPE_CHOICES = [
+        ('MEGA_CAP', '超大盘股(>1000亿)'),
+        ('LARGE_CAP', '大盘股(300-1000亿)'),
+        ('MID_CAP', '中盘股(100-300亿)'),
+        ('SMALL_CAP', '小盘股(50-100亿)'),
+        ('MICRO_CAP', '微盘股(<50亿)'),
+    ]
+    
+    # PE区间类型选择
+    PE_RANGE_TYPE_CHOICES = [
+        ('NEGATIVE', '负PE'),
+        ('LOW', '低PE(0-15)'),
+        ('MODERATE', '适中PE(15-25)'),
+        ('HIGH', '高PE(25-50)'),
+        ('VERY_HIGH', '极高PE(>50)'),
+    ]
+    
+    # PB区间类型选择
+    PB_RANGE_TYPE_CHOICES = [
+        ('VERY_LOW', '极低PB(<1)'),
+        ('LOW', '低PB(1-2)'),
+        ('MODERATE', '适中PB(2-3)'),
+        ('HIGH', '高PB(3-5)'),
+        ('VERY_HIGH', '极高PB(>5)'),
+    ]
+    
+    # 行业类型选择
+    INDUSTRY_TYPE_CHOICES = [
+        ('TECHNOLOGY', '科技行业'),
+        ('FINANCE', '金融行业'),
+        ('HEALTHCARE', '医疗健康'),
+        ('CONSUMER', '消费行业'),
+        ('INDUSTRIAL', '工业制造'),
+        ('ENERGY', '能源行业'),
+        ('MATERIALS', '原材料'),
+        ('UTILITIES', '公用事业'),
+        ('REAL_ESTATE', '房地产'),
+        ('TELECOM', '电信服务'),
+        ('OTHER', '其他行业'),
+    ]
+    
+    # 成交量类型选择
+    VOLUME_TYPE_CHOICES = [
+        ('VOLUME_SURGE', '放量'),
+        ('VOLUME_NORMAL', '正常量'),
+        ('VOLUME_SHRINK', '缩量'),
+        ('VOLUME_EXTREME', '极量'),
+    ]
+    
+    # 波动率类型选择
+    VOLATILITY_TYPE_CHOICES = [
+        ('LOW_VOLATILITY', '低波动'),
+        ('MODERATE_VOLATILITY', '中等波动'),
+        ('HIGH_VOLATILITY', '高波动'),
+        ('EXTREME_VOLATILITY', '极端波动'),
+    ]
+    
+    # 趋势类型选择
+    TREND_TYPE_CHOICES = [
+        ('STRONG_UPTREND', '强势上涨'),
+        ('WEAK_UPTREND', '弱势上涨'),
+        ('SIDEWAYS', '横盘整理'),
+        ('WEAK_DOWNTREND', '弱势下跌'),
+        ('STRONG_DOWNTREND', '强势下跌'),
+    ]
+    
+    stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='stock_tags', verbose_name='所属股票')
+    
+    # 各种标记因子字段
+    pattern_type = models.CharField(
+        max_length=20, 
+        choices=PATTERN_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='形态类型'
+    )
+    technical_indicator_type = models.CharField(
+        max_length=20, 
+        choices=TECHNICAL_INDICATOR_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='技术指标类型'
+    )
+    stock_type = models.CharField(
+        max_length=20, 
+        choices=STOCK_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='股票类型'
+    )
+    market_cap_type = models.CharField(
+        max_length=20, 
+        choices=MARKET_CAP_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='市值大小类型'
+    )
+    pe_range_type = models.CharField(
+        max_length=20, 
+        choices=PE_RANGE_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='PE区间类型'
+    )
+    pb_range_type = models.CharField(
+        max_length=20, 
+        choices=PB_RANGE_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='PB区间类型'
+    )
+    industry_type = models.CharField(
+        max_length=20, 
+        choices=INDUSTRY_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='行业类型'
+    )
+    volume_type = models.CharField(
+        max_length=20, 
+        choices=VOLUME_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='成交量类型'
+    )
+    volatility_type = models.CharField(
+        max_length=20, 
+        choices=VOLATILITY_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='波动率类型'
+    )
+    trend_type = models.CharField(
+        max_length=20, 
+        choices=TREND_TYPE_CHOICES, 
+        null=True, 
+        blank=True, 
+        verbose_name='趋势类型'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    class Meta:
+        db_table = 'stock_tag'
+        verbose_name = '股票标记'
+        verbose_name_plural = '股票标记'
+        ordering = ['-created_at', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-created_at']),
+            models.Index(fields=['-created_at']),
+            models.Index(fields=['pattern_type']),
+            models.Index(fields=['technical_indicator_type']),
+            models.Index(fields=['stock_type']),
+            models.Index(fields=['market_cap_type']),
+            models.Index(fields=['pe_range_type']),
+            models.Index(fields=['pb_range_type']),
+            models.Index(fields=['industry_type']),
+            models.Index(fields=['volume_type']),
+            models.Index(fields=['volatility_type']),
+            models.Index(fields=['trend_type']),
+        ]
+        unique_together = ['stock', ]
+    
+    def __str__(self):
+        return f'{self.stock.code} - {self.stock.name}'
+    
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'pattern_type': self.pattern_type,
+            'pattern_type_display': self.get_pattern_type_display() if self.pattern_type else None,
+            'technical_indicator_type': self.technical_indicator_type,
+            'technical_indicator_type_display': self.get_technical_indicator_type_display() if self.technical_indicator_type else None,
+            'stock_type': self.stock_type,
+            'stock_type_display': self.get_stock_type_display() if self.stock_type else None,
+            'market_cap_type': self.market_cap_type,
+            'market_cap_type_display': self.get_market_cap_type_display() if self.market_cap_type else None,
+            'pe_range_type': self.pe_range_type,
+            'pe_range_type_display': self.get_pe_range_type_display() if self.pe_range_type else None,
+            'pb_range_type': self.pb_range_type,
+            'pb_range_type_display': self.get_pb_range_type_display() if self.pb_range_type else None,
+            'industry_type': self.industry_type,
+            'industry_type_display': self.get_industry_type_display() if self.industry_type else None,
+            'volume_type': self.volume_type,
+            'volume_type_display': self.get_volume_type_display() if self.volume_type else None,
+            'volatility_type': self.volatility_type,
+            'volatility_type_display': self.get_volatility_type_display() if self.volatility_type else None,
+            'trend_type': self.trend_type,
+            'trend_type_display': self.get_trend_type_display() if self.trend_type else None,
+            'remarks': self.remarks,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }

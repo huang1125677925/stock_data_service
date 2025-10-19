@@ -11,11 +11,14 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from django.http import JsonResponse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
-from .services import individual_stock_service
+from .services import individual_stock_service, stock_tag_service
 from common.validators import validate_stock_symbol
 from common.response import success_response, error_response
-from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement
-from .serializers import IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, IncomeStatementSerializer, CashFlowStatementSerializer
+from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement, StockTag
+from .serializers import (
+    IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, 
+    IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer
+)
 from django.db.models import Q
 
 logger = logging.getLogger(__name__)
@@ -687,4 +690,212 @@ class CashFlowStatementView(APIView):
         except Exception as e:
             logger.error(f"获取现金流量表数据失败: {str(e)}")
             return error_response(f"获取现金流量表数据失败: {str(e)}", 500)
+
+
+class StockTagView(APIView):
+    """
+    股票标记API视图
+    提供股票标记的增删改查功能
+    支持多种标记因子的单选和多选查询
+    """
+    
+    def get(self, request, tag_id=None):
+        """
+        功能：获取股票标记，支持单个标记查询和批量查询
+        参数：
+        - request(HttpRequest): 请求对象
+        - tag_id(int, 可选): 标记ID，如果提供则获取单个标记
+        返回值：
+        - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息
+        事件：
+        - 当标记不存在时，记录日志并返回错误响应
+        """
+        try:
+            if tag_id:
+                # 获取单个标记
+                stock_tag = stock_tag_service.get_stock_tag(tag_id)
+                if not stock_tag:
+                    return error_response(f"股票标记{tag_id}不存在", 404)
+                
+                serializer = StockTagSerializer(stock_tag)
+                return success_response(serializer.data)
+            else:
+                # 批量查询标记
+                query_serializer = StockTagQuerySerializer(data=request.query_params)
+                if not query_serializer.is_valid():
+                    return error_response(f"查询参数错误: {query_serializer.errors}", 400)
+                
+                # 执行查询
+                result = stock_tag_service.query_stock_tags(**query_serializer.validated_data)
+                
+                # 序列化结果
+                serializer = StockTagSerializer(result['results'], many=True)
+                
+                return success_response({
+                    'total': result['total'],
+                    'page': result['page'],
+                    'page_size': result['page_size'],
+                    'total_pages': result['total_pages'],
+                    'has_next': result['has_next'],
+                    'has_previous': result['has_previous'],
+                    'data': serializer.data
+                })
+                
+        except Exception as e:
+            logger.error(f"获取股票标记失败: {str(e)}")
+            return error_response(f"获取股票标记失败: {str(e)}", 500)
+    
+    def post(self, request):
+        """
+        功能：创建股票标记
+        参数：
+        - request(HttpRequest): 请求对象，包含标记数据
+        返回值：
+        - JsonResponse: 调用success_response返回创建的标记数据；失败时调用error_response返回错误信息
+        事件：
+        - 当数据验证失败时，记录日志并返回错误响应
+        """
+        try:
+            serializer = StockTagSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(f"数据验证失败: {serializer.errors}", 400)
+            
+            # 获取股票代码
+            stock_code = request.data.get('stock_code')
+            if not stock_code:
+                return error_response("缺少股票代码", 400)
+            
+            # 创建标记
+            stock_tag = stock_tag_service.create_stock_tag(stock_code, serializer.validated_data)
+            
+            # 返回创建的标记
+            result_serializer = StockTagSerializer(stock_tag)
+            return success_response(result_serializer.data, status_code=201)
+            
+        except ValueError as e:
+            logger.error(f"创建股票标记失败: {str(e)}")
+            return error_response(str(e), 400)
+        except Exception as e:
+            logger.error(f"创建股票标记失败: {str(e)}")
+            return error_response(f"创建股票标记失败: {str(e)}", 500)
+    
+    def put(self, request, tag_id):
+        """
+        功能：更新股票标记
+        参数：
+        - request(HttpRequest): 请求对象，包含更新的标记数据
+        - tag_id(int): 标记ID
+        返回值：
+        - JsonResponse: 调用success_response返回更新后的标记数据；失败时调用error_response返回错误信息
+        事件：
+        - 当标记不存在时，记录日志并返回错误响应
+        """
+        try:
+            serializer = StockTagSerializer(data=request.data, partial=True)
+            if not serializer.is_valid():
+                return error_response(f"数据验证失败: {serializer.errors}", 400)
+            
+            # 更新标记
+            stock_tag = stock_tag_service.update_stock_tag(tag_id, serializer.validated_data)
+            
+            # 返回更新后的标记
+            result_serializer = StockTagSerializer(stock_tag)
+            return success_response(result_serializer.data)
+            
+        except ValueError as e:
+            logger.error(f"更新股票标记失败: {str(e)}")
+            return error_response(str(e), 404)
+        except Exception as e:
+            logger.error(f"更新股票标记失败: {str(e)}")
+            return error_response(f"更新股票标记失败: {str(e)}", 500)
+    
+    def delete(self, request, tag_id):
+        """
+        功能：删除股票标记
+        参数：
+        - request(HttpRequest): 请求对象
+        - tag_id(int): 标记ID
+        返回值：
+        - JsonResponse: 调用success_response返回删除成功信息；失败时调用error_response返回错误信息
+        事件：
+        - 当标记不存在时，记录日志并返回错误响应
+        """
+        try:
+            stock_tag_service.delete_stock_tag(tag_id)
+            return success_response({"message": "删除成功"})
+            
+        except ValueError as e:
+            logger.error(f"删除股票标记失败: {str(e)}")
+            return error_response(str(e), 404)
+        except Exception as e:
+            logger.error(f"删除股票标记失败: {str(e)}")
+            return error_response(f"删除股票标记失败: {str(e)}", 500)
+
+
+class StockTagChoicesView(APIView):
+    """
+    股票标记选择项API视图
+    提供所有标记因子的选择项
+    """
+    
+    def get(self, request):
+        """
+        功能：获取所有标记因子的选择项
+        参数：
+        - request(HttpRequest): 请求对象
+        返回值：
+        - JsonResponse: 调用success_response返回选择项数据；失败时调用error_response返回错误信息
+        事件：
+        - 当获取选择项失败时，记录日志并返回错误响应
+        """
+        try:
+            choices = stock_tag_service.get_tag_choices()
+            return success_response(choices)
+            
+        except Exception as e:
+            logger.error(f"获取标记因子选择项失败: {str(e)}")
+            return error_response(f"获取标记因子选择项失败: {str(e)}", 500)
+
+
+class StockTagByStockView(APIView):
+    """
+    按股票查询标记API视图
+    获取指定股票的所有标记
+    """
+    
+    def get(self, request, stock_code):
+        """
+        功能：获取指定股票的所有标记
+        参数：
+        - request(HttpRequest): 请求对象，查询参数包括：
+          - start_date(str, 可选): 开始日期，格式：YYYY-MM-DD
+          - end_date(str, 可选): 结束日期，格式：YYYY-MM-DD
+        - stock_code(str): 股票代码
+        返回值：
+        - JsonResponse: 调用success_response返回标记数据；失败时调用error_response返回错误信息
+        事件：
+        - 当股票代码无效时，记录日志并返回错误响应
+        """
+        try:
+            if not validate_stock_symbol(stock_code):
+                return error_response(f"无效的股票代码: {stock_code}", 400)
+            
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            # 获取股票标记
+            stock_tags = stock_tag_service.get_stock_tags_by_stock(stock_code, start_date, end_date)
+            
+            # 序列化结果
+            serializer = StockTagSerializer(stock_tags, many=True)
+            
+            return success_response({
+                'stock_code': stock_code,
+                'total': len(stock_tags),
+                'data': serializer.data
+            })
+            
+        except Exception as e:
+            logger.error(f"获取股票{stock_code}标记失败: {str(e)}")
+            return error_response(f"获取股票{stock_code}标记失败: {str(e)}", 500)
 
