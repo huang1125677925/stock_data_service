@@ -607,4 +607,5 @@ def update_industry_sector_fund_flow_data():
         return {"status": "error", "message": str(e)}
 
 if __name__ == '__main__':
-    fetch_industry_sector_fund_flow_data()
+    # fetch_industry_sector_fund_flow_data()
+    update_industry_sector_fund_flow_data()

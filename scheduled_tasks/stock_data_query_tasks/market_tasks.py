@@ -473,4 +473,5 @@ def _safe_decimal(value):
 
 if __name__ == '__main__':
     # fetch_all_index_high_low_statistics()
-    fetch_all_index_high_low_statistics()
+    # fetch_all_index_high_low_statistics()
+    fetch_stock_market_fund_flow()

@@ -239,12 +239,15 @@ CRONJOBS = [
     ('25 16,17,18,19 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
     ('45 1,4,6,8 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.mark_stock_industry', f'>> {BASE_DIR}/logs/mark_stock_industry.log 2>&1'),  # 每周一至周五16:00-22:00更新行业板块实时数据
     ('1 16,17,18,19 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
+    ('30 19 * * *', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_fund_flow_data', f'>> {BASE_DIR}/logs/update_industry_sector_fund_flow_data.log 2>&1'),  # 每天16-22点每小时更新行业板块资金流数据
+
+    # 大盘数据
+    ('45 19 * * *', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_stock_market_fund_flow', f'>> {BASE_DIR}/logs/fetch_stock_market_fund_flow.log 2>&1'),  # 每天16-22点每小时更新大盘资金流数据
+    ('15 20 * * *', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_all_index_high_low_statistics', f'>> {BASE_DIR}/logs/fetch_all_index_high_low_statistics.log 2>&1'),  # 每天16-22点每小时更新大盘日频数据
 
     # 个股数据 
     ('59 1,12,20 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
     ('40 16,23 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
-
-    # 大盘数据
 ]
 
 # Crontab配置
