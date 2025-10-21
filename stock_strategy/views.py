@@ -50,19 +50,20 @@ def get_index_rps(request):
         if save:
             saved_count = rps_service.save_rps_data(df, periods)
         
-        # 转换为字典格式
-        data = {
-            'rps_data': df.to_dict('records'),
-            'periods': periods,
-            'total_count': len(df),
-            'saved_count': saved_count if save else 0,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+        # 转换DataFrame为JSON可序列化格式
+        result = df.fillna('').to_dict('records')
         
-        return success_response(data, f'成功获取{len(df)}条RPS数据' + (f'，已保存{saved_count}条到数据库' if save else ''))
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'periods': periods,
+            'saved_count': saved_count,
+            'errors': errors,
+            'query_time': datetime.now().isoformat()
+        })
         
     except Exception as e:
-        return error_response(f'获取RPS数据失败: {str(e)}', 500)
+        return error_response(f'获取指数RPS强度排名失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -150,25 +151,29 @@ def get_industry_turnover_percentile(request):
     """
     try:
         # 获取查询参数
-        date_str = request.GET.get('date')
-        percentile = float(request.GET.get('percentile', 80))
+        start_date = request.GET.get('start_date', None)
+        end_date = request.GET.get('end_date', None)
+        use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
         
-        # 验证百分位数参数
-        if not 0 <= percentile <= 100:
-            return error_response('百分位数必须在0-100之间', 400)
+        # 获取行业成交额占比分位数数据
+        result = industry_turnover_strategy.get_industry_turnover_percentile(
+            start_date=start_date,
+            end_date=end_date
+        )
         
-        # 调用策略函数
-        result = industry_turnover_strategy(date_str, percentile)
+        if result is None:
+            return error_response('获取行业成交额占比分位数数据失败', 500)
         
-        if result['success']:
-            return success_response(result['data'], result['message'])
-        else:
-            return error_response(result['message'], 500)
-            
-    except ValueError as e:
-        return error_response(f'参数格式错误: {str(e)}', 400)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'start_date': start_date,
+            'end_date': end_date,
+            'query_time': datetime.now().isoformat()
+        })
+        
     except Exception as e:
-        return error_response(f'获取行业换手率数据失败: {str(e)}', 500)
+        return error_response(f'获取行业成交额占比分位数数据失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])
