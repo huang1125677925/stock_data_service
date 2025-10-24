@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'quantitative_strategy',
     'stock_market',
     'django_comment_migrate',
+    'personal_center',
 ]
 
 MIDDLEWARE = [

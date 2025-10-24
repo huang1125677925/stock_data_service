@@ -20,6 +20,7 @@ from .serializers import (
     IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer
 )
 from django.db.models import Q
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class StockListView(APIView):
           - page_size(int, 可选): 每页数量，默认20
           - keyword(str, 可选): 关键词，按股票名称或代码模糊匹配
           - industry(str, 可选): 行业名称，按行业精确匹配
+          - stock_names(list[str] 或 逗号分隔字符串, 可选): 股票名列表，按名称精确筛选，支持JSON数组或逗号分隔
         返回值：
         - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息。
         事件：
@@ -48,6 +50,24 @@ class StockListView(APIView):
             page_size = int(request.query_params.get('page_size', 20))
             keyword = request.query_params.get('keyword', None)
             industry = request.query_params.get('industry', None)
+            stock_names_param = request.query_params.get('stock_names', None)
+
+            # 解析股票名列表参数，支持JSON数组或逗号分隔的字符串
+            names_list = []
+            if stock_names_param:
+                try:
+                    param_str = stock_names_param.strip()
+                    if param_str.startswith('['):
+                        # JSON 数组格式
+                        parsed = json.loads(param_str)
+                        if not isinstance(parsed, list):
+                            return error_response('stock_names参数格式错误，应为数组', 400)
+                        names_list = [s.strip() for s in parsed if isinstance(s, str) and s.strip()]
+                    else:
+                        # 逗号分隔字符串格式
+                        names_list = [s.strip() for s in param_str.split(',') if s.strip()]
+                except Exception:
+                    return error_response('stock_names参数格式错误，应为JSON数组或逗号分隔字符串', 400)
 
             # 使用数据库层面的过滤与分页，避免一次性加载全部数据
             queryset = IndividualStock.objects.all().order_by('code')
@@ -55,6 +75,8 @@ class StockListView(APIView):
                 queryset = queryset.filter(Q(name__icontains=keyword) | Q(code__icontains=keyword))
             if industry:
                 queryset = queryset.filter(industry__icontains=industry)
+            if names_list:
+                queryset = queryset.filter(name__in=names_list)
 
             if queryset.count() == 0:
                 return error_response("没有搜索到相关股票", 404)
