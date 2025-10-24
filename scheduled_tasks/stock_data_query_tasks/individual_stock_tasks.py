@@ -1315,5 +1315,6 @@ if __name__ == '__main__':
     # fetch_stock_daily_data('sh.000001', '2024-09-30', '2025-10-18')
     # update_individual_stock_daily_data()
     # update_index_stock_daily_data()
-    update_individual_stock_daily_data()
+    # update_individual_stock_daily_data()
+    fetch_individual_stocks()
     
