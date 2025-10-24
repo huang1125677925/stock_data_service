@@ -158,7 +158,8 @@ def update_individual_stock_daily_data():
             # 如果数据库中没有个股数据，先获取个股列表
             logger.info("数据库中没有个股数据，先获取个股列表")
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
-        stock_code_list = [stock.code for stock in stocks if stock.index_type is None]
+        stock_code_list = [stock for stock in stocks if stock.index_type is None]
+        print(len(stock_code_list))
         # 更新所有个股的历史数据（最近30天）
         updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=30)
         
@@ -1313,8 +1314,8 @@ if __name__ == '__main__':
 
 
     # fetch_stock_daily_data('sh.000001', '2024-09-30', '2025-10-18')
-    # update_individual_stock_daily_data()
+    update_individual_stock_daily_data()
     # update_index_stock_daily_data()
     # update_individual_stock_daily_data()
-    fetch_individual_stocks()
+    # fetch_individual_stocks()
     
