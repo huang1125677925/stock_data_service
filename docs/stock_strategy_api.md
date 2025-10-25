@@ -97,3 +97,185 @@
 - RPS (Relative Price Strength) 是相对价格强度指标，用于衡量一个指数相对于其他指数的强弱程度。
 - RPS计算公式: RPS = (1 - 排名 / 总板块数) × 100
 - RPS值越高，表示该指数的相对强度越高。
+
+---
+
+## 行业MA20市场宽度指标API
+
+### 获取行业MA20市场宽度
+
+**接口地址**: `/api/strategy/industry-ma-breadth/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| start_date | string | 否 | - | 开始日期，格式YYYY-MM-DD，默认过去90天 |
+| end_date | string | 否 | - | 结束日期，格式YYYY-MM-DD，默认当天 |
+| ma_window | integer | 否 | 20 | 移动平均窗口大小（交易日），建议≥2 |
+| sector_codes | string | 否 | - | 行业板块代码列表，逗号分隔；为空则计算所有板块 |
+
+**响应示例**:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "timestamp": "2024-05-20T12:00:00",
+  "data": {
+    "total": 2,
+    "data": [
+      {
+        "date": "2024-05-17",
+        "sector_code": "BK001",
+        "sector_name": "电子信息",
+        "count_above_ma": 56,
+        "eligible_count": 100,
+        "breadth_ratio": 0.56
+      },
+      {
+        "date": "2024-05-18",
+        "sector_code": "BK001",
+        "sector_name": "电子信息",
+        "count_above_ma": 60,
+        "eligible_count": 102,
+        "breadth_ratio": 0.5882
+      }
+    ],
+    "start_date": "2024-05-10",
+    "end_date": "2024-05-18",
+    "ma_window": 20,
+    "sector_codes": ["BK001"],
+    "query_time": "2024-05-20T12:00:00"
+  }
+}
+```
+
+**错误响应示例**:
+
+```json
+{
+  "code": 400,
+  "message": "参数格式错误：ma_window应为整数",
+  "timestamp": "2024-05-20T12:00:00"
+}
+```
+
+**说明**:
+- 宽度定义为“收盘价高于MA_N”的股票在行业内的占比，breadth_ratio范围为[0,1]，结果四舍五入到4位小数。
+- 行业与个股映射通过 IndividualStock.industry 与 IndustrySector.name 对应，仅使用数据库数据。
+- 接口返回统一使用 success_response/error_response 封装。
+
+---
+
+## 行业规模宽度指标API
+
+### 获取行业规模宽度
+
+**接口地址**: `/api/strategy/industry-scale-breadth/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| sector_codes | string | 否 | - | 行业板块代码列表，逗号分隔；为空则计算所有板块 |
+
+**响应示例**:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "timestamp": "2024-05-20T12:00:00",
+  "data": {
+    "total": 1,
+    "data": [
+      {
+        "sector_code": "BK001",
+        "sector_name": "电子信息",
+        "industry_total_market_value": 1234567890.12,
+        "market_total_market_value": 9876543210.98,
+        "industry_company_count": 120,
+        "market_total_company_count": 4000,
+        "market_cap_ratio": 0.1249,
+        "company_ratio": 0.03,
+        "scale_breadth": 0.0037
+      }
+    ],
+    "sector_codes": ["BK001"],
+    "query_time": "2024-05-20T12:00:00"
+  }
+}
+```
+
+**说明**:
+- 规模宽度公式：`(行业总市值 / 市场总市值) × (行业公司数量 / 市场总公司数量)`。
+- 市值数据来自 IndustrySector.total_market_value；公司数量来自 IndividualStock（按行业名称聚合）。
+- 结果按 scale_breadth 降序排序；统一使用 success_response/error_response 封装；仅从数据库获取数据。
+
+---
+
+## 行业实际产出规模估算API
+
+### 获取行业实际产出规模（估算）
+
+**接口地址**: `/api/strategy/industry-actual-output/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| sector_codes | string | 否 | - | 行业板块代码列表，逗号分隔；为空则计算所有板块 |
+| top_n | integer | 否 | 3 | 前N企业数量，必须为正整数 |
+| report_date | string | 否 | - | 报告期，格式YYYYMMDD；为空时使用最新业绩快报 |
+
+**响应示例**:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "timestamp": "2024-05-20T12:00:00",
+  "data": {
+    "total": 1,
+    "data": [
+      {
+        "sector_code": "BK001",
+        "sector_name": "电子信息",
+        "top_n": 3,
+        "report_date": "20231231",
+        "top_n_revenue_sum": 450000000.00,
+        "crn_ratio": 0.375,
+        "estimated_industry_output": 1200000000.00,
+        "industry_total_revenue": 1200000000.00,
+        "company_count_with_reports": 85
+      }
+    ],
+    "sector_codes": ["BK001"],
+    "top_n": 3,
+    "report_date": "20231231",
+    "query_time": "2024-05-20T12:00:00"
+  }
+}
+```
+
+**错误响应示例**:
+
+```json
+{
+  "code": 400,
+  "message": "参数格式错误：top_n应为整数",
+  "timestamp": "2024-05-20T12:00:00"
+}
+```
+
+**说明**:
+- 估算公式：`行业实际产出 ≈ 前N企业营业总收入之和 / 行业集中度（CRn）`，其中 `CRn = Σ(Top N 企业营业收入 / 行业总营业收入)`（0-1）。
+- 若以数据库计算 CRn，则估算值等于行业总营业收入；仅从数据库获取数据（IndividualStock、PerformanceReport、IndustrySector）。
+- 接口返回统一使用 success_response/error_response 封装；结果按 estimated_industry_output 降序排序。

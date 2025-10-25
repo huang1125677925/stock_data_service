@@ -12,6 +12,9 @@ from .models import IndexRPS
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response
 from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tagging_service
+from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
+from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
+from .industry_actual_output_strategy import industry_actual_output_strategy
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -365,3 +368,145 @@ def get_stock_analysis_detail(request, stock_code):
         return error_response(f'参数格式错误: {str(e)}', 400)
     except Exception as e:
         return error_response(f'获取股票分析详情失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_ma_breadth(request):
+    """
+    行业MA20市场宽度指标查询接口
+    
+    功能：计算并返回指定日期范围内，每个行业中“收盘价高于MA20”的股票占比（市场宽度）。
+    参数（Query Parameters）：
+    - start_date(str): 开始日期，格式YYYY-MM-DD，默认过去90天
+    - end_date(str): 结束日期，格式YYYY-MM-DD，默认当天
+    - ma_window(int): 移动平均窗口大小（交易日），默认20
+    - sector_codes(str): 行业板块代码列表（逗号分隔），可选；若为空则计算所有板块
+    返回值：
+    - 成功：返回包含各行业每日宽度数据的JSON（total, data, query_time, 参数回显）
+    - 失败：返回错误信息JSON
+    事件：
+    - 参数解析与校验
+    - 计算过程中异常捕获
+    - 统一响应封装success_response/error_response
+    """
+    try:
+        start_date = request.GET.get('start_date', None)
+        end_date = request.GET.get('end_date', None)
+        ma_window = int(request.GET.get('ma_window', 20))
+        sector_codes_str = request.GET.get('sector_codes', None)
+        sector_codes = None
+        if sector_codes_str:
+            sector_codes = [code.strip() for code in sector_codes_str.split(',') if code.strip()]
+        # 计算行业MA市场宽度
+        result = industry_ma_breadth_strategy.get_industry_ma_breadth(
+            start_date=start_date,
+            end_date=end_date,
+            ma_window=ma_window,
+            sector_codes=sector_codes
+        )
+        if result is None:
+            return error_response('获取行业MA市场宽度数据失败', 500)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'start_date': start_date,
+            'end_date': end_date,
+            'ma_window': ma_window,
+            'sector_codes': sector_codes,
+            'query_time': datetime.now().isoformat()
+        })
+    except ValueError:
+        return error_response('参数格式错误：ma_window应为整数', 400)
+    except Exception as e:
+        return error_response(f'获取行业MA市场宽度数据失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_scale_breadth(request):
+    """
+    行业规模宽度指标查询接口
+    
+    功能：计算并返回每个行业的规模宽度指标 = (行业总市值 / 市场总市值) × (行业公司数量 / 市场总公司数量)
+    参数（Query Parameters）：
+    - sector_codes(str): 行业板块代码列表（逗号分隔），可选；为空则计算所有板块
+    返回值：
+    - 成功：返回包含各行业规模宽度数据的JSON（total, data, query_time, 参数回显）
+    - 失败：返回错误信息JSON
+    事件：
+    - 参数解析与校验
+    - 计算过程中异常捕获
+    - 统一响应封装success_response/error_response
+    """
+    try:
+        sector_codes_str = request.GET.get('sector_codes', None)
+        sector_codes = None
+        if sector_codes_str:
+            sector_codes = [code.strip() for code in sector_codes_str.split(',') if code.strip()]
+        # 计算行业规模宽度
+        result = industry_scale_breadth_strategy.get_industry_scale_breadth(
+            sector_codes=sector_codes
+        )
+        if result is None:
+            return error_response('获取行业规模宽度数据失败', 500)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'sector_codes': sector_codes,
+            'query_time': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return error_response(f'获取行业规模宽度数据失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_actual_output(request):
+    """
+    行业实际产出规模估算接口
+    
+    功能：按公式 估算产出 ≈ 前N企业营业总收入之和 / 行业集中度（CRn）
+    参数（Query Parameters）：
+    - sector_codes(str): 行业板块代码列表（逗号分隔），可选；为空则计算所有板块
+    - top_n(int): 前N企业数量，默认3
+    - report_date(str): 报告期，格式YYYYMMDD，可选；为空时使用最新业绩快报
+    返回值：
+    - 成功：返回包含各行业实际产出估算数据的JSON（total, data, query_time, 参数回显）
+    - 失败：返回错误信息JSON
+    事件：
+    - 参数解析与校验
+    - 计算过程中异常捕获
+    - 统一响应封装success_response/error_response
+    """
+    try:
+        sector_codes_str = request.GET.get('sector_codes', None)
+        sector_codes = None
+        if sector_codes_str:
+            sector_codes = [code.strip() for code in sector_codes_str.split(',') if code.strip()]
+
+        top_n_str = request.GET.get('top_n', '3')
+        try:
+            top_n = int(top_n_str)
+        except ValueError:
+            return error_response('参数格式错误：top_n应为整数', 400)
+        report_date = request.GET.get('report_date', None)
+        if report_date is not None:
+            # 简单格式校验：长度为8且全为数字
+            if not (len(report_date) == 8 and report_date.isdigit()):
+                return error_response('参数格式错误：report_date应为YYYYMMDD', 400)
+
+        result = industry_actual_output_strategy.get_industry_actual_output(
+            sector_codes=sector_codes,
+            top_n=top_n,
+            report_date=report_date
+        )
+        if result is None:
+            return error_response('获取行业实际产出规模估算数据失败', 500)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'sector_codes': sector_codes,
+            'top_n': top_n,
+            'report_date': report_date,
+            'query_time': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return error_response(f'获取行业实际产出规模估算数据失败: {str(e)}', 500)
