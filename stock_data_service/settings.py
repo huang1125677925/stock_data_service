@@ -247,8 +247,8 @@ CRONJOBS = [
     ('15 21 * * *', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_all_index_high_low_statistics', f'>> {BASE_DIR}/logs/fetch_all_index_high_low_statistics.log 2>&1'),  # 每天16-22点每小时更新大盘日频数据
 
     # 个股数据 
-    ('59 0,22 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
-    ('40 16 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
+    ('59 15 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
+    ('40 8,16 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
     ('20 17 * * *', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
 ]
 
