@@ -11,4 +11,5 @@ urlpatterns = [
     path('industry-ma-breadth/', views.get_industry_ma_breadth, name='get_industry_ma_breadth'),
     path('industry-scale-breadth/', views.get_industry_scale_breadth, name='get_industry_scale_breadth'),
     path('industry-actual-output/', views.get_industry_actual_output, name='get_industry_actual_output'),
+    path('industry-fund-flow-correlation/', views.get_industry_fund_flow_correlation, name='get_industry_fund_flow_correlation'),
 ]

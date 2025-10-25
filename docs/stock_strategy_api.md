@@ -279,3 +279,77 @@
 - 估算公式：`行业实际产出 ≈ 前N企业营业总收入之和 / 行业集中度（CRn）`，其中 `CRn = Σ(Top N 企业营业收入 / 行业总营业收入)`（0-1）。
 - 若以数据库计算 CRn，则估算值等于行业总营业收入；仅从数据库获取数据（IndividualStock、PerformanceReport、IndustrySector）。
 - 接口返回统一使用 success_response/error_response 封装；结果按 estimated_industry_output 降序排序。
+
+---
+
+## 行业资金流相关坐标点API
+
+### 获取行业资金流二维坐标点（按净流入排序）
+
+**接口地址**: `/django/api/strategy/industry-fund-flow-correlation/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| sector_code | string | 是 | - | 行业板块代码 |
+| start_date | string | 是 | - | 开始日期，格式YYYY-MM-DD |
+| end_date | string | 是 | - | 结束日期，格式YYYY-MM-DD |
+| x_axis | string | 否 | `change_percent` | 横轴指标，支持 `change_percent`（涨跌幅）、`turnover_rate`（换手率）、`amplitude`（振幅） |
+| y_axis | string | 否 | `main` | 纵轴净流入类型，支持 `main`、`super_large`、`large`、`medium`、`small`、`all`；其中 `all` 表示“全部净流入”，为四类净流入之和（super_large + large + medium + small） |
+| sort_order | string | 否 | `desc` | 排序方向，`asc` 或 `desc`（按 y 值排序） |
+
+**响应示例**:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "timestamp": "2024-05-20T12:00:00",
+  "data": {
+    "sector_code": "BK001",
+    "sector_name": "电子信息",
+    "filters": {
+      "start_date": "2024-05-10",
+      "end_date": "2024-05-18",
+      "x_axis": "change_percent",
+      "y_axis": "all",
+      "sort_order": "desc"
+    },
+    "total": 3,
+    "points": [
+      { "date": "2024-05-16", "x": 1.23, "y": 345678.9 },
+      { "date": "2024-05-15", "x": -0.56, "y": 123456.7 },
+      { "date": "2024-05-14", "x": 0.78, "y": 98765.4 }
+    ],
+    "x_label": "change_percent",
+    "y_label": "all_net_inflow_amount"
+  }
+}
+```
+
+**错误响应示例**:
+
+```json
+{
+  "code": 400,
+  "message": "x_axis 参数不合法，应为 change_percent/turnover_rate/amplitude",
+  "timestamp": "2024-05-20T12:00:00"
+}
+```
+
+```json
+{
+  "code": 404,
+  "message": "行业板块不存在: BK999",
+  "timestamp": "2024-05-20T12:00:00"
+}
+```
+
+**说明**:
+- 仅使用数据库数据，横轴字段来自 IndustrySectorDaily：`change_percent`（涨跌幅）、`turnover_rate`（换手率）、`amplitude`（振幅）。
+- 纵轴净流入来自 IndustrySectorFundFlow：`main_net_inflow_amount`、`super_large_net_inflow_amount`、`large_net_inflow_amount`、`medium_net_inflow_amount`、`small_net_inflow_amount`；当 y_axis=`all` 时，表示“全部净流入”= 超大+大+中+小四类净流入金额之和。
+- 返回统一使用 success_response/error_response 封装；结果按 y 值排序（默认降序）。
+- 日期格式为 YYYY-MM-DD；时区为 Asia/Shanghai；数据精度以数据库为准。

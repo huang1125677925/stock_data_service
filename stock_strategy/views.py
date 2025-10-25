@@ -15,6 +15,7 @@ from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tag
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
+from industry_stock_data.models import IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -510,3 +511,131 @@ def get_industry_actual_output(request):
         })
     except Exception as e:
         return error_response(f'获取行业实际产出规模估算数据失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_fund_flow_correlation(request):
+    """
+    功能：获取指定行业在日期范围内的涨跌幅/换手率/振幅与净流入数据的二维坐标点列表，并按净流入排序
+    参数：
+    - sector_code (str): 行业板块代码，必填
+    - start_date (str): 开始日期，格式YYYY-MM-DD，必填
+    - end_date (str): 结束日期，格式YYYY-MM-DD，必填
+    - x_axis (str): 选择x轴字段，支持 'change_percent'、'turnover_rate'、'amplitude'，默认 'change_percent'
+    - y_axis (str): 选择y轴净流入类型，支持 'main'、'super_large'、'large'、'medium'、'small'、'all'，默认 'main'
+      对应金额字段：main_net_inflow_amount、super_large_net_inflow_amount、large_net_inflow_amount、medium_net_inflow_amount、small_net_inflow_amount；'all'为四类金额之和
+    - sort_order (str): 排序方向，'desc' 或 'asc'，默认 'desc'（按y值排序）
+    返回值：
+    - 成功：返回包含坐标点列表、筛选信息和统计信息的标准响应
+    - 失败：返回错误信息
+    事件：
+    - 参数验证失败时返回400错误
+    - 查询过程中异常记录日志并返回500错误
+    """
+    try:
+        # 获取参数
+        sector_code = request.GET.get('sector_code')
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        x_axis = request.GET.get('x_axis', 'change_percent')
+        y_axis = request.GET.get('y_axis', 'main')
+        sort_order = request.GET.get('sort_order', 'desc').lower()
+
+        # 参数校验
+        if not sector_code:
+            return error_response('缺少参数: sector_code', 400)
+        if not start_date or not end_date:
+            return error_response('缺少参数: start_date 或 end_date', 400)
+
+        x_axis_map = {
+            'change_percent': 'change_percent',
+            'turnover_rate': 'turnover_rate',
+            'amplitude': 'amplitude'
+        }
+        if x_axis not in x_axis_map:
+            return error_response('x_axis 参数不合法，应为 change_percent/turnover_rate/amplitude', 400)
+
+        y_axis_options = {
+            'main': 'main_net_inflow_amount',
+            'super_large': 'super_large_net_inflow_amount',
+            'large': 'large_net_inflow_amount',
+            'medium': 'medium_net_inflow_amount',
+            'small': 'small_net_inflow_amount',
+            'all': 'all'
+        }
+        if y_axis not in y_axis_options:
+            return error_response('y_axis 参数不合法，应为 main/super_large/large/medium/small/all', 400)
+
+        # 行业板块校验
+        try:
+            sector = IndustrySector.objects.get(code=sector_code)
+        except IndustrySector.DoesNotExist:
+            return error_response(f'行业板块不存在: {sector_code}', 404)
+
+        # 查询日频与资金流数据（数据库）
+        daily_qs = IndustrySectorDaily.objects.filter(
+            sector=sector, date__gte=start_date, date__lte=end_date
+        ).values('date', x_axis_map[x_axis])
+
+        fund_flow_qs = IndustrySectorFundFlow.objects.filter(
+            sector=sector, date__gte=start_date, date__lte=end_date
+        ).values('date', 'main_net_inflow_amount', 'super_large_net_inflow_amount', 'large_net_inflow_amount', 'medium_net_inflow_amount', 'small_net_inflow_amount')
+
+        # 构建日期映射
+        daily_map = {item['date']: item[x_axis_map[x_axis]] for item in daily_qs}
+
+        points = []
+        for item in fund_flow_qs:
+            d = item['date']
+            if d in daily_map:
+                x_val = daily_map[d]
+                # 计算净流入Y值
+                if y_axis == 'all':
+                    y_val = (item.get('super_large_net_inflow_amount') or 0) + \
+                            (item.get('large_net_inflow_amount') or 0) + \
+                            (item.get('medium_net_inflow_amount') or 0) + \
+                            (item.get('small_net_inflow_amount') or 0)
+                    y_label = 'all_net_inflow_amount'
+                else:
+                    y_field = y_axis_options[y_axis]
+                    y_val = item.get(y_field) or 0
+                    y_label = y_field
+
+                # 转为可序列化数值
+                x_value = float(x_val) if x_val is not None else None
+                y_value = float(y_val) if y_val is not None else 0.0
+
+                points.append({
+                    'date': d.strftime('%Y-%m-%d'),
+                    'x': x_value,
+                    'y': y_value
+                })
+
+        # 排序（按y值）
+        reverse = sort_order != 'asc'
+        points.sort(key=lambda p: p['y'], reverse=reverse)
+
+        response_data = {
+            'sector_code': sector.code,
+            'sector_name': sector.name,
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'x_axis': x_axis,
+                'y_axis': y_axis,
+                'sort_order': sort_order
+            },
+            'total': len(points),
+            'points': points,
+            'x_label': x_axis,
+            'y_label': 'all_net_inflow_amount' if y_axis == 'all' else y_axis_options[y_axis]
+        }
+
+        return success_response(response_data, '获取行业资金流相关坐标点成功')
+
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f'获取行业资金流相关坐标点失败: {str(e)}')
+        return error_response(f'获取行业资金流相关坐标点失败: {str(e)}', 500)
