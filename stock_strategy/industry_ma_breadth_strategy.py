@@ -50,7 +50,7 @@ class IndustryMABreadthStrategy:
 
     def __init__(self):
         # 缓存超时时间，默认5分钟，可通过settings.STOCK_CACHE_TIMEOUT覆盖
-        self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 300)
+        self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 3600 * 12)
 
     def _get_default_dates(self, start_date: Optional[str], end_date: Optional[str]) -> (str, str):
         """内部工具：提供默认日期范围

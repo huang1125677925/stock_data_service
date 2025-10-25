@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import pywencai
+from django.core.cache import cache
+from django.conf import settings
 from datetime import datetime, timedelta
 from .models import IndexRPS
 from .stock_screening_strategy import StockScreeningStrategy
@@ -80,6 +82,12 @@ class RPSService:
     @staticmethod
     def get_rps_data(periods):
         """获取多个周期的RPS数据"""
+        # 缓存：使用周期列表作为key的一部分
+        cache_key = f"rps_data_{','.join(map(str, periods))}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+        
         dataframes = {}
         errors = []
         
@@ -113,7 +121,10 @@ class RPSService:
         if merged_df is not None:
             merged_df = merged_df.sort_values(by=[f'RPS_{p}' for p in periods if p in dataframes], ascending=False)
         
-        return merged_df, errors
+        result = (merged_df, errors)
+        cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 3600 * 12)
+        cache.set(cache_key, result, cache_timeout)
+        return result
     
     @staticmethod
     def save_rps_data(df, periods):
