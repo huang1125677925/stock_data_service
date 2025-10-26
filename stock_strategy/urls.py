@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from .individual_analysis.views import analyze_candlestick_patterns
 
 urlpatterns = [
     path('index-rps/', views.get_index_rps, name='get_index_rps'),
@@ -12,4 +13,5 @@ urlpatterns = [
     path('industry-scale-breadth/', views.get_industry_scale_breadth, name='get_industry_scale_breadth'),
     path('industry-actual-output/', views.get_industry_actual_output, name='get_industry_actual_output'),
     path('industry-fund-flow-correlation/', views.get_industry_fund_flow_correlation, name='get_industry_fund_flow_correlation'),
+    path('individual-analysis/candlestick/<str:stock_code>/', analyze_candlestick_patterns, name='analyze_candlestick_patterns'),
 ]

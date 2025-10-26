@@ -153,6 +153,26 @@
 }
 ```
 
+**字段含义说明（patterns项）**:
+- date: 交易日期，格式 YYYY-MM-DD。
+- hammer（TA-Lib: CDLHAMMER）: 锤子线，常见于下跌末期的看涨反转形态；信号取值：100=识别到锤子线，0=无信号。
+- morning_star（TA-Lib: CDLMORNINGSTAR）: 早晨之星，三根K线构成的看涨反转形态；信号取值：100=识别到，0=无信号。
+- piercing（TA-Lib: CDLPIERCING）: 刺透形态，两根K线构成的看涨反转；信号取值：100=识别到，0=无信号。
+- kicking（TA-Lib: CDLKICKING）: 踢击形态，由两根跳空实体K线构成；信号取值：100=看涨踢击，-100=看跌踢击，0=无信号。
+- inverted_hammer（TA-Lib: CDLINVERTEDHAMMER）: 倒锤头，常见于下跌末期的看涨反转提示；信号取值：100=识别到，0=无信号。
+- engulfing（TA-Lib: CDLENGULFING）: 吞没形态，两根K线构成；信号取值：100=看涨吞没，-100=看跌吞没，0=无信号。
+- harami（TA-Lib: CDLHARAMI）: 孕线，两根K线构成；信号取值：100=看涨孕线，-100=看跌孕线，0=无信号。
+- hanging_man（TA-Lib: CDLHANGINGMAN）: 上吊线，常见于上涨末期的看跌反转提示；信号取值：-100=识别到，0=无信号。
+- evening_star（TA-Lib: CDLEVENINGSTAR）: 黄昏之星，三根K线构成的看跌反转形态；信号取值：-100=识别到，0=无信号。
+- dark_cloud_cover（TA-Lib: CDLDARKCLOUDCOVER）: 乌云盖顶，两根K线构成的看跌反转；信号取值：-100=识别到，0=无信号。
+- three_black_crows（TA-Lib: CDL3BLACKCROWS）: 三只黑乌鸦，连续三根阴线的看跌延续/反转信号；信号取值：-100=识别到，0=无信号。
+- identical_three_crows（TA-Lib: CDLIDENTICAL3CROWS）: 同样三乌鸦，三根近似实体的阴线；信号取值：-100=识别到，0=无信号。
+- doji（TA-Lib: CDLDOJI）: 十字星，开收盘几乎相等的中性形态；信号取值：100=识别到，0=无信号。
+- long_legged_doji（TA-Lib: CDLLONGLEGGEDDOJI）: 长脚十字星，影线很长、实体极小的十字星；信号取值：100=识别到，0=无信号。
+- gravestone_doji（TA-Lib: CDLGRAVESTONEDOJI）: 墓碑十字星，上影线长、下影线短或无的十字星；信号取值：100=识别到，0=无信号。
+
+> 通用说明：TA-Lib CDL 系列的信号取值统一为 +100（看涨）、-100（看跌）、0（无信号）。部分形态仅有正向或负向信号（如 CDLHAMMER 仅有 +100，CDLDARKCLOUDCOVER 仅有 -100）。
+
 **错误响应示例**:
 
 ```json
@@ -353,3 +373,98 @@
 - 纵轴净流入来自 IndustrySectorFundFlow：`main_net_inflow_amount`、`super_large_net_inflow_amount`、`large_net_inflow_amount`、`medium_net_inflow_amount`、`small_net_inflow_amount`；当 y_axis=`all` 时，表示“全部净流入”= 超大+大+中+小四类净流入金额之和。
 - 返回统一使用 success_response/error_response 封装；结果按 y 值排序（默认降序）。
 - 日期格式为 YYYY-MM-DD；时区为 Asia/Shanghai；数据精度以数据库为准。
+
+---
+
+## 个股K线形态识别API
+
+### 分析指定股票的K线形态（TA-Lib）
+
+**接口地址**: `/django/api/strategy/individual-analysis/candlestick/<stock_code>/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| stock_code | string | 是 | - | 股票代码，路径参数 |
+| start_date | string | 否 | - | 开始日期，格式YYYY-MM-DD |
+| end_date | string | 否 | - | 结束日期，格式YYYY-MM-DD |
+
+**响应示例**:
+
+```json
+{
+  "code": 200,
+  "message": "识别K线形态成功",
+  "timestamp": "2024-10-26T12:00:00",
+  "data": {
+    "stock_code": "600519",
+    "stock_name": "贵州茅台",
+    "total": 3,
+    "patterns": [
+      {
+        "date": "2024-10-23",
+        "hammer": 0,
+        "morning_star": 100,
+        "piercing": 0,
+        "kicking": 0,
+        "inverted_hammer": 0,
+        "engulfing": -100,
+        "harami": 0,
+        "hanging_man": 0,
+        "evening_star": 0,
+        "dark_cloud_cover": 0,
+        "three_black_crows": -100,
+        "identical_three_crows": 0,
+        "doji": 0,
+        "long_legged_doji": 0,
+        "gravestone_doji": 0
+      },
+      {
+        "date": "2024-10-24",
+        "hammer": 100,
+        "morning_star": 0,
+        "piercing": 0,
+        "kicking": 0,
+        "inverted_hammer": 0,
+        "engulfing": 0,
+        "harami": 100,
+        "hanging_man": 0,
+        "evening_star": 0,
+        "dark_cloud_cover": 0,
+        "three_black_crows": 0,
+        "identical_three_crows": 0,
+        "doji": 0,
+        "long_legged_doji": 0,
+        "gravestone_doji": 0
+      }
+    ]
+  }
+}
+```
+
+**错误响应示例**:
+
+```json
+{
+  "code": 404,
+  "message": "股票代码不存在: 000000",
+  "timestamp": "2024-10-26T12:00:00"
+}
+```
+
+```json
+{
+  "code": 404,
+  "message": "无日频数据",
+  "timestamp": "2024-10-26T12:00:00"
+}
+```
+
+**说明**:
+- 识别形态使用 TA-Lib 的 CDL 系列函数，信号值定义：+100 看涨，-100 看跌，0 无信号。
+- 仅从数据库获取数据（IndividualStock、IndividualStockDaily），不进行外部数据拉取。
+- 输入数据按“日期”升序排列并转换为 numpy 数组后传入 TA-Lib。
+- 返回统一使用 success_response/error_response 封装；日期格式为 YYYY-MM-DD。

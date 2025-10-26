@@ -46,3 +46,5 @@ playwright==1.55.0
 django-comment-migrate
 
 backtrader==1.9.78.123
+
+TA-Lib==0.6.8
