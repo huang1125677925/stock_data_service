@@ -90,6 +90,50 @@ def recognize_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     patterns['长腿十字星'] = talib.CDLLONGLEGGEDDOJI(open_prices, high_prices, low_prices, close_prices)
     patterns['墓碑十字星'] = talib.CDLGRAVESTONEDOJI(open_prices, high_prices, low_prices, close_prices)
 
+    # 其他TA-Lib形态（完整补充）
+    patterns['两只乌鸦'] = talib.CDL2CROWS(open_prices, high_prices, low_prices, close_prices)
+    patterns['三内部上涨/下跌'] = talib.CDL3INSIDE(open_prices, high_prices, low_prices, close_prices)
+    patterns['三线打击'] = talib.CDL3LINESTRIKE(open_prices, high_prices, low_prices, close_prices)
+    patterns['三外部上涨/下跌'] = talib.CDL3OUTSIDE(open_prices, high_prices, low_prices, close_prices)
+    patterns['南方三星'] = talib.CDL3STARSINSOUTH(open_prices, high_prices, low_prices, close_prices)
+    patterns['三个白兵'] = talib.CDL3WHITESOLDIERS(open_prices, high_prices, low_prices, close_prices)
+    patterns['弃婴'] = talib.CDLABANDONEDBABY(open_prices, high_prices, low_prices, close_prices)
+    patterns['大敌当前'] = talib.CDLADVANCEBLOCK(open_prices, high_prices, low_prices, close_prices)
+    patterns['捉腰带线'] = talib.CDLBELTHOLD(open_prices, high_prices, low_prices, close_prices)
+    patterns['脱离形态'] = talib.CDLBREAKAWAY(open_prices, high_prices, low_prices, close_prices)
+    patterns['收盘秃线'] = talib.CDLCLOSINGMARUBOZU(open_prices, high_prices, low_prices, close_prices)
+    patterns['藏婴吞没'] = talib.CDLCONCEALBABYSWALL(open_prices, high_prices, low_prices, close_prices)
+    patterns['反击线'] = talib.CDLCOUNTERATTACK(open_prices, high_prices, low_prices, close_prices)
+    patterns['十字星形态'] = talib.CDLDOJISTAR(open_prices, high_prices, low_prices, close_prices)
+    patterns['蜻蜓十字'] = talib.CDLDRAGONFLYDOJI(open_prices, high_prices, low_prices, close_prices)
+    patterns['十字暮星'] = talib.CDLEVENINGDOJISTAR(open_prices, high_prices, low_prices, close_prices)
+    patterns['并列阳线'] = talib.CDLGAPSIDESIDEWHITE(open_prices, high_prices, low_prices, close_prices)
+    patterns['家鸽'] = talib.CDLHOMINGPIGEON(open_prices, high_prices, low_prices, close_prices)
+    patterns['颈内线'] = talib.CDLINNECK(open_prices, high_prices, low_prices, close_prices)
+    patterns['由较长秃线决定的反冲'] = talib.CDLKICKINGBYLENGTH(open_prices, high_prices, low_prices, close_prices)
+    patterns['梯底'] = talib.CDLLADDERBOTTOM(open_prices, high_prices, low_prices, close_prices)
+    patterns['长线'] = talib.CDLLONGLINE(open_prices, high_prices, low_prices, close_prices)
+    patterns['秃线'] = talib.CDLMARUBOZU(open_prices, high_prices, low_prices, close_prices)
+    patterns['相同低价'] = talib.CDLMATCHINGLOW(open_prices, high_prices, low_prices, close_prices)
+    patterns['垫脚石'] = talib.CDLMATHOLD(open_prices, high_prices, low_prices, close_prices)
+    patterns['十字晨星'] = talib.CDLMORNINGDOJISTAR(open_prices, high_prices, low_prices, close_prices)
+    patterns['颈上线'] = talib.CDLONNECK(open_prices, high_prices, low_prices, close_prices)
+    patterns['黄包车夫'] = talib.CDLRICKSHAWMAN(open_prices, high_prices, low_prices, close_prices)
+    patterns['上升/下降三法'] = talib.CDLRISEFALL3METHODS(open_prices, high_prices, low_prices, close_prices)
+    patterns['分离线'] = talib.CDLSEPARATINGLINES(open_prices, high_prices, low_prices, close_prices)
+    patterns['射击之星'] = talib.CDLSHOOTINGSTAR(open_prices, high_prices, low_prices, close_prices)
+    patterns['短线'] = talib.CDLSHORTLINE(open_prices, high_prices, low_prices, close_prices)
+    patterns['纺锤线'] = talib.CDLSPINNINGTOP(open_prices, high_prices, low_prices, close_prices)
+    patterns['停顿形态'] = talib.CDLSTALLEDPATTERN(open_prices, high_prices, low_prices, close_prices)
+    patterns['条形三明治'] = talib.CDLSTICKSANDWICH(open_prices, high_prices, low_prices, close_prices)
+    patterns['探水杆'] = talib.CDLTAKURI(open_prices, high_prices, low_prices, close_prices)
+    patterns['跳空并列线'] = talib.CDLTASUKIGAP(open_prices, high_prices, low_prices, close_prices)
+    patterns['插入形态'] = talib.CDLTHRUSTING(open_prices, high_prices, low_prices, close_prices)
+    patterns['三星'] = talib.CDLTRISTAR(open_prices, high_prices, low_prices, close_prices)
+    patterns['独特三河'] = talib.CDLUNIQUE3RIVER(open_prices, high_prices, low_prices, close_prices)
+    patterns['向上跳空两只乌鸦'] = talib.CDLUPSIDEGAP2CROWS(open_prices, high_prices, low_prices, close_prices)
+    patterns['向上/向下跳空三法'] = talib.CDLXSIDEGAP3METHODS(open_prices, high_prices, low_prices, close_prices)
+
     # 创建结果DataFrame
     result_df = pd.DataFrame(patterns)
     return result_df
@@ -182,6 +226,49 @@ def analyze_candlestick_patterns(request, stock_code: str):
                 'doji': int(row['十字星']),
                 'long_legged_doji': int(row['长腿十字星']),
                 'gravestone_doji': int(row['墓碑十字星']),
+                # 新增返回字段
+                'two_crows': int(row['两只乌鸦']),
+                'three_inside': int(row['三内部上涨/下跌']),
+                'three_line_strike': int(row['三线打击']),
+                'three_outside': int(row['三外部上涨/下跌']),
+                'three_stars_in_south': int(row['南方三星']),
+                'three_white_soldiers': int(row['三个白兵']),
+                'abandoned_baby': int(row['弃婴']),
+                'advance_block': int(row['大敌当前']),
+                'belt_hold': int(row['捉腰带线']),
+                'breakaway': int(row['脱离形态']),
+                'closing_marubozu': int(row['收盘秃线']),
+                'conceal_baby_swallow': int(row['藏婴吞没']),
+                'counterattack': int(row['反击线']),
+                'doji_star': int(row['十字星形态']),
+                'dragonfly_doji': int(row['蜻蜓十字']),
+                'evening_doji_star': int(row['十字暮星']),
+                'gap_side_by_side_white': int(row['并列阳线']),
+                'homing_pigeon': int(row['家鸽']),
+                'in_neck': int(row['颈内线']),
+                'kicking_by_length': int(row['由较长秃线决定的反冲']),
+                'ladder_bottom': int(row['梯底']),
+                'long_line': int(row['长线']),
+                'marubozu': int(row['秃线']),
+                'matching_low': int(row['相同低价']),
+                'mat_hold': int(row['垫脚石']),
+                'morning_doji_star': int(row['十字晨星']),
+                'on_neck': int(row['颈上线']),
+                'rickshaw_man': int(row['黄包车夫']),
+                'rise_fall_three_methods': int(row['上升/下降三法']),
+                'separating_lines': int(row['分离线']),
+                'shooting_star': int(row['射击之星']),
+                'short_line': int(row['短线']),
+                'spinning_top': int(row['纺锤线']),
+                'stalled_pattern': int(row['停顿形态']),
+                'stick_sandwich': int(row['条形三明治']),
+                'takuri': int(row['探水杆']),
+                'tasuki_gap': int(row['跳空并列线']),
+                'thrusting': int(row['插入形态']),
+                'tristar': int(row['三星']),
+                'unique_three_river': int(row['独特三河']),
+                'upside_gap_two_crows': int(row['向上跳空两只乌鸦']),
+                'xside_gap_three_methods': int(row['向上/向下跳空三法']),
             })
 
         data = {
