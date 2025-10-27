@@ -8,6 +8,8 @@ from django.db.models import Count, Q
 
 from common.response import success_response, error_response
 from indival_stock_data.models import IndividualStockDaily
+import pandas as pd
+import akshare as ak
 
 logger = logging.getLogger(__name__)
 
@@ -214,3 +216,110 @@ def get_market_adl(request):
     except Exception as e:
         logger.exception('计算ADL失败')
         return error_response(f'计算ADL失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_market_nh_nl(request):
+    """
+    A股市场创新高/新低家数(NH-NL)接口
+
+    Query Params:
+    - days: 窗口期，默认250
+    - end_date: 截止日期，格式YYYYMMDD，可选
+    - start_date: 起始日期，格式YYYYMMDD，可选
+    - limit: 处理的股票数量上限，默认300
+    """
+    try:
+        days = int(request.GET.get('days', 250))
+        if days < 20:
+            days = 20
+        limit = int(request.GET.get('limit', 300))
+        end_date = request.GET.get('end_date')
+        start_date = request.GET.get('start_date')
+
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+        if not start_date:
+            end_dt = datetime.strptime(end_date, '%Y%m%d').date()
+            start_dt = end_dt - timedelta(days=days * 2)
+            start_date = start_dt.strftime('%Y%m%d')
+
+        # 获取股票代码
+        try:
+            stock_info = ak.stock_info_a_code_name()
+            stock_codes = stock_info['code'].astype(str).tolist()
+        except Exception as e:
+            return error_response(f'获取股票列表失败: {str(e)}', 500)
+
+        if limit and limit > 0:
+            stock_codes = stock_codes[:limit]
+
+        all_nh_counts = pd.Series(dtype=float)
+        all_nl_counts = pd.Series(dtype=float)
+
+        for code in stock_codes:
+            try:
+                df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date, end_date=end_date)
+                if df is None or df.empty:
+                    continue
+                if not {'日期', '最高', '最低'}.issubset(df.columns):
+                    continue
+                df['日期'] = pd.to_datetime(df['日期'])
+                df.set_index('日期', inplace=True)
+                df.sort_index(inplace=True)
+
+                df['N_day_high'] = df['最高'].rolling(window=days, min_periods=days).max()
+                df['N_day_low'] = df['最低'].rolling(window=days, min_periods=days).min()
+
+                df['is_new_high'] = ((df['最高'] >= df['N_day_high']) & df['N_day_high'].notna()).astype(int)
+                df['is_new_low'] = ((df['最低'] <= df['N_day_low']) & df['N_day_low'].notna()).astype(int)
+
+                nh_series = df['is_new_high']
+                nl_series = df['is_new_low']
+
+                all_nh_counts = all_nh_counts.add(nh_series, fill_value=0)
+                all_nl_counts = all_nl_counts.add(nl_series, fill_value=0)
+            except Exception as e:
+                logger.warning(f'处理股票 {code} 时出错: {e}')
+                continue
+
+        if all_nh_counts.empty and all_nl_counts.empty:
+            return error_response('无法计算NH-NL：无有效数据', 404)
+
+        all_nh_counts = all_nh_counts.sort_index()
+        all_nl_counts = all_nl_counts.reindex(all_nh_counts.index, fill_value=0)
+        nh_nl_series = all_nh_counts - all_nl_counts
+
+        output = []
+        for date, nhnl in nh_nl_series.items():
+            output.append({
+                'date': date.date().isoformat(),
+                'new_high_count': int(all_nh_counts.get(date, 0)),
+                'new_low_count': int(all_nl_counts.get(date, 0)),
+                'nh_nl': int(nhnl)
+            })
+
+        if output:
+            start_out = output[0]['date']
+            end_out = output[-1]['date']
+        else:
+            start_out = datetime.strptime(start_date, '%Y%m%d').date().isoformat()
+            end_out = datetime.strptime(end_date, '%Y%m%d').date().isoformat()
+
+        result = {
+            'query': {
+                'days': days,
+                'start_date': start_out,
+                'end_date': end_out,
+                'limit': limit,
+            },
+            'daily': output,
+            'timestamp': datetime.now().isoformat()
+        }
+        return success_response(result)
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.exception('计算NH-NL失败')
+        return error_response(f'计算NH-NL失败: {str(e)}', 500)

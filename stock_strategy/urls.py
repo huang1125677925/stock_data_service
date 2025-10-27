@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
 from .individual_analysis.views import analyze_candlestick_patterns, analyze_overlap_indicators, analyze_momentum_indicators, analyze_volume_indicators, analyze_volatility_indicators, analyze_price_transform_indicators, analyze_cycle_indicators
-from .market_analysis.views import get_market_adr, get_market_adl
+from .market_analysis.views import get_market_adr, get_market_adl, get_market_nh_nl
 
 urlpatterns = [
     path('index-rps/', views.get_index_rps, name='get_index_rps'),
@@ -18,6 +18,7 @@ urlpatterns = [
     # 新增：大盘分析市场宽度相关接口
     path('market-analysis/adr/', get_market_adr, name='get_market_adr'),
     path('market-analysis/adl/', get_market_adl, name='get_market_adl'),
+    path('market-analysis/nh-nl/', get_market_nh_nl, name='get_market_nh_nl'),
     # 新增TA-Lib分类指标API
     path('individual-analysis/overlap/<str:stock_code>/', analyze_overlap_indicators, name='analyze_overlap_indicators'),
     path('individual-analysis/momentum/<str:stock_code>/', analyze_momentum_indicators, name='analyze_momentum_indicators'),
