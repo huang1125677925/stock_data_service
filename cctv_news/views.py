@@ -8,6 +8,10 @@ import logging
 import json
 from .services import news_service
 from common.response import success_response, error_response
+from common.validators import validate_date_range
+from collections import Counter
+from .sensitive_word_filter import SensitiveWordFilter
+import re
 from common.validators import validate_pagination_params
 
 logger = logging.getLogger(__name__)
@@ -177,3 +181,113 @@ def search_news(request):
     except Exception as e:
         logger.error(f"搜索新闻失败: {str(e)}")
         return error_response('搜索新闻失败', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_ai_content_wordcloud(request):
+    """按日期范围统计AI分析内容词频，用于词云展示
+    请求参数：
+    - start_date: 开始日期，格式YYYY-MM-DD
+    - end_date: 结束日期，格式YYYY-MM-DD
+    - top_n: 返回前多少个高频词（可选，默认100，最大500）
+    - min_len: 词最小长度过滤（可选，默认2）
+    返回：统一success_response，包含words列表 [{word, count}] 及查询信息
+    """
+    try:
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        top_n = int(request.GET.get('top_n', 100))
+        min_len = int(request.GET.get('min_len', 2))
+
+        if not start_date or not end_date:
+            return error_response('start_date 和 end_date 为必填参数', 400)
+        if not validate_date_range(start_date, end_date):
+            return error_response('日期范围不合法，格式应为YYYY-MM-DD，且开始日期不晚于结束日期', 400)
+        if top_n <= 0:
+            top_n = 100
+        if top_n > 500:
+            top_n = 500
+        if min_len < 1:
+            min_len = 1
+
+        # 查询指定日期范围内的AI内容
+        start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end = datetime.strptime(end_date, '%Y-%m-%d').date()
+        queryset = CCTVNews.objects.filter(
+            publish_date__gte=start,
+            publish_date__lte=end,
+        ).exclude(ai_content__isnull=True).exclude(ai_content__exact='')
+        sensitive_word_filter = SensitiveWordFilter()
+        contents = [sensitive_word_filter.filter_text(n.ai_content) for n in queryset]
+        if not contents:
+            return success_response({
+                'total': 0,
+                'words': [],
+                'query': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'top_n': top_n,
+                    'min_len': min_len
+                }
+            }, '指定日期范围内无AI内容')
+
+        # 合并文本
+        text = '\n'.join(contents)
+
+        # 尝试使用jieba分词，不存在时回退到简单中文字符分块
+        try:
+            import jieba
+            words = jieba.lcut(text)
+        except Exception:
+            # 回退：将连续中文字符作为词
+            words = re.findall(r'[\u4e00-\u9fff]{%d,}' % max(min_len, 2), text)
+
+        # 基础停用词与清洗（可按需扩展）
+        stop_words = set(['的', '了', '和', '是', '在', '就', '都', '而', '及', '与', '著', '或', '一个', '我们', '你们', '他们', '因为', '所以', '通过', '以及'])
+        # 保留中文、英文、数字组合的简单词，去除纯标点
+        cleaned = []
+        for w in words:
+            w = w.strip()
+            # 移除非中文、字母、数字的字符
+            w = re.sub(r'[^\w\u4e00-\u9fff]+', '', w)
+            if not w:
+                continue
+            if len(w) < min_len:
+                continue
+            if w in stop_words:
+                continue
+            cleaned.append(w)
+
+        if not cleaned:
+            return success_response({
+                'total': 0,
+                'words': [],
+                'query': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'top_n': top_n,
+                    'min_len': min_len
+                }
+            }, '经过过滤后无有效词')
+
+        counts = Counter(cleaned)
+        top_items = counts.most_common(top_n)
+
+        words_data = [{'word': w, 'count': int(c)} for w, c in top_items]
+
+        return success_response({
+            'total': len(counts),
+            'words': words_data,
+            'query': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'top_n': top_n,
+                'min_len': min_len
+            }
+        }, '获取AI内容词频成功')
+
+    except ValueError:
+        return error_response('参数格式错误：top_n/min_len需为整数', 400)
+    except Exception as e:
+        logger.error(f"获取AI内容词频失败: {str(e)}")
+        return error_response('获取AI内容词频失败', 500)
