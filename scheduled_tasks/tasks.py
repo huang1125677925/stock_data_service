@@ -3,10 +3,17 @@
 预定义的定时任务函数
 可以在这里添加通用的定时任务
 """
+import sys
+import os
+from pathlib import Path
+from tracemalloc import start
+import django
+# 设置Django环境
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
+django.setup()
 
 import logging
-import os
-import sys
 from datetime import datetime
 from django.utils import timezone
 
@@ -111,29 +118,7 @@ def analyze_cctv_news():
     except Exception as e:
         logger.error(f"CCTV新闻联播分析任务执行失败: {str(e)}")
         return {"status": "error", "message": str(e)}
-    issues = []
-    for task in active_tasks:
-        # 检查是否有上次运行时间
-        if not task.last_run:
-            issues.append({
-                "task_id": task.id,
-                "task_name": task.name,
-                "issue": "从未运行"
-            })
-            continue
-        
-        # 检查上次运行是否成功
-        if task.last_result and "错误" in task.last_result:
-            issues.append({
-                "task_id": task.id,
-                "task_name": task.name,
-                "issue": "上次运行失败",
-                "last_result": task.last_result
-            })
-    
-    if issues:
-        logger.warning(f"发现 {len(issues)} 个任务存在问题")
-    else:
-        logger.info("所有任务状态正常")
-    
-    return {"issues": issues}
+
+
+if __name__ == "__main__":
+    analyze_cctv_news()

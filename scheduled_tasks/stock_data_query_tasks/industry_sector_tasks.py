@@ -609,4 +609,7 @@ def update_industry_sector_fund_flow_data():
 if __name__ == '__main__':
     # fetch_industry_sector_fund_flow_data()
     # update_industry_sector_fund_flow_data()
-    update_industry_sector_daily_data()
+    # update_industry_sector_daily_data()
+    industry_sectors = IndustrySector.objects.all()
+    for sector in industry_sectors:
+        print(sector.name)
