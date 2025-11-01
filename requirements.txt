@@ -49,3 +49,6 @@ backtrader==1.9.78.123
 
 TA-Lib==0.6.8
 jieba==0.42.1
+
+# MCP server (FastMCP) for SSE transport and modular tools
+mcp[cli]

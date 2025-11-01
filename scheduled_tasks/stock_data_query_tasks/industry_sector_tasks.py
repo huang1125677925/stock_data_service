@@ -609,7 +609,10 @@ def update_industry_sector_fund_flow_data():
 if __name__ == '__main__':
     # fetch_industry_sector_fund_flow_data()
     # update_industry_sector_fund_flow_data()
-    # update_industry_sector_daily_data()
-    industry_sectors = IndustrySector.objects.all()
-    for sector in industry_sectors:
-        print(sector.name)
+    update_industry_sector_fund_flow_data()
+
+#  ('25 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
+#     ('45 8 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.mark_stock_industry', f'>> {BASE_DIR}/logs/mark_stock_industry.log 2>&1'),  # 每周一至周五16:00-22:00更新行业板块实时数据
+#     ('1 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
+#     ('30 19,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_fund_flow_data', f'>> {BASE_DIR}/logs/update_industry_sector_fund_flow_data.log 2>&1'),  # 每天16-22点每小时更新行业板块资金流数据
+

@@ -475,3 +475,6 @@ if __name__ == '__main__':
     # fetch_all_index_high_low_statistics()
     # fetch_all_index_high_low_statistics()
     fetch_stock_market_fund_flow()
+
+    # ('45 18,20 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_stock_market_fund_flow', f'>> {BASE_DIR}/logs/fetch_stock_market_fund_flow.log 2>&1'),  # 每天16-22点每小时更新大盘资金流数据
+    # ('15 18,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_all_index_high_low_statistics', f'>> {BASE_DIR}/logs/fetch_all_index_high_low_statistics.log 2>&1'),  # 每天16-22点每小时更新大盘日频数据

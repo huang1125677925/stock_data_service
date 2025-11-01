@@ -1315,7 +1315,13 @@ if __name__ == '__main__':
 
     # fetch_stock_daily_data('sh.000001', '2024-09-30', '2025-10-18')
     # update_individual_stock_daily_data()
-    update_index_stock_daily_data()
+    # update_index_stock_daily_data()
     # update_individual_stock_daily_data()
-    # fetch_individual_stocks()
+    fetch_individual_stocks()
+
+
+# 个股数据 
+# ('22 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
+# ('40 17,19,22 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
+# ('50 17,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
     

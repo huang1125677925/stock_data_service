@@ -465,3 +465,48 @@ class StockMarketFundFlowView(APIView):
         except Exception as e:
             logger.error(f"查询大盘资金流数据失败: {str(e)}")
             return error_response(f'查询大盘资金流数据失败: {str(e)}', 500)
+
+
+class IndexInfoView(APIView):
+    """
+    指数信息查询接口（仅从数据库读取）
+
+    功能：提供指数基础信息的查询（code/name），支持按代码精确匹配或关键词搜索。
+    参数：
+        - code: 指数代码（精确匹配）
+        - search: 关键词，模糊匹配代码或名称
+        - limit: 返回数量上限，默认100，最大1000
+    返回：
+        - list: 指数记录列表（id, code, name）
+        - count: 返回记录数量
+    """
+
+    def get(self, request):
+        try:
+            code = request.query_params.get('code', '').strip()
+            search = request.query_params.get('search', '').strip()
+            limit = int(request.query_params.get('limit', 100))
+            limit = max(1, min(limit, 1000))
+
+            qs = IndexBasicData.objects.all()
+            if code:
+                qs = qs.filter(code=code)
+            elif search:
+                qs = qs.filter(models.Q(code__icontains=search) | models.Q(name__icontains=search))
+
+            records = []
+            for item in qs[:limit]:
+                records.append({
+                    'id': item.id,
+                    'code': item.code,
+                    'name': item.name,
+                })
+
+            return success_response({'count': len(records), 'list': records}, '查询指数信息成功')
+
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询指数信息失败: {str(e)}")
+            return error_response(f'查询指数信息失败: {str(e)}', 500)

@@ -17,6 +17,11 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from datetime import datetime
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularSwaggerView,
+    SpectacularRedocView,
+)
 
 def health_check(request):
     """健康检查接口"""
@@ -49,6 +54,10 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', index, name='index'),
     path('health/', health_check, name='health_check'),
+    # OpenAPI schema & 文档
+    path('django/api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('django/api/swagger/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('django/api/docs/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     path('django/api/stock/', include('industry_stock_data.urls')),
     path('django/api/individual_stock/', include('indival_stock_data.urls')),
     path('django/api/news/', include('cctv_news.urls')),

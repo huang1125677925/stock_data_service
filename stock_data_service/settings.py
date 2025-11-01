@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
+    'drf_spectacular',
     'django_crontab',
     'industry_stock_data',
     'cctv_news',
@@ -150,6 +151,16 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     'DATETIME_FORMAT': '%Y-%m-%dT%H:%M:%S',
     'DATE_FORMAT': '%Y-%m-%d',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# drf-spectacular 配置
+SPECTACULAR_SETTINGS = {
+    'TITLE': '股票数据服务 OpenAPI 文档',
+    'DESCRIPTION': '统一响应格式的 Django REST API 文档，包含 scheduled_tasks 下的 Tushare 直通代理接口',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
 }
 
 # Redis配置（预留）
