@@ -6,7 +6,7 @@ scheduled_tasks URL 配置
 """
 from django.urls import path
 
-from .views import IndexBasicProxyView, IndexDailyProxyView, IndexWeightProxyView
+from .views import IndexBasicProxyView, IndexDailyProxyView, IndexWeightProxyView, GitInfoView
 
 app_name = 'scheduled_tasks'
 
@@ -14,4 +14,5 @@ urlpatterns = [
     path('index-basic/', IndexBasicProxyView.as_view(), name='index-basic-proxy'),
     path('index-daily/', IndexDailyProxyView.as_view(), name='index-daily-proxy'),
     path('index-weight/', IndexWeightProxyView.as_view(), name='index-weight-proxy'),
+    path('git-info/', GitInfoView.as_view(), name='git-info'),
 ]

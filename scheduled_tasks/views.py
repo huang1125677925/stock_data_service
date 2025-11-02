@@ -6,6 +6,7 @@ from .serializers import (
     SuccessResponseIndexBasicSerializer,
     SuccessResponseIndexDailySerializer,
     SuccessResponseIndexWeightSerializer,
+    SuccessResponseGitInfoSerializer,
     ErrorResponseSerializer,
 )
 
@@ -265,3 +266,62 @@ class IndexWeightProxyView(APIView):
 
         except Exception as e:
             return error_response(f"查询指数成分和权重失败: {str(e)}", 500)
+
+
+class GitInfoView(APIView):
+    """
+    Git 仓库提交信息接口
+
+    说明：封装 scheduled_tasks/other_tools/git_info_tool.py 中的功能为 HTTP 接口；
+    返回统一的 success_response/error_response 外层结构。
+
+    支持参数：
+    - repo_path (str, 可选): 仓库本地路径，默认使用预设路径。
+    - limit (int, 可选): 限制返回的提交数量（从最近开始）。
+
+    返回值（统一外层结构）：
+    - code (int), message (str)
+    - data (object):
+      - interface (str): 固定为 "git_info"
+      - count (int): 提交记录数
+      - records (list[object]): 每条记录包含 commit_id、authored_datetime、author_name、message
+    错误返回：error_response。
+    """
+
+    @extend_schema(
+        summary="Git 仓库提交信息",
+        description="返回指定仓库的提交信息（最近提交在前）",
+        tags=["Tools"],
+        parameters=[
+            OpenApiParameter(name="repo_path", description="仓库本地路径", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="limit", description="限制返回的提交数量", required=False, type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseGitInfoSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            from .other_tools.git_info_tool import get_git_commits_info
+
+            repo_path = request.query_params.get("repo_path")
+            limit_param = request.query_params.get("limit")
+            limit = None
+            if limit_param is not None:
+                try:
+                    limit = int(limit_param)
+                except ValueError:
+                    return error_response("参数 limit 需为整数", 400)
+
+            records = get_git_commits_info(repo_path=repo_path, limit=limit)
+            data = {
+                "interface": "git_info",
+                "count": len(records),
+                "records": records,
+            }
+            return success_response(data, "查询 Git 提交信息成功")
+
+        except Exception as e:
+            return error_response(f"查询 Git 提交信息失败: {str(e)}", 500)

@@ -83,3 +83,23 @@ class ErrorResponseSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     data = serializers.JSONField(allow_null=True, required=False)
     error = serializers.CharField(required=False)
+
+
+class GitCommitRecordSerializer(serializers.Serializer):
+    # commit_id = serializers.CharField(required=False)
+    authored_datetime = serializers.CharField(required=False)
+    # author_name = serializers.CharField(required=False)
+    message = serializers.CharField(required=False)
+
+
+class GitInfoDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = GitCommitRecordSerializer(many=True)
+
+
+class SuccessResponseGitInfoSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = GitInfoDataSerializer()

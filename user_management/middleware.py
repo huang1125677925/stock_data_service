@@ -34,6 +34,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/individual_stock/stock-tags/',  # 股票标记API
             # '/django/api/stock/industry/performance-reports/',
             # '/django/api/stock/industry/heatmap-data/',
+            '/django/api/tasks/',
             '/django/api/docs/',  # 文档接口
             '/django/api/swagger/',  # Swagger 接口
             '/django/api/schema/',  # OpenAPI Schema 接口（供 Swagger/Redoc 使用）
