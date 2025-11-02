@@ -32,8 +32,9 @@ from django.core.cache import cache
 from django.conf import settings
 
 from industry_stock_data.models import IndustrySector
-from indival_stock_data.models import IndividualStock, IndividualStockDaily
+from indival_stock_data.models import IndividualStock
 from industry_stock_data.services import industry_sector_service
+from common.tushare_proxy import call_tushare
 
 logger = logging.getLogger(__name__)
 
@@ -153,24 +154,42 @@ class IndustryMABreadthStrategy:
             stocks_df['sector_name'] = stocks_df['industry']
             stock_map = stocks_df.set_index('id')[['sector_code', 'sector_name']].to_dict('index')
 
-            # 取个股日频数据（只从数据库）
-            daily_qs = (
-                IndividualStockDaily.objects
-                .filter(stock_id__in=stocks_df['id'].tolist(), date__gte=extended_start_dt, date__lte=end_dt)
-                .values('stock_id', 'date', 'close_price')
-            )
-            if not daily_qs:
-                logger.warning("未获取到个股日频数据")
+            # 取个股日频数据（改为从 Tushare 获取：pro.daily(trade_date='YYYYMMDD')，按日期一次性获取当日全部个股）
+            # 为确保MA计算的有效性，按 [extended_start_dt, end_dt] 日期范围逐日请求
+            tus_records: List[Dict] = []
+            cur_dt = extended_start_dt
+            while cur_dt <= end_dt:
+                trade_date = cur_dt.strftime('%Y%m%d')
+                resp = call_tushare('daily', params={'trade_date': trade_date})
+                if isinstance(resp, dict) and resp.get('code') == 200:
+                    data = resp.get('data', {})
+                    recs = data.get('records', []) if isinstance(data, dict) else []
+                    if recs:
+                        tus_records.extend(recs)
+                else:
+                    logger.warning(f"Tushare daily 接口调用失败或为空: date={trade_date}, message={resp.get('message') if isinstance(resp, dict) else resp}")
+                cur_dt += timedelta(days=1)
+
+            if not tus_records:
+                logger.warning("未从 Tushare 获取到任何个股日线数据")
                 return None
 
-            daily_df = pd.DataFrame(list(daily_qs))
-            # 数据预处理
-            daily_df['date'] = pd.to_datetime(daily_df['date'])
-            daily_df['close_price'] = daily_df['close_price'].astype(float)
+            # 构造DataFrame并与行业成分股进行映射（注意：数据库中的code不带 .SZ/.SH 后缀）
+            ts_df = pd.DataFrame(tus_records)
+            # 仅保留必要字段并转换
+            # Tushare 字段：ts_code, trade_date, close
+            if 'ts_code' not in ts_df.columns or 'trade_date' not in ts_df.columns or 'close' not in ts_df.columns:
+                logger.warning("Tushare返回数据缺少必要字段(ts_code, trade_date, close)")
+                return None
 
-            # 补充行业信息到日频数据
-            map_df = stocks_df[['id', 'sector_code', 'sector_name']].rename(columns={'id': 'stock_id'})
-            daily_df = daily_df.merge(map_df, on='stock_id', how='left')
+            ts_df['code'] = ts_df['ts_code'].astype(str).str.split('.').str[0]
+            ts_df['date'] = pd.to_datetime(ts_df['trade_date'])
+            ts_df['close_price'] = pd.to_numeric(ts_df['close'], errors='coerce')
+
+            # 仅保留目标行业成分股，并补充行业映射与stock_id
+            map_cols = stocks_df[['id', 'code', 'sector_code', 'sector_name']].rename(columns={'id': 'stock_id'})
+            daily_df = ts_df.merge(map_cols, on='code', how='inner')
+            daily_df = daily_df[['stock_id', 'date', 'close_price', 'sector_code', 'sector_name']]
 
             # 分股票计算滚动MA
             daily_df = daily_df.sort_values(['stock_id', 'date'])
