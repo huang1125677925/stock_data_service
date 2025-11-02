@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime
 import hashlib
 from .services import rps_service, StockScreeningService
+from scheduled_tasks.stock_data_query_tasks.dc_board_rps import compute_board_rps
 from .models import IndexRPS
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response
@@ -21,11 +22,13 @@ from industry_stock_data.models import IndustrySector, IndustrySectorDaily, Indu
 @require_http_methods(["GET"])
 def get_index_rps(request):
     """
-    获取指数RPS强度排名数据
+    获取指数/板块RPS强度排名数据（基于 Tushare 东方财富板块接口）
     
     Query Parameters:
         periods (str): 时间周期，多个周期用逗号分隔，如 "5,20,60"
-        save (bool): 是否保存到数据库，默认False
+        idx_type (str): 板块类型：概念板块、行业板块、地域板块（默认：概念板块）
+        trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最新交易日
+        token (str): Tushare Token（覆盖环境变量）
     
     Returns:
         JSON响应
@@ -33,7 +36,9 @@ def get_index_rps(request):
     try:
         # 获取查询参数
         periods_str = request.GET.get('periods', '5,20,60')
-        save = request.GET.get('save', 'false').lower() == 'true'
+        idx_type = request.GET.get('idx_type', '概念板块')
+        trade_date = request.GET.get('trade_date')
+        token = request.GET.get('token')
         
         # 解析周期参数
         try:
@@ -43,16 +48,11 @@ def get_index_rps(request):
         except ValueError:
             return error_response('周期参数格式错误，应为逗号分隔的整数', 400)
         
-        # 获取RPS数据
-        df, errors = rps_service.get_rps_data(periods)
+        # 使用 scheduled_tasks 的 Tushare 服务实时获取数据并计算RPS
+        df, errors = compute_board_rps(periods=periods, idx_type=idx_type, trade_date=trade_date, token=token)
         
         if df is None:
             return error_response(f'获取RPS数据失败: {", ".join(errors)}', 500)
-        
-        # 保存数据到数据库
-        saved_count = 0
-        if save:
-            saved_count = rps_service.save_rps_data(df, periods)
         
         # 转换DataFrame为JSON可序列化格式
         result = df.fillna('').to_dict('records')
@@ -61,7 +61,8 @@ def get_index_rps(request):
             'total': len(result),
             'data': result,
             'periods': periods,
-            'saved_count': saved_count,
+            'idx_type': idx_type,
+            'trade_date': trade_date,
             'errors': errors,
             'query_time': datetime.now().isoformat()
         })
