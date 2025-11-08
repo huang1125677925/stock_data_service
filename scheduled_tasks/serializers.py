@@ -103,3 +103,70 @@ class SuccessResponseGitInfoSerializer(serializers.Serializer):
     message = serializers.CharField()
     timestamp = serializers.CharField()
     data = GitInfoDataSerializer()
+
+
+# --- DC 概念/行业/地域板块日频行情（dc_daily） ---
+class DcDailyRecordSerializer(serializers.Serializer):
+    """
+    dc_daily 记录字段序列化器
+
+    字段说明参考 Tushare 文档：东财概念板块、行业指数板块、地域板块日频行情。
+    """
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    close = serializers.FloatField(required=False)
+    open = serializers.FloatField(required=False)
+    high = serializers.FloatField(required=False)
+    low = serializers.FloatField(required=False)
+    change = serializers.FloatField(required=False)
+    pct_change = serializers.FloatField(required=False)
+    vol = serializers.FloatField(required=False)
+    amount = serializers.FloatField(required=False)
+    swing = serializers.FloatField(required=False)
+    turnover_rate = serializers.FloatField(required=False)
+
+
+class DcDailyDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = DcDailyRecordSerializer(many=True)
+
+
+class SuccessResponseDcDailySerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = DcDailyDataSerializer()
+
+
+# --- 东方财富概念板块（dc_index） ---
+class DcIndexRecordSerializer(serializers.Serializer):
+    """
+    dc_index 记录字段序列化器
+
+    字段说明参考 Tushare 文档：东方财富概念板块。
+    """
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    leading = serializers.CharField(required=False)
+    leading_code = serializers.CharField(required=False)
+    pct_change = serializers.FloatField(required=False)
+    leading_pct = serializers.FloatField(required=False)
+    total_mv = serializers.FloatField(required=False)
+    turnover_rate = serializers.FloatField(required=False)
+    up_num = serializers.IntegerField(required=False)
+    down_num = serializers.IntegerField(required=False)
+
+
+class DcIndexDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = DcIndexRecordSerializer(many=True)
+
+
+class SuccessResponseDcIndexSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = DcIndexDataSerializer()
