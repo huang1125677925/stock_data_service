@@ -17,9 +17,11 @@ from common.response import success_response, error_response
 from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement, StockTag
 from .serializers import (
     IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, 
-    IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer
+    IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer,
+    SuccessResponseConceptListSerializer, ErrorResponseSerializer
 )
 from django.db.models import Q
+from drf_spectacular.utils import extend_schema, OpenApiTypes
 import json
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ class StockListView(APIView):
           - page_size(int, 可选): 每页数量，默认20
           - keyword(str, 可选): 关键词，按股票名称或代码模糊匹配
           - industry(str, 可选): 行业名称，按行业精确匹配
+          - dc_concept(str, 可选): 东财概念，按概念模糊匹配
           - stock_names(list[str] 或 逗号分隔字符串, 可选): 股票名列表，按名称精确筛选，支持JSON数组或逗号分隔
         返回值：
         - JsonResponse: 调用success_response返回数据；失败时调用error_response返回错误信息。
@@ -50,6 +53,7 @@ class StockListView(APIView):
             page_size = int(request.query_params.get('page_size', 20))
             keyword = request.query_params.get('keyword', None)
             industry = request.query_params.get('industry', None)
+            dc_concept = request.query_params.get('dc_concept', None)
             stock_names_param = request.query_params.get('stock_names', None)
 
             # 解析股票名列表参数，支持JSON数组或逗号分隔的字符串
@@ -75,6 +79,8 @@ class StockListView(APIView):
                 queryset = queryset.filter(Q(name__icontains=keyword) | Q(code__icontains=keyword))
             if industry:
                 queryset = queryset.filter(industry__icontains=industry)
+            if dc_concept:
+                queryset = queryset.filter(dc_concept__icontains=dc_concept)
             if names_list:
                 queryset = queryset.filter(name__in=names_list)
 
@@ -108,6 +114,53 @@ class StockListView(APIView):
         except Exception as e:
             logger.error(f"获取股票列表失败: {str(e)}")
             return error_response(f'获取股票列表失败: {str(e)}', 500)
+
+
+class DcConceptListView(APIView):
+    """
+    东财概念列表API视图
+    功能：根据个股数据中的 dc_concept 字段提取概念列表，进行去重与排序后返回。
+    参数：无（无需任何查询参数）
+    返回值：统一响应结构 success_response
+      - code (int): 状态码，成功为 200
+      - message (str): 提示信息
+      - timestamp (str): ISO 时间戳
+      - data (list[str]): 概念名称列表
+    事件：无
+    """
+
+    @extend_schema(
+        summary="东财概念列表",
+        description="从个股数据的 dc_concept 字段提取概念，去重并排序后返回。无需任何参数，统一响应结构。",
+        tags=["individual_stock"],
+        responses={
+            200: SuccessResponseConceptListSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            # 提取所有非空的概念字符串
+            concept_strings = (
+                IndividualStock.objects
+                .exclude(dc_concept__isnull=True)
+                .exclude(dc_concept__exact='')
+                .values_list('dc_concept', flat=True)
+            )
+
+            # 分割、去重并排序
+            concepts = set()
+            for cs in concept_strings:
+                parts = [p.strip() for p in str(cs).split(',') if p and p.strip()]
+                concepts.update(parts)
+
+            concepts_list = sorted(concepts)
+
+            # 直接返回概念列表数据（无需任何查询参数）
+            return success_response(concepts_list)
+        except Exception as e:
+            logger.error(f"获取东财概念列表失败: {str(e)}")
+            return error_response(f'获取东财概念列表失败: {str(e)}', 500)
 
 
 class StockRealtimeView(APIView):

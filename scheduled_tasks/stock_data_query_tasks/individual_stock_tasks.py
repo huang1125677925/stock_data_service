@@ -12,6 +12,7 @@ import django
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
 django.setup()
+import tushare as ts
 
 import logging
 import baostock as bs
@@ -1297,6 +1298,34 @@ def update_index_stock_daily_data():
         logger.error(f"个股日频数据更新任务执行失败: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+def write_concept_to_db():
+    """
+    将概念数据写入数据库
+    """
+    ts.set_token('')
+    pro = ts.pro_api()
+    df = pro.dc_index(trade_date='20251106', fields='ts_code,name,turnover_rate,up_num,down_num')
+    
+    for index, row in df.iterrows():
+        print(row['name'])
+        df2 = pro.dc_member(trade_date='20251106', ts_code=row['ts_code'])
+        for index2, row2 in df2.iterrows():
+            indival_stock = IndividualStock.objects.filter(code=row2['con_code'][:-3]).first()
+            if indival_stock:
+                if indival_stock.dc_concept and row['name'] not in indival_stock.dc_concept:
+                    indival_stock.dc_concept = row['name'] + ',' + indival_stock.dc_concept
+                    indival_stock.save()
+                else:
+                    indival_stock.dc_concept = row['name']
+                    indival_stock.save()
+    
+
+    
+    # for concept in concepts:
+    #     IndividualStock.objects.filter(stock_code=concept['stock_code']).update(
+    #         dc_concept=concept['dc_concept']
+    #     )
+
 
 if __name__ == '__main__':
     # update_individual_stock_daily_data()
@@ -1317,7 +1346,8 @@ if __name__ == '__main__':
     # update_individual_stock_daily_data()
     # update_index_stock_daily_data()
     # update_individual_stock_daily_data()
-    fetch_individual_stocks()
+    # fetch_individual_stocks()
+    write_concept_to_db()
 
 
 # 个股数据 

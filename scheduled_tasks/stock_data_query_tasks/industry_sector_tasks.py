@@ -28,7 +28,10 @@ from industry_stock_data.models import IndustrySector, IndustrySectorFundFlow
 import akshare as ak
 import pandas as pd
 from industry_stock_data.models import IndustrySectorDaily
-from scheduled_tasks.stock_data_query_tasks.tushare_data import fetch_dc_industry_moneyflow
+from scheduled_tasks.stock_data_query_tasks.tushare_data import (
+    fetch_dc_industry_moneyflow,
+    fetch_dc_daily,
+)
 
 
 from django.utils import timezone
@@ -191,77 +194,87 @@ def update_industry_sector_daily_data():
                     end_date=end_date
                 )
                 
-                # 从akshare获取最近15天的数据
-                logger.info(f"从akshare获取行业板块{sector.code}最近15天日频数据")
+                # 从 Tushare 获取最近15天的数据（dc_daily）
+                logger.info(f"从 Tushare 获取行业板块{sector.code}最近15天日频数据")
                 try:
-                    df = ak.stock_board_industry_hist_em(
-                        symbol=sector.code,
+                    # 兼容板块代码，若无 .DC 后缀则补全
+                    ts_code = str(sector.code).strip()
+                    if not ts_code.endswith('.DC'):
+                        ts_code = f"{ts_code}.DC"
+
+                    records = fetch_dc_daily(
+                        ts_code=ts_code,
                         start_date=start_date,
                         end_date=end_date,
-                        period="日k",
-                        adjust=""
+                        fields=None,
                     )
-                    
-                    if df is None or df.empty:
+
+                    if not records:
                         logger.warning(f"获取行业板块{sector.code}日频数据为空")
                         continue
-                    
+
                     # 获取数据库中已存在的日期
                     existing_dates = set()
                     if existing_data:
                         existing_dates = {datetime.strptime(item['date'], '%Y-%m-%d').date() for item in existing_data}
-                    
+
                     # 准备批量创建的对象列表
                     objects_to_create = []
                     new_dates = []
-                    
+
                     # 转换数据格式并检查哪些日期的数据缺失
-                    for _, row in df.iterrows():
-                        date_str = str(row['日期'])
-                        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
-                        
+                    for row in records:
+                        date_str = str(row.get('trade_date') or '')
+                        try:
+                            date_obj = datetime.strptime(date_str, '%Y%m%d').date()
+                        except Exception:
+                            # 跳过无法解析的日期
+                            continue
+
                         # 检查数据是否已存在
                         if date_obj in existing_dates:
                             continue
-                        
-                        # 创建日频数据对象
+
+                        # 创建日频数据对象（字段映射：dc_daily）
                         daily_data_obj = IndustrySectorDaily(
                             sector=sector,
                             date=date_obj,
-                            open_price=float(row['开盘']),
-                            close_price=float(row['收盘']),
-                            high_price=float(row['最高']),
-                            low_price=float(row['最低']),
-                            change_percent=float(row['涨跌幅']),
-                            change_amount=float(row['涨跌额']),
-                            total_volume=int(row['成交量']),
-                            total_amount=float(row['成交额']),
-                            amplitude=float(row['振幅']) if '振幅' in row and pd.notna(row['振幅']) else None,
-                            turnover_rate=float(row['换手率']) if '换手率' in row and pd.notna(row['换手率']) else None,
+                            open_price=float(row.get('open') or 0.0),
+                            close_price=float(row.get('close') or 0.0),
+                            high_price=float(row.get('high') or 0.0),
+                            low_price=float(row.get('low') or 0.0),
+                            change_percent=float(row.get('pct_change') or 0.0),
+                            change_amount=float(row.get('change') or 0.0),
+                            total_volume=int(float(row.get('vol') or 0.0)),
+                            total_amount=float(row.get('amount') or 0.0),
+                            amplitude=float(row.get('swing') or 0.0) if row.get('swing') is not None else None,
+                            turnover_rate=float(row.get('turnover_rate') or 0.0) if row.get('turnover_rate') is not None else None,
                             # 以下字段需要从其他接口获取或计算
                             rising_stocks=0,
                             falling_stocks=0,
                             flat_stocks=0,
-                            total_market_cap=None
+                            total_market_cap=None,
                         )
-                        
+
                         # 添加到批量创建列表
                         objects_to_create.append(daily_data_obj)
                         new_dates.append(date_obj.strftime('%Y-%m-%d'))
-                    
+
                     # 批量创建数据
                     if objects_to_create:
                         IndustrySectorDaily.objects.bulk_create(objects_to_create)
-                        logger.info(f"批量创建行业板块{sector.code}的{len(objects_to_create)}条日频数据: {', '.join(new_dates)}")
+                        logger.info(
+                            f"批量创建行业板块{sector.code}的{len(objects_to_create)}条日频数据: {', '.join(new_dates)}"
+                        )
                         success_count += 1
                     else:
                         logger.info(f"行业板块{sector.code}的数据已是最新")
                         success_count += 1
-                        
+
                 except Exception as e:
-                     logger.error(f"从akshare获取行业板块{sector.code}日频数据失败: {str(e)}")
-                     error_count += 1
-                     continue
+                    logger.error(f"从 Tushare 获取行业板块{sector.code}日频数据失败: {str(e)}")
+                    error_count += 1
+                    continue
                  
                 # 检查是否成功获取或更新了数据
                 if existing_data or objects_to_create:
@@ -594,7 +607,7 @@ def update_industry_sector_fund_flow_data():
 if __name__ == '__main__':
     # fetch_industry_sector_fund_flow_data()
     # update_industry_sector_fund_flow_data()
-    update_industry_sector_fund_flow_data()
+    update_industry_sector_daily_data()
 
 #  ('25 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
 #     ('45 8 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.mark_stock_industry', f'>> {BASE_DIR}/logs/mark_stock_industry.log 2>&1'),  # 每周一至周五16:00-22:00更新行业板块实时数据

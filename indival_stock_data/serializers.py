@@ -425,3 +425,41 @@ class StockTagQuerySerializer(serializers.Serializer):
             raise serializers.ValidationError("开始日期不能大于结束日期")
         
         return data
+
+
+class SuccessResponseConceptListSerializer(serializers.Serializer):
+    """
+    东财概念列表统一响应序列化器
+    功能：描述接口返回的统一结构，其中 data 为概念字符串数组。
+    参数：无
+    返回值：
+    - code (int): 状态码
+    - message (str): 信息
+    - timestamp (str): 时间戳（ISO 格式）
+    - data (list[str]): 概念名称列表
+    事件：无
+    """
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = serializers.ListField(child=serializers.CharField())
+
+
+class ErrorResponseSerializer(serializers.Serializer):
+    """
+    错误响应序列化器
+    功能：描述错误时的统一返回结构。
+    参数：无
+    返回值：
+    - code (int): 错误码
+    - message (str): 错误信息
+    - timestamp (str): 时间戳
+    - data (any|null): 为空或附加数据
+    - error (str, 可选): 具体错误描述
+    事件：无
+    """
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = serializers.JSONField(allow_null=True, required=False)
+    error = serializers.CharField(required=False)

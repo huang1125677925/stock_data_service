@@ -7,6 +7,7 @@ class IndividualStock(models.Model):
     code = models.CharField(max_length=10, unique=True, verbose_name='股票代码')
     name = models.CharField(max_length=50, verbose_name='股票名称')
     industry = models.CharField(max_length=50, null=True, blank=True, verbose_name='所属行业')
+    dc_concept = models.CharField(max_length=255, null=True, blank=True, verbose_name='东财概念')
     
     # 指数类型选择
     INDEX_TYPE_CHOICES = [

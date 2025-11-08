@@ -11,6 +11,8 @@ app_name = 'individual_stock'
 urlpatterns = [
     # 获取股票列表
     path('stocks/', views.StockListView.as_view(), name='stock_list'),
+    # 获取东财概念列表
+    path('dc-concepts/', views.DcConceptListView.as_view(), name='dc_concept_list'),
     # 获取所有股票实时行情
     path('stocks/realtime/', views.StockRealtimeView.as_view(), name='stock_realtime_all'),
     # 获取单只股票实时行情
