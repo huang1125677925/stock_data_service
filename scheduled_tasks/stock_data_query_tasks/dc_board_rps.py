@@ -1,3 +1,12 @@
+import sys
+import os
+from pathlib import Path
+from tracemalloc import start
+import django
+
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
+django.setup()
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple, Dict
@@ -156,7 +165,7 @@ def compute_board_rps(
             # 计算区间收益
             rets = _compute_period_return(daily_df, end_date)
             # 合并到结果
-            result_df = result_df.merge(rets, on='ts_code', how='left', suffixes=(None, None))
+            result_df = result_df.merge(rets, on='ts_code', how='right', suffixes=(None, None))
             # 列重命名 return_pct -> return_{p}
             result_df.rename(columns={'return_pct': f'return_{p}'}, inplace=True)
             # 计算RPS
@@ -173,3 +182,11 @@ def compute_board_rps(
             pass
 
     return result_df, errors
+
+if __name__ == '__main__':
+    # 测试：计算5日、20日、60日RPS，截止20240930
+    df, errors = compute_board_rps(periods=[5, 20, 60], idx_type='行业板块')
+    if errors:
+        print('错误:', errors)
+    else:
+        print(df)

@@ -23,7 +23,9 @@ from indival_stock_data.models import IndividualStock, PerformanceReport, Balanc
 import time
 from indival_stock_data.models import IndividualStockDaily
 from django.db import transaction
-from typing import Tuple, List
+from typing import Tuple, List, Set, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 
 from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
 
@@ -105,11 +107,29 @@ def fetch_individual_stocks():
         
         # 批量更新现有股票
         if stocks_to_update:
+            # 组件说明：批量更新现有股票
+            # 功能：按 code 将待更新字段聚合到对象后一次性 bulk_update
+            # 参数：无（使用上文收集的 stocks_to_update）
+            # 返回值：无（通过日志反馈）
+            # 事件：数据库批量更新
+            codes = [code for code, _ in stocks_to_update]
+            objs = {obj.code: obj for obj in IndividualStock.objects.filter(code__in=codes)}
+            fields_to_update = set()
+
             for code, data in stocks_to_update:
+                obj = objs.get(code)
+                if not obj:
+                    continue
+                for field, value in data.items():
+                    setattr(obj, field, value)
+                    fields_to_update.add(field)
+
+            if objs and fields_to_update:
                 with transaction.atomic():
-                    IndividualStock.objects.filter(code=code).update(**data)
-                logger.info(f"更新了股票 {code} 的数据")
-            logger.info(f"批量更新了{len(stocks_to_update)}只现有股票")
+                    IndividualStock.objects.bulk_update(list(objs.values()), list(fields_to_update), batch_size=500)
+                logger.info(f"批量更新了{len(objs)}只现有股票，涉及字段数={len(fields_to_update)}")
+            else:
+                logger.info("无可批量更新的现有股票或字段为空")
         
         stock_count = len(stocks_to_create) + len(stocks_to_update)
         
@@ -1300,24 +1320,108 @@ def update_index_stock_daily_data():
 
 def write_concept_to_db():
     """
-    将概念数据写入数据库
+    功能: 并发抓取东财概念成分并将概念写入个股表的 `dc_concept` 字段。
+
+    参数: 无（内部固定 `trade_date` 为 `'20251106'`，如需变更可后续扩展参数）。
+
+    返回值: dict
+    - `status`: `success` 或 `partial` 或 `error`
+    - `message`: 执行摘要信息
+    - `concept_count`: 概念数量
+    - `affected_stocks`: 实际写库的个股数量
+
+    事件: 
+    - 网络请求: 调用 Tushare Pro 接口 `dc_index` 与 `dc_member`
+    - 数据库更新: 合并去重概念后更新 `IndividualStock.dc_concept`
     """
     ts.set_token('')
-    pro = ts.pro_api()
-    df = pro.dc_index(trade_date='20251106', fields='ts_code,name,turnover_rate,up_num,down_num')
-    
-    for index, row in df.iterrows():
-        print(row['name'])
-        df2 = pro.dc_member(trade_date='20251106', ts_code=row['ts_code'])
-        for index2, row2 in df2.iterrows():
-            indival_stock = IndividualStock.objects.filter(code=row2['con_code'][:-3]).first()
-            if indival_stock:
-                if indival_stock.dc_concept and row['name'] not in indival_stock.dc_concept:
-                    indival_stock.dc_concept = row['name'] + ',' + indival_stock.dc_concept
-                    indival_stock.save()
-                else:
-                    indival_stock.dc_concept = row['name']
-                    indival_stock.save()
+    trade_date = '20251106'
+
+    try:
+        # 先获取所有概念索引
+        pro_index = ts.pro_api()
+        df_index = pro_index.dc_index(trade_date=trade_date, fields='ts_code,name,turnover_rate,up_num,down_num')
+        if df_index is None or df_index.empty:
+            logger.warning(f"{trade_date} 未获取到概念索引数据")
+            return {"status": "error", "message": "未获取到概念索引数据", "concept_count": 0, "affected_stocks": 0}
+
+        concept_rows = list(df_index.itertuples(index=False))
+
+        # 并发抓取每个概念对应的成分股，收敛为 {stock_code: set(concepts)}
+        stock_to_concepts: Dict[str, Set[str]] = defaultdict(set)
+
+        def _fetch_members_for_concept(ts_code: str, concept_name: str, date: str) -> List[Tuple[str, str]]:
+            """抓取单个概念的成分股。(功能/参数/返回值/事件)
+
+            功能: 通过 `dc_member` 获取该概念在指定交易日的成分股列表。
+            参数: `ts_code` 概念代码; `concept_name` 概念名称; `date` 交易日期。
+            返回值: `List[Tuple[stock_code, concept_name]]`，其中 `stock_code` 为不带市场后缀的代码。
+            事件: 调用 Tushare Pro 的 `dc_member` 接口进行网络请求。
+            """
+            try:
+                local_pro = ts.pro_api()
+                print(f"[dc_member] 开始: {concept_name}({ts_code}) date={date}")
+                logger.info(f"开始获取概念成分: {concept_name}({ts_code}) {date}")
+                time.sleep(1)  # 延时避免频繁请求
+                df_members = local_pro.dc_member(trade_date=date, ts_code=ts_code)
+                results: List[Tuple[str, str]] = []
+                if df_members is not None and not df_members.empty:
+                    for _, r in df_members.iterrows():
+                        stock_code = r['con_code'][:-3]
+                        results.append((stock_code, concept_name))
+                print(f"[dc_member] 完成: {concept_name}({ts_code}) 成分数={len(results)}")
+                logger.info(f"获取完成: {concept_name}({ts_code}) 成分数={len(results)}")
+                return results
+            except Exception as exc:
+                logger.error(f"获取概念成分失败: {concept_name}({ts_code}) - {exc}")
+                return []
+
+        max_workers = min(8, len(concept_rows)) if len(concept_rows) > 0 else 1
+        print(f"[并发] 概念数={len(concept_rows)} max_workers={max_workers}")
+        logger.info(f"并发抓取概念成分: 概念数={len(concept_rows)} max_workers={max_workers}")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ctx = {}
+            for row in concept_rows:
+                name = getattr(row, 'name')
+                ts_code = row.ts_code
+                print(f"[并发] 提交任务: {name}({ts_code})")
+                logger.info(f"提交抓取任务: {name}({ts_code})")
+                f = executor.submit(_fetch_members_for_concept, ts_code, name, trade_date)
+                future_to_ctx[f] = (ts_code, name)
+
+            for future in as_completed(future_to_ctx):
+                ts_code, name = future_to_ctx[future]
+                members = future.result()
+                print(f"[并发] 收到结果: {name}({ts_code}) 成分数={len(members)}")
+                logger.info(f"收到抓取结果: {name}({ts_code}) 成分数={len(members)}")
+                for stock_code, concept_name in members:
+                    stock_to_concepts[stock_code].add(concept_name)
+
+        # 合并写库：单线程执行以避免并发写导致的覆盖问题
+        affected = 0
+        print(f"[聚合] 待写入股票数={len(stock_to_concepts)}")
+        logger.info(f"聚合完成，待写入股票数={len(stock_to_concepts)}")
+        for stock_code, concepts in stock_to_concepts.items():
+            indival_stock = IndividualStock.objects.filter(code=stock_code).first()
+            if not indival_stock:
+                continue
+            existing = set(filter(None, (indival_stock.dc_concept or '').split(',')))
+            merged = sorted(existing.union(concepts))
+            new_value = ','.join(merged) if merged else None
+            if new_value != (indival_stock.dc_concept or None):
+                indival_stock.dc_concept = new_value
+                indival_stock.save(update_fields=['dc_concept'])
+                affected += 1
+                print(f"[写库] 更新 {stock_code}: 概念数={len(merged)}")
+                logger.info(f"更新股票 {stock_code}: 概念数={len(merged)}")
+
+        message = f"并发写入概念完成: 概念数{len(concept_rows)}，影响个股{affected}"
+        logger.info(message)
+        return {"status": "success", "message": message, "concept_count": len(concept_rows), "affected_stocks": affected}
+
+    except Exception as e:
+        logger.error(f"并发写入概念任务失败: {e}")
+        return {"status": "error", "message": str(e), "concept_count": 0, "affected_stocks": 0}
     
 
     
@@ -1329,6 +1433,7 @@ def write_concept_to_db():
 
 if __name__ == '__main__':
     # update_individual_stock_daily_data()
+    fetch_individual_stocks()
     
     # 从2015年开始获取季报、中报、三季报、年报到20240930
     # fetch_all_performance_reports(start_year=2015, end_date='20240930')
@@ -1347,7 +1452,7 @@ if __name__ == '__main__':
     # update_index_stock_daily_data()
     # update_individual_stock_daily_data()
     # fetch_individual_stocks()
-    write_concept_to_db()
+    # write_concept_to_db()
 
 
 # 个股数据 
