@@ -8,6 +8,14 @@ from django.urls import path
 
 from .views import IndexBasicProxyView, IndexDailyProxyView, IndexWeightProxyView, GitInfoView
 from .views import DcDailyProxyView, DcIndexProxyView
+from .views import (
+    AhComparisonProxyView,
+    BrokerRecommendProxyView,
+    CcassHoldDetailProxyView,
+    CcassHoldProxyView,
+    LimitStepProxyView,
+    HmDetailProxyView,
+)
 
 app_name = 'scheduled_tasks'
 
@@ -17,5 +25,11 @@ urlpatterns = [
     path('index-weight/', IndexWeightProxyView.as_view(), name='index-weight-proxy'),
     path('dc-daily/', DcDailyProxyView.as_view(), name='dc-daily-proxy'),
     path('dc-index/', DcIndexProxyView.as_view(), name='dc-index-proxy'),
+    path('ah-comparison/', AhComparisonProxyView.as_view(), name='ah-comparison-proxy'),
+    path('broker-recommend/', BrokerRecommendProxyView.as_view(), name='broker-recommend-proxy'),
+    path('ccass-hold-detail/', CcassHoldDetailProxyView.as_view(), name='ccass-hold-detail-proxy'),
+    path('ccass-hold/', CcassHoldProxyView.as_view(), name='ccass-hold-proxy'),
+    path('limit-step/', LimitStepProxyView.as_view(), name='limit-step-proxy'),
+    path('hm-detail/', HmDetailProxyView.as_view(), name='hm-detail-proxy'),
     path('git-info/', GitInfoView.as_view(), name='git-info'),
 ]

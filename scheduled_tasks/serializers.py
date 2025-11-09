@@ -170,3 +170,176 @@ class SuccessResponseDcIndexSerializer(serializers.Serializer):
     message = serializers.CharField()
     timestamp = serializers.CharField()
     data = DcIndexDataSerializer()
+
+
+# --- AH股比价（stk_ah_comparison） ---
+class AhComparisonRecordSerializer(serializers.Serializer):
+    """
+    stk_ah_comparison 记录字段序列化器
+
+    字段参考文档：AH股比价。
+    """
+    hk_code = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    hk_name = serializers.CharField(required=False)
+    hk_pct_chg = serializers.FloatField(required=False)
+    hk_close = serializers.FloatField(required=False)
+    name = serializers.CharField(required=False)
+    close = serializers.FloatField(required=False)
+    pct_chg = serializers.FloatField(required=False)
+    ah_comparison = serializers.FloatField(required=False)
+    ah_premium = serializers.FloatField(required=False)
+
+
+class AhComparisonDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = AhComparisonRecordSerializer(many=True)
+
+
+class SuccessResponseAhComparisonSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = AhComparisonDataSerializer()
+
+
+# --- 券商月度金股（broker_recommend） ---
+class BrokerRecommendRecordSerializer(serializers.Serializer):
+    """
+    broker_recommend 记录字段序列化器
+
+    字段参考文档：券商每月荐股。
+    """
+    month = serializers.CharField(required=False)
+    broker = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+
+
+class BrokerRecommendDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = BrokerRecommendRecordSerializer(many=True)
+
+
+class SuccessResponseBrokerRecommendSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = BrokerRecommendDataSerializer()
+
+
+# --- 中央结算系统持股明细（ccass_hold_detail） ---
+class CcassHoldDetailRecordSerializer(serializers.Serializer):
+    """
+    ccass_hold_detail 记录字段序列化器
+
+    字段参考文档：中央结算系统持股明细。
+    """
+    trade_date = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    col_participant_id = serializers.CharField(required=False)
+    col_participant_name = serializers.CharField(required=False)
+    col_shareholding = serializers.CharField(required=False)
+    col_shareholding_percent = serializers.CharField(required=False)
+
+
+class CcassHoldDetailDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = CcassHoldDetailRecordSerializer(many=True)
+
+
+class SuccessResponseCcassHoldDetailSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = CcassHoldDetailDataSerializer()
+
+
+# --- 中央结算系统持股汇总（ccass_hold） ---
+class CcassHoldRecordSerializer(serializers.Serializer):
+    """
+    ccass_hold 记录字段序列化器
+
+    字段参考文档：中央结算系统持股汇总。
+    """
+    trade_date = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    shareholding = serializers.CharField(required=False)
+    hold_nums = serializers.CharField(required=False)
+    hold_ratio = serializers.CharField(required=False)
+
+
+class CcassHoldDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = CcassHoldRecordSerializer(many=True)
+
+
+class SuccessResponseCcassHoldSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = CcassHoldDataSerializer()
+
+
+# --- 连板天梯（limit_step） ---
+class LimitStepRecordSerializer(serializers.Serializer):
+    """
+    limit_step 记录字段序列化器
+
+    字段参考文档：涨停股票连板天梯。
+    """
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    nums = serializers.CharField(required=False)
+
+
+class LimitStepDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = LimitStepRecordSerializer(many=True)
+
+
+class SuccessResponseLimitStepSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = LimitStepDataSerializer()
+
+
+# --- 游资每日明细（hm_detail） ---
+class HmDetailRecordSerializer(serializers.Serializer):
+    """
+    hm_detail 记录字段序列化器
+
+    字段参考文档：游资交易每日明细。
+    """
+    trade_date = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    ts_name = serializers.CharField(required=False)
+    buy_amount = serializers.FloatField(required=False)
+    sell_amount = serializers.FloatField(required=False)
+    net_amount = serializers.FloatField(required=False)
+    hm_name = serializers.CharField(required=False)
+    hm_orgs = serializers.CharField(required=False)
+    tag = serializers.CharField(required=False)
+
+
+class HmDetailDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = HmDetailRecordSerializer(many=True)
+
+
+class SuccessResponseHmDetailSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = HmDetailDataSerializer()

@@ -9,6 +9,12 @@ from .serializers import (
     SuccessResponseDcDailySerializer,
     SuccessResponseDcIndexSerializer,
     SuccessResponseGitInfoSerializer,
+    SuccessResponseAhComparisonSerializer,
+    SuccessResponseBrokerRecommendSerializer,
+    SuccessResponseCcassHoldDetailSerializer,
+    SuccessResponseCcassHoldSerializer,
+    SuccessResponseLimitStepSerializer,
+    SuccessResponseHmDetailSerializer,
     ErrorResponseSerializer,
 )
 
@@ -493,3 +499,360 @@ class GitInfoView(APIView):
 
         except Exception as e:
             return error_response(f"查询 Git 提交信息失败: {str(e)}", 500)
+
+
+# --------------------- 新增：特色/打板专题接口直通代理 ---------------------
+
+class AhComparisonProxyView(APIView):
+    """
+    AH股比价直通代理接口（Tushare stk_ah_comparison）
+
+    功能：
+    - 代理调用 Tushare `stk_ah_comparison`，返回 A/H 股比价及溢价信息。
+    - 外层响应统一使用 success_response/error_response。
+
+    参数（与 Tushare 文档一致）：
+    - hk_code (str, 可选): 港股股票代码（xxxxx.HK）
+    - ts_code (str, 可选): A股股票代码（xxxxxx.SH/SZ/BJ）
+    - trade_date (str, 可选): 交易日期（YYYYMMDD）
+    - start_date (str, 可选): 开始日期
+    - end_date (str, 可选): 结束日期
+    - fields (str, 可选): 返回字段列表，逗号分隔
+    - token (str, 可选): Tushare Token（覆盖环境变量）
+
+    返回值：
+    - code (int), message (str)
+    - data (object):
+      - interface (str): 固定为 "stk_ah_comparison"
+      - count (int): 记录数
+      - records (list[object]): 与文档一致字段（hk_code, ts_code, trade_date, hk_name, hk_pct_chg, hk_close, name, close, pct_chg, ah_comparison, ah_premium）
+
+    事件：无（后端接口，无前端事件）。
+    """
+
+    @extend_schema(
+        summary="AH股比价直通代理",
+        description="Tushare stk_ah_comparison 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="hk_code", description="港股股票代码（xxxxx.HK）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="ts_code", description="A股股票代码（xxxxxx.SH/SZ/BJ）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="trade_date", description="交易日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="start_date", description="开始日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="end_date", description="结束日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseAhComparisonSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            params = {}
+            for key in ("hk_code", "ts_code", "trade_date", "start_date", "end_date"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("stk_ah_comparison", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询AH股比价成功")
+
+        except Exception as e:
+            return error_response(f"查询AH股比价失败: {str(e)}", 500)
+
+
+class BrokerRecommendProxyView(APIView):
+    """
+    券商月度金股直通代理接口（Tushare broker_recommend）
+
+    功能：
+    - 代理调用 Tushare `broker_recommend`，返回指定月份券商金股列表。
+    - 外层响应统一使用 success_response/error_response。
+
+    参数：
+    - month (str, 必选): 月度（YYYYMM）
+    - fields (str, 可选): 返回字段列表，逗号分隔
+    - token (str, 可选): Tushare Token（覆盖环境变量）
+
+    返回值：
+    - code (int), message (str)
+    - data (object):
+      - interface (str): 固定为 "broker_recommend"
+      - count (int): 记录数
+      - records (list[object]): month, broker, ts_code, name
+
+    事件：无。
+    """
+
+    @extend_schema(
+        summary="券商月度金股直通代理",
+        description="Tushare broker_recommend 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="month", description="月度（YYYYMM）", required=True, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseBrokerRecommendSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            month = request.query_params.get("month")
+            if not month:
+                return error_response("缺少必填参数: month", 400)
+
+            params = {"month": month}
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("broker_recommend", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询券商月度金股成功")
+
+        except Exception as e:
+            return error_response(f"查询券商月度金股失败: {str(e)}", 500)
+
+
+class CcassHoldDetailProxyView(APIView):
+    """
+    中央结算系统持股明细直通代理接口（Tushare ccass_hold_detail）
+
+    功能：
+    - 代理调用 Tushare `ccass_hold_detail`，返回中央结算系统机构席位持股明细。
+
+    参数：
+    - ts_code (str, 可选): 股票代码（e.g. 605009.SH 或 00960.HK）
+    - hk_code (str, 可选): 港交所代码（e.g. 95009）
+    - trade_date (str, 可选): 交易日期（YYYYMMDD）
+    - start_date (str, 可选): 开始日期
+    - end_date (str, 可选): 结束日期
+    - fields/token (str, 可选)
+
+    返回值：
+    - interface 固定为 "ccass_hold_detail"；records 字段与文档一致。
+
+    事件：无。
+    """
+
+    @extend_schema(
+        summary="中央结算系统持股明细直通代理",
+        description="Tushare ccass_hold_detail 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="ts_code", description="股票代码（e.g. 605009.SH / 00960.HK）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="hk_code", description="港交所代码（e.g. 95009）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="trade_date", description="交易日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="start_date", description="开始日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="end_date", description="结束日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseCcassHoldDetailSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            params = {}
+            for key in ("ts_code", "hk_code", "trade_date", "start_date", "end_date"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("ccass_hold_detail", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询中央结算系统持股明细成功")
+        except Exception as e:
+            return error_response(f"查询中央结算系统持股明细失败: {str(e)}", 500)
+
+
+class CcassHoldProxyView(APIView):
+    """
+    中央结算系统持股汇总直通代理接口（Tushare ccass_hold）
+
+    功能：
+    - 代理调用 Tushare `ccass_hold`，返回中央结算系统持股汇总数据。
+
+    参数：
+    - ts_code (str, 可选), hk_code (str, 可选), trade_date (str, 可选), start_date (str, 可选), end_date (str, 可选)
+    - fields/token (str, 可选)
+
+    返回值：
+    - interface 固定为 "ccass_hold"；records 字段与文档一致。
+
+    事件：无。
+    """
+
+    @extend_schema(
+        summary="中央结算系统持股汇总直通代理",
+        description="Tushare ccass_hold 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="ts_code", description="股票代码（e.g. 605009.SH / 00960.HK）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="hk_code", description="港交所代码（e.g. 95009）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="trade_date", description="交易日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="start_date", description="开始日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="end_date", description="结束日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseCcassHoldSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            params = {}
+            for key in ("ts_code", "hk_code", "trade_date", "start_date", "end_date"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("ccass_hold", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询中央结算系统持股汇总成功")
+        except Exception as e:
+            return error_response(f"查询中央结算系统持股汇总失败: {str(e)}", 500)
+
+
+class LimitStepProxyView(APIView):
+    """
+    连板天梯直通代理接口（Tushare limit_step）
+
+    功能：
+    - 代理调用 Tushare `limit_step`，返回每日涨停股票连板次数记录。
+
+    参数：
+    - trade_date, ts_code, start_date, end_date, nums（均可选）
+    - fields/token（可选）
+
+    返回值：
+    - interface 固定为 "limit_step"；records 字段与文档一致。
+
+    事件：无。
+    """
+
+    @extend_schema(
+        summary="连板天梯直通代理",
+        description="Tushare limit_step 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="trade_date", description="交易日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="ts_code", description="股票代码", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="start_date", description="开始日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="end_date", description="结束日期", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="nums", description="连板次数，支持多个（如 2,3）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseLimitStepSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            params = {}
+            for key in ("trade_date", "ts_code", "start_date", "end_date", "nums"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("limit_step", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询连板天梯成功")
+        except Exception as e:
+            return error_response(f"查询连板天梯失败: {str(e)}", 500)
+
+
+class HmDetailProxyView(APIView):
+    """
+    游资交易每日明细直通代理接口（Tushare hm_detail）
+
+    功能：
+    - 代理调用 Tushare `hm_detail`，返回每日游资交易明细。
+
+    参数：
+    - trade_date, ts_code, hm_name, start_date, end_date（可选）
+    - fields/token（可选）
+
+    返回值：
+    - interface 固定为 "hm_detail"；records 字段与文档一致。
+
+    事件：无。
+    """
+
+    @extend_schema(
+        summary="游资每日明细直通代理",
+        description="Tushare hm_detail 的代理接口，统一返回格式。",
+        tags=["Tushare Proxy"],
+        parameters=[
+            OpenApiParameter(name="trade_date", description="交易日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="ts_code", description="股票代码", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="hm_name", description="游资名称", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="start_date", description="开始日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="end_date", description="结束日期 YYYYMMDD", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="fields", description="字段列表（逗号分隔）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="token", description="Tushare Token（覆盖环境变量）", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={
+            200: SuccessResponseHmDetailSerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            params = {}
+            for key in ("trade_date", "ts_code", "hm_name", "start_date", "end_date"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+            fields = request.query_params.get("fields")
+            token = request.query_params.get("token")
+
+            resp = call_tushare("hm_detail", params=params, fields=fields, token=token, use_query=False)
+            if resp.get("code") != 200:
+                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+
+            data = resp.get("data") or {}
+            return success_response(data, "查询游资每日明细成功")
+        except Exception as e:
+            return error_response(f"查询游资每日明细失败: {str(e)}", 500)

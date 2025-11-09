@@ -28,26 +28,78 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 
 from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
+from scheduled_tasks.stock_data_query_tasks.tushare_data import fetch_bak_daily
 
 from django.utils import timezone
+from common.tushare_proxy import call_tushare
 
 logger = logging.getLogger(__name__)
 
+def _get_recent_trade_date() -> str:
+    """
+    获取最近一个交易日（优先使用Tushare交易日历，失败则按工作日/周末回退）。
+
+    返回值：
+    - str：YYYYMMDD 格式的最近交易日
+    """
+    try:
+        today = datetime.now()
+        end_date = today.strftime('%Y%m%d')
+        start_date = (today - timedelta(days=15)).strftime('%Y%m%d')
+        resp = call_tushare(
+            interface='trade_cal',
+            params={'start_date': start_date, 'end_date': end_date, 'is_open': 1},
+            fields='cal_date,is_open,pretrade_date',
+            use_query=False
+        )
+        records = (resp or {}).get('data', {}).get('records', [])
+        open_days = [str(r.get('cal_date')) for r in records if str(r.get('is_open')) in ('1', 'True', 'true', '1')]
+        if open_days:
+            return max(open_days)
+    except Exception as e:
+        logger.warning(f"获取交易日历失败，使用本地回退逻辑: {e}")
+
+    # 回退：工作日取前一天，周六回退到周五，周日回退到周五
+    today = datetime.now()
+    if today.weekday() == 5:  # 周六
+        latest_trading_date = today - timedelta(days=1)
+    elif today.weekday() == 6:  # 周日
+        latest_trading_date = today - timedelta(days=2)
+    else:
+        latest_trading_date = today - timedelta(days=1)
+    return latest_trading_date.strftime('%Y%m%d')
+
 def fetch_individual_stocks():
     """
-    从akshare获取所有个股列表并保存到数据库
-    每天执行一次
+    组件：个股列表日更任务
+
+    功能：
+    - 使用 Tushare 备用行情接口（bak_daily）按交易日获取全市场个股核心指标
+    - 将数据映射到 IndividualStock 表中，支持批量新增与批量更新
+
+    参数：
+    - 无（内部按当前交易日 YYYYMMDD 拉取）
+
+    返回值：
+    - dict：{"status": "success|warning|error", "message": str}
+
+    事件：
+    - 外部数据源调用：tushare bak_daily
+    - 数据库批处理：bulk_create / bulk_update
+    - 记录日志统计与异常信息
     """
     logger.info("开始执行个股列表获取任务")
     
     try:
-        # 从akshare获取股票列表
-        logger.info("从akshare获取股票列表数据")
-        df = ak.stock_zh_a_spot_em()
-        
-        if df is None or df.empty:
-            logger.warning("从akshare获取股票列表数据为空")
-            return {"status": "warning", "message": "从akshare获取股票列表数据为空"}
+        # 从 Tushare 获取指定交易日的备用行情（覆盖全市场）
+        # 使用统一的交易日推断逻辑，获取最近一个交易日（优先Tushare，失败本地回退）
+        trade_date = _get_recent_trade_date()
+        logger.info(f"从 Tushare 获取备用行情数据 trade_date={trade_date}")
+        records = fetch_bak_daily(trade_date=trade_date)
+
+        if not records:
+            logger.warning("Tushare 备用行情数据为空")
+            return {"status": "warning", "message": "Tushare 备用行情数据为空"}
         
         # 转换数据格式并批量保存到数据库
         from django.db import transaction
@@ -59,51 +111,56 @@ def fetch_individual_stocks():
         stocks_to_create = []
         stocks_to_update = []
         
-        for _, row in df.iterrows():
-            code = str(row['代码'])
-            name = str(row['名称'])
-            
-            # 准备股票数据
+        for row in records:
+            ts_code = str(row.get('ts_code')) if row.get('ts_code') is not None else ''
+            code = ts_code.split('.')[0] if ts_code else ''
+            name = str(row.get('name')) if row.get('name') is not None else ''
+
+            # 准备股票数据（用 tushare 字段映射至模型）
             stock_data = {
                 'name': name,
-                'pe_ratio': float(row['市盈率-动态']) if pd.notna(row['市盈率-动态']) else None,
-                'pb_ratio': float(row['市净率']) if pd.notna(row['市净率']) else None,
-                'total_market_cap': float(row['总市值']) if pd.notna(row['总市值']) else None,
-                'circulating_market_cap': float(row['流通市值']) if pd.notna(row['流通市值']) else None,
-                # akshare数据字段
-                'latest_price': float(row['最新价']) if pd.notna(row['最新价']) else None,
-                'change_percent': float(row['涨跌幅']) if pd.notna(row['涨跌幅']) else None,
-                'change_amount': float(row['涨跌额']) if pd.notna(row['涨跌额']) else None,
-                'volume': int(row['成交量']) if pd.notna(row['成交量']) else None,
-                'amount': float(row['成交额']) if pd.notna(row['成交额']) else None,
-                'amplitude': float(row['振幅']) if pd.notna(row['振幅']) else None,
-                'high': float(row['最高']) if pd.notna(row['最高']) else None,
-                'low': float(row['最低']) if pd.notna(row['最低']) else None,
-                'open_price': float(row['今开']) if pd.notna(row['今开']) else None,
-                'close_price': float(row['昨收']) if pd.notna(row['昨收']) else None,
-                'volume_ratio': float(row['量比']) if pd.notna(row['量比']) else None,
-                'turnover_rate': float(row['换手率']) if pd.notna(row['换手率']) else None,
-                'price_change_speed': float(row['涨速']) if pd.notna(row['涨速']) else None,
-                'change_5min': float(row['5分钟涨跌']) if pd.notna(row['5分钟涨跌']) else None,
-                'change_60d': float(row['60日涨跌幅']) if pd.notna(row['60日涨跌幅']) else None,
-                'change_ytd': float(row['年初至今涨跌幅']) if pd.notna(row['年初至今涨跌幅']) else None,
+                'industry': row.get('industry') if row.get('industry') is not None else None,
+                'pe_ratio': float(row.get('pe')) if pd.notna(row.get('pe')) else None,
+                'total_market_cap': float(row.get('total_mv')) if pd.notna(row.get('total_mv')) else None,
+                'circulating_market_cap': float(row.get('float_mv')) if pd.notna(row.get('float_mv')) else None,
+                # 价量与涨跌
+                'latest_price': float(row.get('close')) if pd.notna(row.get('close')) else None,
+                'change_percent': float(row.get('pct_change')) if pd.notna(row.get('pct_change')) else None,
+                'change_amount': float(row.get('change')) if pd.notna(row.get('change')) else None,
+                'volume': int(row.get('vol')) if pd.notna(row.get('vol')) else None,
+                'amount': float(row.get('amount')) if pd.notna(row.get('amount')) else None,
+                'amplitude': float(row.get('swing')) if pd.notna(row.get('swing')) else None,
+                'high': float(row.get('high')) if pd.notna(row.get('high')) else None,
+                'low': float(row.get('low')) if pd.notna(row.get('low')) else None,
+                'open_price': float(row.get('open')) if pd.notna(row.get('open')) else None,
+                'close_price': float(row.get('pre_close')) if pd.notna(row.get('pre_close')) else None,
+                'volume_ratio': float(row.get('vol_ratio')) if pd.notna(row.get('vol_ratio')) else None,
+                'turnover_rate': float(row.get('turn_over')) if pd.notna(row.get('turn_over')) else None,
+                # tushare bak_daily 不提供以下字段，置空
+                'pb_ratio': None,
+                'price_change_speed': None,
+                'change_5min': None,
+                'change_60d': None,
+                'change_ytd': None,
             }
             
             if code in existing_codes:
-                # 准备更新数据
-                stocks_to_update.append((code, stock_data))
+                # 准备更新数据（仅更新非空字段，避免覆盖已有有效值）
+                update_data = {k: v for k, v in stock_data.items() if v is not None}
+                if update_data:
+                    stocks_to_update.append((code, update_data))
             else:
-                # 准备创建数据
+                # 准备创建数据（允许空字段，确保必填 code）
                 stock_data['code'] = code
                 stocks_to_create.append(IndividualStock(**stock_data))
         
         # 批量操作
-        
+
         # 批量创建新股票
         if stocks_to_create:
             with transaction.atomic():
                 IndividualStock.objects.bulk_create(stocks_to_create, batch_size=500)
-                logger.info(f"批量创建了{len(stocks_to_create)}只新股票")
+                logger.info(f"批量创建了{len(stocks_to_create)}只新股票（Tushare bak_daily）")
         
         # 批量更新现有股票
         if stocks_to_update:
@@ -127,17 +184,17 @@ def fetch_individual_stocks():
             if objs and fields_to_update:
                 with transaction.atomic():
                     IndividualStock.objects.bulk_update(list(objs.values()), list(fields_to_update), batch_size=500)
-                logger.info(f"批量更新了{len(objs)}只现有股票，涉及字段数={len(fields_to_update)}")
+                logger.info(f"批量更新了{len(objs)}只现有股票，涉及字段数={len(fields_to_update)}（Tushare bak_daily）")
             else:
                 logger.info("无可批量更新的现有股票或字段为空")
         
         stock_count = len(stocks_to_create) + len(stocks_to_update)
         
-        logger.info(f"成功获取并保存{stock_count}只个股信息到数据库")
-        return {"status": "success", "message": f"成功获取并保存{stock_count}只个股信息到数据库"}
+        logger.info(f"成功获取并保存{stock_count}只个股信息到数据库（Tushare bak_daily）")
+        return {"status": "success", "message": f"成功获取并保存{stock_count}只个股信息到数据库（Tushare bak_daily）"}
         
     except Exception as e:
-        logger.error(f"个股列表获取任务执行失败: {str(e)}")
+        logger.error(f"个股列表获取任务执行失败（Tushare bak_daily）: {str(e)}")
         return {"status": "error", "message": str(e)}
 
 def update_individual_stock_realtime():
