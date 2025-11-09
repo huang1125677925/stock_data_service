@@ -9,6 +9,7 @@ import traceback
 import backtrader as bt
 import pandas as pd
 import akshare as ak
+from common.tushare_proxy import call_tushare
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -32,6 +33,7 @@ try:
     from .strategies.bias_strategy import BIASStrategy
     from .strategies.bollinger_strategy import BollingerStrategy
     from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
+    from .strategies.nineturn_strategy import NineTurnStrategy
     from indival_stock_data.services import IndividualStockService
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
@@ -64,6 +66,7 @@ except ImportError:
     from quantitative_strategy.strategies.bias_strategy import BIASStrategy
     from quantitative_strategy.strategies.bollinger_strategy import BollingerStrategy
     from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
+    from quantitative_strategy.strategies.nineturn_strategy import NineTurnStrategy
 
     from indival_stock_data.services import IndividualStockService
 
@@ -75,8 +78,12 @@ logger = logging.getLogger(__name__)
 class PandasData(bt.feeds.PandasData):
     """
     自定义Pandas数据源
-    适配akshare数据格式
+    适配akshare数据格式，并扩展九转信号列
     """
+    # 扩展的信号行
+    lines = ('nine_down_turn', 'nine_up_turn',)
+
+    # 列映射：基础OHLCV及扩展信号
     params = (
         ('datetime', None),
         ('open', 'open'),
@@ -85,6 +92,9 @@ class PandasData(bt.feeds.PandasData):
         ('close', 'close'),
         ('volume', 'volume'),
         ('openinterest', -1),
+        # 九转信号列（需要在传入的 DataFrame 中存在同名列）
+        ('nine_down_turn', 'nine_down_turn'),
+        ('nine_up_turn', 'nine_up_turn'),
     )
 
 
@@ -254,6 +264,27 @@ class BacktestService:
             if strategy_class is None:
                 raise ValueError(f"未找到策略: {task.strategy_name}")
             
+            # 若为九转策略，预取并合并九转信号数据
+            if task.strategy_name == 'nineturn':
+                try:
+                    nine_df = self._fetch_nineturn_signals_df(
+                        stock_code=task.stock_code,
+                        start_date=task.start_date.strftime('%Y-%m-%d'),
+                        end_date=task.end_date.strftime('%Y-%m-%d')
+                    )
+                    if nine_df is not None and not nine_df.empty:
+                        # 仅保留信号列，按索引（日期）左连接
+                        df = df.join(nine_df[['nine_down_turn', 'nine_up_turn']], how='left')
+                        # 缺失填0，并确保为数值型
+                        for col in ['nine_down_turn', 'nine_up_turn']:
+                            if col in df.columns:
+                                df[col] = pd.to_numeric(df[col].fillna(0), errors='coerce').fillna(0).astype(int)
+                        self.logger.info(f"九转信号已合并: {task.stock_code}, 记录数={len(nine_df)}")
+                    else:
+                        self.logger.warning(f"未获取到九转信号数据: {task.stock_code}")
+                except Exception as e:
+                    self.logger.error(f"合并九转信号失败: {str(e)}")
+
             # 创建回测引擎
             cerebro = bt.Cerebro()
             
@@ -287,6 +318,8 @@ class BacktestService:
             cerebro.addobserver(bt.observers.TimeReturn)
             cerebro.addobserver(bt.observers.DrawDown)
             cerebro.addobserver(bt.observers.Benchmark)
+
+            
             
             # 添加分析器
             cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe')
@@ -458,6 +491,100 @@ class BacktestService:
             return stock_object.name if stock_object else stock_code
         except:
             return stock_code
+
+    def _to_ts_code(self, stock_code: str) -> str:
+        """
+        将 6 位股票代码转换为 Tushare ts_code（带交易所后缀）。
+        规则：
+        - 以 '6' 开头：上交所（.SH）
+        - 以 '0' 或 '3' 开头：深交所（.SZ）
+        - 以 '8' 开头：北交所（.BJ）
+        - 其他：默认深交所（.SZ）
+        """
+        code = stock_code.strip()
+        if code.startswith('6'):
+            return f"{code}.SH"
+        if code.startswith('8'):
+            return f"{code}.BJ"
+        # 默认深市
+        return f"{code}.SZ"
+
+    def _fetch_nineturn_signals_df(self, stock_code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+        """
+        通过 Tushare 获取神奇九转（stk_nineturn）信号，并返回按日期索引的 DataFrame。
+
+        输入：
+        - stock_code: 6位股票代码（如 '000001'）
+        - start_date/end_date: 'YYYY-MM-DD'
+
+        输出：
+        - DataFrame，索引为日期（datetime64），列：'nine_down_turn', 'nine_up_turn'（0/1 数值）
+        - 若获取失败或无数据，返回 None
+        """
+        try:
+            ts_code = self._to_ts_code(stock_code)
+            # 转换为 YYYYMMDD
+            s = start_date.replace('-', '')
+            e = end_date.replace('-', '')
+            params = {
+                'ts_code': ts_code,
+                'freq': 'daily',
+                'start_date': s,
+                'end_date': e,
+            }
+            fields = 'ts_code,trade_date,freq,nine_up_turn,nine_down_turn'
+            resp = call_tushare(
+                interface='stk_nineturn',
+                params=params,
+                fields=fields,
+                use_query=False,
+            )
+            if resp.get('code') != 200:
+                self.logger.warning(f"调用 Tushare stk_nineturn 失败: code={resp.get('code')}, msg={resp.get('message')}")
+                return None
+            records = (resp.get('data') or {}).get('records', [])
+            if not records:
+                self.logger.info(f"九转信号为空: {ts_code} - {start_date}~{end_date}")
+                return None
+
+            df = pd.DataFrame(records)
+            if df.empty:
+                return None
+            # 解析日期
+            if 'trade_date' in df.columns:
+                df['trade_date'] = pd.to_datetime(df['trade_date'])
+                df.set_index('trade_date', inplace=True)
+                df.sort_index(inplace=True)
+
+            # 将 '+9'/'-9'/None 映射为 0/1
+            def _map_up(v):
+                try:
+                    return 1 if isinstance(v, str) and v.strip() == '+9' else 0
+                except Exception:
+                    return 0
+
+            def _map_down(v):
+                try:
+                    return 1 if isinstance(v, str) and v.strip() == '-9' else 0
+                except Exception:
+                    return 0
+
+            up_col = 'nine_up_turn' if 'nine_up_turn' in df.columns else None
+            down_col = 'nine_down_turn' if 'nine_down_turn' in df.columns else None
+            if up_col:
+                df['nine_up_turn'] = df['nine_up_turn'].apply(_map_up).astype(int)
+            else:
+                df['nine_up_turn'] = 0
+            if down_col:
+                df['nine_down_turn'] = df['nine_down_turn'].apply(_map_down).astype(int)
+            else:
+                df['nine_down_turn'] = 0
+
+            # 仅保留所需列
+            return df[['nine_down_turn', 'nine_up_turn']]
+        except Exception as e:
+            self.logger.error(f"获取九转信号异常: {str(e)}")
+            return None
 
 
 # 全局服务实例
