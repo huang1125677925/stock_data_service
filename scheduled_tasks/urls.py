@@ -15,6 +15,15 @@ from .views import (
     CcassHoldProxyView,
     LimitStepProxyView,
     HmDetailProxyView,
+    HkHoldProxyView,
+    StockHsgtProxyView,
+    HsgtTop10ProxyView,
+    IrmQaShProxyView,
+    IrmQaSzProxyView,
+    CyqPerfProxyView,
+    IndexClassifyProxyView,
+    IndexMemberAllProxyView,
+    IndexDailybasicProxyView,
 )
 
 app_name = 'scheduled_tasks'
@@ -31,5 +40,15 @@ urlpatterns = [
     path('ccass-hold/', CcassHoldProxyView.as_view(), name='ccass-hold-proxy'),
     path('limit-step/', LimitStepProxyView.as_view(), name='limit-step-proxy'),
     path('hm-detail/', HmDetailProxyView.as_view(), name='hm-detail-proxy'),
+    # 新增九个直通代理接口
+    path('hk-hold/', HkHoldProxyView.as_view(), name='hk-hold-proxy'),
+    path('stock-hsgt/', StockHsgtProxyView.as_view(), name='stock-hsgt-proxy'),
+    path('hsgt-top10/', HsgtTop10ProxyView.as_view(), name='hsgt-top10-proxy'),
+    path('irm-qa-sh/', IrmQaShProxyView.as_view(), name='irm-qa-sh-proxy'),
+    path('irm-qa-sz/', IrmQaSzProxyView.as_view(), name='irm-qa-sz-proxy'),
+    path('cyq-perf/', CyqPerfProxyView.as_view(), name='cyq-perf-proxy'),
+    path('index-classify/', IndexClassifyProxyView.as_view(), name='index-classify-proxy'),
+    path('index-member-all/', IndexMemberAllProxyView.as_view(), name='index-member-all-proxy'),
+    path('index-dailybasic/', IndexDailybasicProxyView.as_view(), name='index-dailybasic-proxy'),
     path('git-info/', GitInfoView.as_view(), name='git-info'),
 ]

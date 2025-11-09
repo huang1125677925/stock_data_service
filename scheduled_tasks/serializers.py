@@ -343,3 +343,307 @@ class SuccessResponseHmDetailSerializer(serializers.Serializer):
     message = serializers.CharField()
     timestamp = serializers.CharField()
     data = HmDetailDataSerializer()
+
+
+# --- 沪深港股通持股明细（hk_hold） ---
+class HkHoldRecordSerializer(serializers.Serializer):
+    """
+    hk_hold 记录字段序列化器
+
+    功能：序列化沪深港股通持股明细记录。
+    参数：无（字段来自Tushare返回记录）。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    vol = serializers.IntegerField(required=False)
+    ratio = serializers.FloatField(required=False)
+    exchange = serializers.CharField(required=False)
+
+
+class HkHoldDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = HkHoldRecordSerializer(many=True)
+
+
+class SuccessResponseHkHoldSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = HkHoldDataSerializer()
+
+
+# --- 沪深港通股票列表（stock_hsgt） ---
+class StockHsgtRecordSerializer(serializers.Serializer):
+    """
+    stock_hsgt 记录字段序列化器
+
+    功能：序列化沪深港通股票列表记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    type = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    type_name = serializers.CharField(required=False)
+
+
+class StockHsgtDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = StockHsgtRecordSerializer(many=True)
+
+
+class SuccessResponseStockHsgtSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = StockHsgtDataSerializer()
+
+
+# --- 沪深股通十大成交股（hsgt_top10） ---
+class HsgtTop10RecordSerializer(serializers.Serializer):
+    """
+    hsgt_top10 记录字段序列化器
+
+    功能：序列化每日前十大成交股记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    trade_date = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    close = serializers.FloatField(required=False)
+    change = serializers.FloatField(required=False)
+    rank = serializers.IntegerField(required=False)
+    market_type = serializers.CharField(required=False)
+    amount = serializers.FloatField(required=False)
+    net_amount = serializers.FloatField(required=False)
+    buy = serializers.FloatField(required=False)
+    sell = serializers.FloatField(required=False)
+
+
+class HsgtTop10DataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = HsgtTop10RecordSerializer(many=True)
+
+
+class SuccessResponseHsgtTop10Serializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = HsgtTop10DataSerializer()
+
+
+# --- 上证E互动问答（irm_qa_sh） ---
+class IrmQaShRecordSerializer(serializers.Serializer):
+    """
+    irm_qa_sh 记录字段序列化器
+
+    功能：序列化上证e互动问答记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    q = serializers.CharField(required=False)
+    a = serializers.CharField(required=False)
+    pub_time = serializers.CharField(required=False)
+
+
+class IrmQaShDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = IrmQaShRecordSerializer(many=True)
+
+
+class SuccessResponseIrmQaShSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = IrmQaShDataSerializer()
+
+
+# --- 深证互动易问答（irm_qa_sz） ---
+class IrmQaSzRecordSerializer(serializers.Serializer):
+    """
+    irm_qa_sz 记录字段序列化器
+
+    功能：序列化深证互动易问答记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    q = serializers.CharField(required=False)
+    a = serializers.CharField(required=False)
+    pub_time = serializers.CharField(required=False)
+    industry = serializers.CharField(required=False)
+
+
+class IrmQaSzDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = IrmQaSzRecordSerializer(many=True)
+
+
+class SuccessResponseIrmQaSzSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = IrmQaSzDataSerializer()
+
+
+# --- 每日筹码及胜率（cyq_perf） ---
+class CyqPerfRecordSerializer(serializers.Serializer):
+    """
+    cyq_perf 记录字段序列化器
+
+    功能：序列化每日筹码及胜率记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    his_low = serializers.FloatField(required=False)
+    his_high = serializers.FloatField(required=False)
+    cost_5pct = serializers.FloatField(required=False)
+    cost_15pct = serializers.FloatField(required=False)
+    cost_50pct = serializers.FloatField(required=False)
+    cost_85pct = serializers.FloatField(required=False)
+    cost_95pct = serializers.FloatField(required=False)
+    weight_avg = serializers.FloatField(required=False)
+    winner_rate = serializers.FloatField(required=False)
+
+
+class CyqPerfDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = CyqPerfRecordSerializer(many=True)
+
+
+class SuccessResponseCyqPerfSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = CyqPerfDataSerializer()
+
+
+# --- 申万行业分类（index_classify） ---
+class IndexClassifyRecordSerializer(serializers.Serializer):
+    """
+    index_classify 记录字段序列化器
+
+    功能：序列化申万行业分类记录（2014版/2021版）。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    industry_code = serializers.CharField(required=False)
+    index_code = serializers.CharField(required=False)
+    l1_name = serializers.CharField(required=False)
+    l2_name = serializers.CharField(required=False)
+    l3_name = serializers.CharField(required=False)
+    category = serializers.CharField(required=False)
+    is_pub = serializers.CharField(required=False)
+    reason = serializers.CharField(required=False)
+    cons_num = serializers.IntegerField(required=False)
+
+
+class IndexClassifyDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = IndexClassifyRecordSerializer(many=True)
+
+
+class SuccessResponseIndexClassifySerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = IndexClassifyDataSerializer()
+
+
+# --- 申万行业成分构成(分级)（index_member_all） ---
+class IndexMemberAllRecordSerializer(serializers.Serializer):
+    """
+    index_member_all 记录字段序列化器
+
+    功能：序列化申万行业成分构成（分级）记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    l1_code = serializers.CharField(required=False)
+    l1_name = serializers.CharField(required=False)
+    l2_code = serializers.CharField(required=False)
+    l2_name = serializers.CharField(required=False)
+    l3_code = serializers.CharField(required=False)
+    l3_name = serializers.CharField(required=False)
+    ts_code = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    in_date = serializers.CharField(required=False)
+    out_date = serializers.CharField(required=False)
+    is_new = serializers.CharField(required=False)
+
+
+class IndexMemberAllDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = IndexMemberAllRecordSerializer(many=True)
+
+
+class SuccessResponseIndexMemberAllSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = IndexMemberAllDataSerializer()
+
+
+# --- 大盘指数每日指标（index_dailybasic） ---
+class IndexDailybasicRecordSerializer(serializers.Serializer):
+    """
+    index_dailybasic 记录字段序列化器
+
+    功能：序列化大盘指数每日指标记录。
+    参数：无。
+    返回值：单条记录的序列化结构。
+    事件：无。
+    """
+    ts_code = serializers.CharField(required=False)
+    trade_date = serializers.CharField(required=False)
+    total_mv = serializers.FloatField(required=False)
+    float_mv = serializers.FloatField(required=False)
+    total_share = serializers.FloatField(required=False)
+    float_share = serializers.FloatField(required=False)
+    free_share = serializers.FloatField(required=False)
+    turnover_rate = serializers.FloatField(required=False)
+    turnover_rate_f = serializers.FloatField(required=False)
+    pe = serializers.FloatField(required=False)
+    pe_ttm = serializers.FloatField(required=False)
+    pb = serializers.FloatField(required=False)
+
+
+class IndexDailybasicDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = IndexDailybasicRecordSerializer(many=True)
+
+
+class SuccessResponseIndexDailybasicSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = IndexDailybasicDataSerializer()
