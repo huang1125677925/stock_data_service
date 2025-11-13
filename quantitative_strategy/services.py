@@ -34,6 +34,7 @@ try:
     from .strategies.bollinger_strategy import BollingerStrategy
     from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from .strategies.nineturn_strategy import NineTurnStrategy
+    from .strategies.ma_10_trailing_strategy import MATenTrailingStrategy
     from indival_stock_data.services import IndividualStockService
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
@@ -67,6 +68,7 @@ except ImportError:
     from quantitative_strategy.strategies.bollinger_strategy import BollingerStrategy
     from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from quantitative_strategy.strategies.nineturn_strategy import NineTurnStrategy
+    from quantitative_strategy.strategies.ma_10_trailing_strategy import MATenTrailingStrategy
 
     from indival_stock_data.services import IndividualStockService
 
@@ -178,6 +180,14 @@ class BacktestService:
             
             # 删除包含NaN的行
             df.dropna(inplace=True)
+
+            # 补充占位的九转信号列，避免数据源缺失导致回测数据映射报错
+            # 这两列在部分策略（如九转策略）中会使用；其他策略保持为0不影响计算
+            for sig_col in ['nine_down_turn', 'nine_up_turn']:
+                if sig_col not in df.columns:
+                    df[sig_col] = 0
+                # 确保类型为整数（0/1），并处理潜在的非数值情况
+                df[sig_col] = pd.to_numeric(df[sig_col], errors='coerce').fillna(0).astype(int)
             
             self.logger.info(f"成功获取股票 {stock_code} 数据，共 {len(df)} 条记录")
             return df
@@ -273,12 +283,13 @@ class BacktestService:
                         end_date=task.end_date.strftime('%Y-%m-%d')
                     )
                     if nine_df is not None and not nine_df.empty:
-                        # 仅保留信号列，按索引（日期）左连接
-                        df = df.join(nine_df[['nine_down_turn', 'nine_up_turn']], how='left')
-                        # 缺失填0，并确保为数值型
+                        # 仅保留信号列，按索引对齐并覆盖到已有列，避免列名重叠导致 join 报错
+                        aligned_index = nine_df.index.intersection(df.index)
                         for col in ['nine_down_turn', 'nine_up_turn']:
-                            if col in df.columns:
-                                df[col] = pd.to_numeric(df[col].fillna(0), errors='coerce').fillna(0).astype(int)
+                            if col in nine_df.columns:
+                                df.loc[aligned_index, col] = pd.to_numeric(
+                                    nine_df.loc[aligned_index, col], errors='coerce'
+                                ).fillna(0).astype(int)
                         self.logger.info(f"九转信号已合并: {task.stock_code}, 记录数={len(nine_df)}")
                     else:
                         self.logger.warning(f"未获取到九转信号数据: {task.stock_code}")
