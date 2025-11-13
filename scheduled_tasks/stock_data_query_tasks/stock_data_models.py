@@ -118,3 +118,91 @@ class StockDailyData:
             'amplitude': (self.high - self.low) / self.low if self.high and self.low else 0.0,
             'turnover_rate': self.turn
         }
+
+
+@dataclass
+class StockWeeklyData:
+    """
+    股票周频数据类
+    功能：表示从baostock获取的周频K线数据，便于统一转换入库
+    参数：
+    - date(str): 交易周标识日期（YYYY-MM-DD，通常为该周最后交易日）
+    - code(str): 证券代码（如 sh.600000）
+    - open(float): 开盘价
+    - high(float): 最高价
+    - low(float): 最低价
+    - close(float): 收盘价
+    - volume(int): 成交量（股）
+    - amount(float): 成交额（元）
+    - adjustflag(str): 复权状态(1后复权/2前复权/3不复权)
+    - turn(Optional[float]): 换手率
+    - pctChg(Optional[float]): 涨跌幅(%)
+    返回值：
+    - to_model_dict() 返回与模型字段一致的字典，便于批量入库
+    事件：
+    - 解析行数据时进行类型转换与容错处理
+    """
+    date: str
+    code: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    amount: float
+    adjustflag: str
+    turn: Optional[float] = None
+    pctChg: Optional[float] = None
+
+    @classmethod
+    def from_baostock_row(cls, row_data: List[str]) -> 'StockWeeklyData':
+        """
+        从baostock返回的行数据创建StockWeeklyData实例
+        功能：解析周频K线行数据
+        参数：
+        - row_data(List[str]): 字段顺序为
+          date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
+        返回值：
+        - StockWeeklyData 实例
+        事件：
+        - 字段长度校验与类型转换
+        """
+        if len(row_data) < 11:
+            raise ValueError(f"数据格式不正确，期望至少11个字段，实际获得{len(row_data)}个字段")
+
+        return cls(
+            date=row_data[0],
+            code=row_data[1],
+            open=float(row_data[2]) if row_data[2] else 0.0,
+            high=float(row_data[3]) if row_data[3] else 0.0,
+            low=float(row_data[4]) if row_data[4] else 0.0,
+            close=float(row_data[5]) if row_data[5] else 0.0,
+            volume=int(float(row_data[6])) if row_data[6] else 0,
+            amount=float(row_data[7]) if row_data[7] else 0.0,
+            adjustflag=row_data[8],
+            turn=float(row_data[9]) if row_data[9] else None,
+            pctChg=float(row_data[10]) if row_data[10] else None,
+        )
+
+    def to_model_dict(self) -> dict:
+        """
+        将数据转换为适合 IndividualStockWeekly 模型的字典格式
+        功能：统一字段命名以适配模型
+        参数：无
+        返回值：
+        - dict：与 IndividualStockWeekly 字段一致的字典
+        事件：
+        - 处理空值与计算衍生字段
+        """
+        return {
+            'open_price': self.open,
+            'high_price': self.high,
+            'low_price': self.low,
+            'close_price': self.close,
+            'volume': self.volume,
+            'amount': self.amount,
+            'change_percent': self.pctChg if self.pctChg is not None else 0.0,
+            'change_amount': 0.0,  # 周频不含preclose，无法直接计算
+            'amplitude': (self.high - self.low) / self.low if self.high and self.low else 0.0,
+            'turnover_rate': self.turn
+        }

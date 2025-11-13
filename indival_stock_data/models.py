@@ -153,6 +153,76 @@ class IndividualStockDaily(models.Model):
         }
 
 
+class IndividualStockWeekly(models.Model):
+    """
+    个股周频数据模型
+    功能：存储每只股票按周聚合后的行情数据，字段与日频保持一致便于前后端复用。
+    参数：
+    - stock(ForeignKey[IndividualStock]): 所属股票
+    - date(DateField): 周周期标识日期（通常取该周最后一个交易日）
+    - open_price(Decimal): 开盘价
+    - close_price(Decimal): 收盘价
+    - high_price(Decimal): 最高价
+    - low_price(Decimal): 最低价
+    - change_percent(Decimal): 涨跌幅(%)
+    - change_amount(Decimal): 涨跌额
+    - volume(BigInteger): 成交量(手)
+    - amount(Decimal): 成交额(元)
+    - amplitude(Decimal, 可空): 振幅(%)
+    - turnover_rate(Decimal, 可空): 换手率(%)
+    返回值：
+    - to_dict() 返回标准字典结构，字段与日频一致，便于统一接口响应。
+    事件：
+    - 创建或更新数据时，确保(stock, date)唯一，避免重复记录。
+    """
+    stock = models.ForeignKey('IndividualStock', on_delete=models.CASCADE, related_name='weekly_data', verbose_name='所属股票')
+    date = models.DateField(verbose_name='周周期日期')
+    open_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='开盘价')
+    close_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='收盘价')
+    high_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='最高价')
+    low_price = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='最低价')
+    change_percent = models.DecimalField(max_digits=8, decimal_places=3, verbose_name='涨跌幅(%)')
+    change_amount = models.DecimalField(max_digits=10, decimal_places=3, verbose_name='涨跌额')
+    volume = models.BigIntegerField(verbose_name='成交量(手)')
+    amount = models.DecimalField(max_digits=20, decimal_places=2, verbose_name='成交额(元)')
+    amplitude = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='振幅(%)')
+    turnover_rate = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name='换手率(%)')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'individual_stock_weekly'
+        verbose_name = '个股周频数据'
+        verbose_name_plural = '个股周频数据'
+        ordering = ['-date', 'stock']
+        indexes = [
+            models.Index(fields=['stock', '-date']),
+            models.Index(fields=['-date']),
+        ]
+        unique_together = ['stock', 'date']
+
+    def __str__(self):
+        return f'{self.stock.name} - {self.date} - {self.change_percent}%'
+
+    def to_dict(self):
+        """转换为字典格式（与日频保持一致字段）"""
+        return {
+            'stock_code': self.stock.code,
+            'stock_name': self.stock.name,
+            'date': self.date.isoformat(),
+            'open_price': float(self.open_price),
+            'close_price': float(self.close_price),
+            'high_price': float(self.high_price),
+            'low_price': float(self.low_price),
+            'change_percent': float(self.change_percent),
+            'change_amount': float(self.change_amount),
+            'volume': self.volume,
+            'amount': float(self.amount),
+            'amplitude': float(self.amplitude) if self.amplitude else None,
+            'turnover_rate': float(self.turnover_rate) if self.turnover_rate else None,
+            'created_at': self.created_at.isoformat()
+        }
+
+
 class IndividualStockRealtime(models.Model):
     """个股实时行情模型"""
     stock = models.ForeignKey(IndividualStock, on_delete=models.CASCADE, related_name='realtime_data', verbose_name='所属股票')

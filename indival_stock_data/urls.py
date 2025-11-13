@@ -18,6 +18,7 @@ urlpatterns = [
     # 获取单只股票实时行情
     path('stocks/<str:stock_code>/realtime/', views.StockRealtimeView.as_view(), name='stock_realtime'),
     # 获取股票历史行情数据
+    # 查询参数：start_date(YYYYMMDD, 可选)、end_date(YYYYMMDD, 可选)、adjust("", qfq, hfq, 可选)、frequency(daily|weekly, 可选，默认daily)
     path('stocks/<str:stock_code>/history/', views.StockHistoryView.as_view(), name='stock_history'),
     # 获取股票详细信息
     path('stocks/<str:stock_code>/info/', views.StockInfoView.as_view(), name='stock_info'),

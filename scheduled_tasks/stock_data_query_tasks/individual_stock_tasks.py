@@ -22,12 +22,13 @@ import pandas as pd
 from indival_stock_data.models import IndividualStock, PerformanceReport, BalanceSheet, IncomeStatement, CashFlowStatement
 import time
 from indival_stock_data.models import IndividualStockDaily
+from indival_stock_data.models import IndividualStockWeekly
 from django.db import transaction
 from typing import Tuple, List, Set, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 
-from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData
+from scheduled_tasks.stock_data_query_tasks.stock_data_models import StockDailyData, StockWeeklyData
 from scheduled_tasks.stock_data_query_tasks.tushare_data import fetch_bak_daily
 
 from django.utils import timezone
@@ -564,6 +565,255 @@ def judge_stock_type(stock_code: str) -> str:
         return "bj." + stock_code  # 北交所股票
     else:
         return "sh." + stock_code  # 默认使用上海交易所
+
+
+def fetch_stock_weekly_data(stock_code: str, start_date: str = None, end_date: str = None) -> List[StockWeeklyData]:
+    """
+    获取指定股票在指定日期范围的周频数据。
+
+    功能：
+    - 通过 baostock 的 `query_history_k_data_plus` 接口，频率设置为 `w`，获取周线数据
+    - 使用统一解析类 `StockWeeklyData` 进行行数据转换
+
+    参数：
+    - stock_code(str): 股票代码，例如 `sh.600000`
+    - start_date(str): 开始日期，`YYYY-MM-DD`，不传则默认近30天
+    - end_date(str): 结束日期，`YYYY-MM-DD`，不传则默认今天
+
+    返回值：
+    - List[StockWeeklyData]: 周频数据对象列表
+
+    事件：
+    - 外部数据源请求：baostock 登录/查询/登出
+    - 超时与重试控制，最大重试3次
+    """
+    lg = bs.login()
+    print('login respond error_code:'+lg.error_code)
+    print('login respond  error_msg:'+lg.error_msg)
+
+    if not start_date or not end_date:
+        today = datetime.now().strftime('%Y-%m-%d')
+        thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        start_date = start_date or thirty_days_ago
+        end_date = end_date or today
+
+    max_retries = 3
+    retry_count = 0
+    timeout_seconds = 10
+    rs = None
+
+    while retry_count < max_retries:
+        try:
+            import signal
+            from contextlib import contextmanager
+
+            @contextmanager
+            def timeout_handler(seconds):
+                def handle_timeout(signum, frame):
+                    raise TimeoutError(f"查询超时，已经等待{seconds}秒")
+                original_handler = signal.getsignal(signal.SIGALRM)
+                signal.signal(signal.SIGALRM, handle_timeout)
+                signal.alarm(seconds)
+                try:
+                    yield
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, original_handler)
+
+            with timeout_handler(timeout_seconds):
+                rs = bs.query_history_k_data_plus(
+                    stock_code,
+                    "date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg",
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency="w",
+                    adjustflag="2"
+                )
+
+                print('query_history_k_data_plus respond error_code:'+rs.error_code)
+                print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
+
+                if rs.error_code == '0':
+                    break
+                else:
+                    print(f"查询失败，错误码: {rs.error_code}, 错误信息: {rs.error_msg}")
+                    break
+
+        except TimeoutError as e:
+            retry_count += 1
+            print(f"尝试 {retry_count}/{max_retries}: {str(e)}")
+            if retry_count >= max_retries:
+                print(f"达到最大重试次数 {max_retries}，查询失败")
+                from baostock.data.resultset import ResultSet
+                rs = ResultSet()
+                rs.error_code = '1'
+                rs.error_msg = f'查询超时，已重试 {max_retries} 次'
+        except Exception as e:
+            retry_count += 1
+            print(f"尝试 {retry_count}/{max_retries}: 发生异常 - {str(e)}")
+            if retry_count >= max_retries:
+                print(f"达到最大重试次数 {max_retries}，查询失败")
+                from baostock.data.resultset import ResultSet
+                rs = ResultSet()
+                rs.error_code = '1'
+                rs.error_msg = f'查询发生异常: {str(e)}'
+
+    data_list: List[StockWeeklyData] = []
+    if rs is not None:
+        while (rs.error_code == '0') & rs.next():
+            row_data = rs.get_row_data()
+            try:
+                stock_data = StockWeeklyData.from_baostock_row(row_data)
+                data_list.append(stock_data)
+            except Exception as e:
+                print(f"处理周频数据行时出错: {e}")
+                print(f"错误数据行: {row_data}")
+
+    bs.logout()
+
+    return data_list
+
+
+def update_stock_weekly_history(
+    stock_code_list: list = None,
+    days: int = 30,
+    batch_size: int = 300,
+    sleep_seconds: float = 0.03,
+    ignore_conflicts: bool = True,
+    order_by_date: bool = True
+) -> Tuple[int, int]:
+    """
+    批量更新股票周频历史数据。
+
+    功能：
+    - 迭代股票列表，在指定日期范围内抓取周频数据并写入 `IndividualStockWeekly`
+    - 按批量进行 `bulk_create`，可选忽略冲突，支持轻微节流
+
+    参数：
+    - stock_code_list(list): 股票对象列表（`IndividualStock`），若为 None 则返回0
+    - days(int): 回溯天数（会转换为日期范围）
+    - batch_size(int): 批量写入大小
+    - sleep_seconds(float): 批次间休眠秒数
+    - ignore_conflicts(bool): 是否忽略唯一冲突
+    - order_by_date(bool): 是否按日期排序后写入
+
+    返回值：
+    - Tuple[int, int]: (有新增数据的股票数, 新增的历史数据条数)
+
+    事件：
+    - 日志记录、数据库批量插入事务、异常捕获
+    """
+    try:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+        updated_stocks = 0
+        updated_history = 0
+
+        start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+
+        if not stock_code_list:
+            logger.warning("需要更新的股票")
+            return 0, 0
+
+        for stock in stock_code_list:
+            logger.info(f"开始更新股票 {stock.code} 的周频历史数据")
+            try:
+                existing_dates = set(IndividualStockWeekly.objects.filter(
+                    stock=stock,
+                    date__gte=start_date_obj,
+                    date__lte=end_date_obj
+                ).values_list('date', flat=True))
+                time.sleep(0.2)
+
+                stock_code = judge_stock_type(stock.code)
+                weekly_data_list = fetch_stock_weekly_data(stock_code, start_date, end_date)
+
+                if not weekly_data_list:
+                    logger.warning(f"获取股票 {stock.code} 周频历史数据为空")
+                    continue
+
+                records_to_create = []
+                for row in weekly_data_list:
+                    if abs(row.open - row.close) < 0.000001 and abs(row.open - row.high) < 0.000001 and abs(row.open - row.low) < 0.000001:
+                        continue
+                    date_obj = datetime.strptime(str(row.date), '%Y-%m-%d').date()
+                    stock_weekly_data = row.to_model_dict()
+
+                    if date_obj not in existing_dates:
+                        stock_weekly_data['stock'] = stock
+                        stock_weekly_data['date'] = date_obj
+                        records_to_create.append(IndividualStockWeekly(**stock_weekly_data))
+
+                if order_by_date and records_to_create:
+                    try:
+                        records_to_create.sort(key=lambda obj: obj.date)
+                    except Exception:
+                        pass
+
+                created_total_for_stock = 0
+                if records_to_create:
+                    total = len(records_to_create)
+                    batches = (total + batch_size - 1) // batch_size
+                    for i in range(0, total, batch_size):
+                        chunk = records_to_create[i:i + batch_size]
+                        try:
+                            with transaction.atomic():
+                                inserted = IndividualStockWeekly.objects.bulk_create(
+                                    chunk,
+                                    batch_size=batch_size,
+                                    ignore_conflicts=ignore_conflicts
+                                )
+                            created_total_for_stock += len(inserted)
+                        except Exception as be:
+                            logger.error(f"股票 {stock.code} 周频第 {i//batch_size + 1}/{batches} 个批次插入失败: {be}")
+                        if sleep_seconds > 0:
+                            time.sleep(sleep_seconds)
+
+                if created_total_for_stock > 0:
+                    updated_stocks += 1
+                    updated_history += created_total_for_stock
+                    logger.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} 完成股票 {stock.code} 的周频数据写入: 新增 {created_total_for_stock} 条")
+            except Exception as e:
+                logger.error(f"更新股票 {stock.code} 周频历史数据失败: {str(e)}")
+
+        logger.info(f"更新股票周频历史数据完成: 更新 {updated_stocks} 只股票，新增 {updated_history} 条历史数据")
+        return updated_stocks, updated_history
+    except Exception as e:
+        logger.error(f"更新股票周频历史数据失败: {str(e)}")
+        return 0, 0
+
+
+def update_individual_stock_weekly_data():
+    """
+    更新所有个股的周频数据
+    功能：每天/每周定时执行，批量抓取并入库周频数据（不含指数）
+    参数：无
+    返回值：
+    - dict：包含 status 与 message 的结果字典
+    事件：
+    - 读取个股列表、过滤指数、调用批量入库函数并记录日志
+    """
+    logger.info("开始执行个股周频数据更新任务")
+
+    try:
+        stocks = IndividualStock.objects.filter()
+        if not stocks.exists():
+            logger.info("数据库中没有个股数据，先获取个股列表")
+            return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
+
+        stock_code_list = [stock for stock in stocks if stock.index_type is None]
+        updated_stocks, updated_history = update_stock_weekly_history(stock_code_list=stock_code_list, days=3000)
+
+        logger.info(f"个股周频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
+        return {
+            "status": "success",
+            "message": f"个股周频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据"
+        }
+    except Exception as e:
+        logger.error(f"个股周频数据更新任务执行失败: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 def fetch_performance_report(date: str):
     """
@@ -1505,7 +1755,8 @@ if __name__ == '__main__':
 
 
     # fetch_stock_daily_data('sh.000001', '2024-09-30', '2025-10-18')
-    update_individual_stock_daily_data()
+    # update_individual_stock_daily_data()
+    update_individual_stock_weekly_data()
     # update_index_stock_daily_data()
     # update_individual_stock_daily_data()
     # fetch_individual_stocks()

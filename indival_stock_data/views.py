@@ -216,6 +216,20 @@ class StockHistoryView(APIView):
     获取股票历史行情数据
     """
     def get(self, request, stock_code):
+        """
+        功能：获取指定股票的历史行情数据，支持日频和周频。
+        参数：
+        - request(HttpRequest): 请求对象，查询参数包括：
+          - start_date(str, 可选): 开始日期，格式：YYYYMMDD，默认30天前
+          - end_date(str, 可选): 结束日期，格式：YYYYMMDD，默认今天
+          - adjust(str, 可选): 复权类型，""为不复权，"qfq"前复权，"hfq"后复权
+          - frequency(str, 可选): 数据频率，"daily"(默认) 或 "weekly"（周频）
+        - stock_code(str): 股票代码
+        返回值：
+        - JsonResponse: 使用success_response返回历史数据列表；参数错误或服务异常使用error_response返回错误信息。
+        事件：
+        - 当股票代码无效或参数格式错误时，记录日志并返回错误响应；当查询无数据时返回空列表。
+        """
         try:
             if not validate_stock_symbol(stock_code):
                 return error_response(f"无效的股票代码: {stock_code}", 400)
@@ -224,9 +238,10 @@ class StockHistoryView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             adjust = request.query_params.get('adjust', "")
+            frequency = request.query_params.get('frequency', 'daily')
             
             # 获取历史数据
-            history = individual_stock_service.get_stock_history(stock_code, start_date, end_date, adjust)
+            history = individual_stock_service.get_stock_history(stock_code, start_date, end_date, adjust, frequency)
             
             
             return success_response(history)

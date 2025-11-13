@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
 from django.db import transaction
-from .models import IndividualStock, IndividualStockDaily, IndividualStockRealtime, PerformanceReport
+from .models import IndividualStock, IndividualStockDaily, IndividualStockWeekly, IndividualStockRealtime, PerformanceReport
 from common.validators import validate_stock_symbol
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class IndividualStockService:
             logger.error(f"获取股票{stock_code if stock_code else '所有'}实时行情失败: {str(e)}")
             return None
     
-    def get_stock_history(self, stock_code: str, start_date: str = None, end_date: str = None, adjust: str = "") -> Optional[List[Dict]]:
+    def get_stock_history(self, stock_code: str, start_date: str = None, end_date: str = None, adjust: str = "", frequency: str = "daily") -> Optional[List[Dict]]:
         """
         获取股票历史行情数据
         
@@ -150,6 +150,7 @@ class IndividualStockService:
             start_date: 开始日期，格式：YYYYMMDD，默认为30天前
             end_date: 结束日期，格式：YYYYMMDD，默认为今天
             adjust: 复权类型，""为不复权，"qfq"为前复权，"hfq"为后复权
+            frequency: 频率，支持"daily"（默认）和"weekly"，当为"weekly"时从周频模型获取数据
         
         Returns:
             股票历史行情数据列表
@@ -176,11 +177,22 @@ class IndividualStockService:
             start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
             end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
             
-            db_history = IndividualStockDaily.objects.filter(
-                stock=stock,
-                date__gte=start_date_obj,
-                date__lte=end_date_obj
-            ).order_by('date')
+            # 根据频率选择模型
+            freq = (frequency or "daily").lower()
+            if freq in ("weekly", "week", "w"):
+                queryset = IndividualStockWeekly.objects.filter(
+                    stock=stock,
+                    date__gte=start_date_obj,
+                    date__lte=end_date_obj
+                ).order_by('date')
+            else:
+                queryset = IndividualStockDaily.objects.filter(
+                    stock=stock,
+                    date__gte=start_date_obj,
+                    date__lte=end_date_obj
+                ).order_by('date')
+
+            db_history = queryset
             
             if db_history.exists():
                 history_list = [history.to_dict() for history in db_history]
