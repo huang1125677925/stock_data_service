@@ -120,7 +120,7 @@ class MATenTrailingStrategy(BaseQuantStrategy):
 
         stop_trigger = False
         if self.position.size > 0:
-            below_ma = (self.data.close[0] < self.sma_mid[0])
+            below_ma = (self.data.close[0] < self.sma_slow[0])
             loss_hit = (dd_pct <= -self.params.stop_loss_pct)
             stop_trigger = loss_hit
 

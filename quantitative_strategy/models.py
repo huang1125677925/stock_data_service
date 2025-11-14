@@ -58,6 +58,13 @@ class BacktestTask(models.Model):
     initial_cash = models.DecimalField(max_digits=15, decimal_places=2, default=100000, verbose_name='初始资金')
     commission = models.DecimalField(max_digits=6, decimal_places=4, default=0.001, verbose_name='手续费率')
     strategy_params = models.JSONField(default=dict, verbose_name='策略参数')
+    # 数据频率：daily（日频，默认）、weekly（周频）
+    frequency = models.CharField(
+        max_length=20,
+        default='daily',
+        verbose_name='数据频率',
+        help_text='数据频率类型：daily（日频，默认）或 weekly（周频）'
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name='状态')
     error_message = models.TextField(blank=True, verbose_name='错误信息')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')

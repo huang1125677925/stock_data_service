@@ -109,7 +109,7 @@ class BacktestService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def get_stock_data(self, stock_code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    def get_stock_data(self, stock_code: str, start_date: str, end_date: str, frequency: str = "daily") -> Optional[pd.DataFrame]:
         """
         获取股票历史数据
         
@@ -117,6 +117,7 @@ class BacktestService:
             stock_code: 股票代码
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
+            frequency: 数据频率，支持"daily"（默认）和"weekly"
         
         Returns:
             股票数据DataFrame或None
@@ -137,6 +138,7 @@ class BacktestService:
                 stock_code=stock_code,
                 start_date=start_date_formatted,
                 end_date=end_date_formatted,
+                frequency=frequency,
                 # adjust="qfq"  # 前复权
             )
             
@@ -204,6 +206,7 @@ class BacktestService:
                            initial_cash: float = 100000,
                            commission: float = 0.001,
                            strategy_params: Dict[str, Any] = None,
+                           frequency: str = "daily",
                            user=None) -> str:
         """
         创建回测任务
@@ -216,6 +219,7 @@ class BacktestService:
             initial_cash: 初始资金
             commission: 手续费率
             strategy_params: 策略参数
+            frequency: 数据频率，"daily"（默认）或"weekly"
             user: 用户对象
         
         Returns:
@@ -237,6 +241,7 @@ class BacktestService:
             initial_cash=Decimal(str(initial_cash)),
             commission=Decimal(str(commission)),
             strategy_params=strategy_params or {},
+            frequency=frequency or "daily",
             status='pending'
         )
         
@@ -263,7 +268,8 @@ class BacktestService:
             df = self.get_stock_data(
                 task.stock_code,
                 task.start_date.strftime('%Y-%m-%d'),
-                task.end_date.strftime('%Y-%m-%d')
+                task.end_date.strftime('%Y-%m-%d'),
+                frequency=getattr(task, 'frequency', 'daily')
             )
             
             if df is None or df.empty:

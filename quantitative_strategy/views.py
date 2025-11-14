@@ -74,6 +74,7 @@ def create_backtest(request):
             "end_date": "2023-12-31",
             "initial_cash": 100000,
             "commission": 0.001,
+            "frequency": "daily",  # 可选：daily（默认）或 weekly（周频）
             "strategy_params": {
                 "short_period": 5,
                 "long_period": 20
@@ -103,6 +104,11 @@ def create_backtest(request):
         stock_code = data['stock_code']
         start_date = data['start_date']
         end_date = data['end_date']
+        frequency = str(data.get('frequency', 'daily')).lower()
+
+        # 校验频率参数
+        if frequency not in ('daily', 'weekly'):
+            return error_response("frequency 参数仅支持 'daily' 或 'weekly'", 400)
         
         # 验证日期格式
         try:
@@ -149,6 +155,7 @@ def create_backtest(request):
             initial_cash=initial_cash,
             commission=commission,
             strategy_params=strategy_params,
+            frequency=frequency,
             user=request.user
         )
         
