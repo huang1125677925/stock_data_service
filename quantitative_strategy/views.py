@@ -326,6 +326,7 @@ def get_backtest_history(request):
                 'initial_cash': float(task.initial_cash),
                 'commission': float(task.commission),
                 'frequency': task.frequency,
+                'strategy_params': task.strategy_params,
                 'status': task.status,
                 'created_at': task.created_at.isoformat(),
                 'updated_at': task.updated_at.isoformat()
