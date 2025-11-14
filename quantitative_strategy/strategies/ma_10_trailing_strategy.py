@@ -38,7 +38,7 @@ class MATenTrailingStrategy(BaseQuantStrategy):
     """
 
     _strategy_name = 'ma_10_trailing_strategy'
-    _strategy_description = '10日均线趋势分批仓位管理：多头排列+上穿10日线进场，加仓30/20/10，跌破10日线或亏损≥10%分批止损'
+    _strategy_description = '10日均线趋势分批仓位管理：多头排列+上穿中速日线进场，加仓30/20/10，跌破慢速日线或亏损≥10%分批止损'
     _strategy_params = {
         'fast_period': {'type': 'int', 'default': 5, 'description': '快速均线周期'},
         'mid_period': {'type': 'int', 'default': 10, 'description': '中期均线周期（触发线）'},
@@ -122,7 +122,7 @@ class MATenTrailingStrategy(BaseQuantStrategy):
         if self.position.size > 0:
             below_ma = (self.data.close[0] < self.sma_slow[0])
             loss_hit = (dd_pct <= -self.params.stop_loss_pct)
-            stop_trigger = loss_hit
+            stop_trigger = loss_hit or below_ma
 
         # ===== 进场/加仓 =====
         if self.position.size == 0:
