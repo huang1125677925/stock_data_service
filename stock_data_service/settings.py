@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'stock_market',
     'django_comment_migrate',
     'personal_center',
+    'etfapp',
 ]
 
 MIDDLEWARE = [

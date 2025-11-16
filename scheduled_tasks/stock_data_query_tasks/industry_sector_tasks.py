@@ -606,7 +606,7 @@ def update_industry_sector_fund_flow_data():
 
 if __name__ == '__main__':
     # fetch_industry_sector_fund_flow_data()
-    # update_industry_sector_fund_flow_data()
+    update_industry_sector_fund_flow_data()
     update_industry_sector_daily_data()
 
 #  ('25 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表

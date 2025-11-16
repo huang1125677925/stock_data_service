@@ -45,7 +45,8 @@ def index(request):
             'quantitative_strategy': '/api/quant/',
             'user_management': '/api/user/',
             'scheduled_tasks': '/api/tasks/',
-            'forum': '/api/forum/'
+            'forum': '/api/forum/',
+            'etf': '/django/api/etf/'
         },
         'timestamp': datetime.now().isoformat()
     })
@@ -68,4 +69,5 @@ urlpatterns = [
     path('django/api/forum/', include('forum.urls')),
     path('django/api/market/', include('stock_market.urls')),
     path('django/api/personal/', include('personal_center.urls')),
+    path('django/api/etf/', include('etfapp.urls')),
 ]
