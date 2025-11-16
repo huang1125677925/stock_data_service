@@ -36,6 +36,7 @@ try:
     from .strategies.nineturn_strategy import NineTurnStrategy
     from .strategies.ma_10_trailing_strategy import MATenTrailingStrategy
     from indival_stock_data.services import IndividualStockService
+    from etfapp.services import EtfService
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
     import os
@@ -71,6 +72,7 @@ except ImportError:
     from quantitative_strategy.strategies.ma_10_trailing_strategy import MATenTrailingStrategy
 
     from indival_stock_data.services import IndividualStockService
+    from etfapp.services import EtfService
 
 
 
@@ -166,6 +168,12 @@ class BacktestService:
             # 只重命名存在的列
             existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
             df.rename(columns=existing_columns, inplace=True)
+
+            # 确保列名为字符串（避免 backtrader 对列名执行 lower() 时出错）
+            try:
+                df.columns = [str(c) for c in df.columns]
+            except Exception:
+                pass
             
             # 设置日期索引
             if 'datetime' in df.columns:
@@ -197,38 +205,142 @@ class BacktestService:
         except Exception as e:
             self.logger.error(f"获取股票数据失败: {str(e)}")
             return None
+
+    def get_etf_data(self, ts_code: str, start_date: str, end_date: str, frequency: str = "daily") -> Optional[pd.DataFrame]:
+        """
+        获取ETF历史数据
+        
+        功能：从系统ETF服务查询指定ETF在日期范围内的日线数据，并转换为 backtrader 兼容的 DataFrame。
+        参数：
+        - ts_code: ETF 的 Tushare 代码（如 `510300.SH`）
+        - start_date: 开始日期 (YYYY-MM-DD)
+        - end_date: 结束日期 (YYYY-MM-DD)
+        - frequency: 数据频率，支持"daily"（默认）和"weekly"（按周聚合）
+        返回值：DataFrame 或 None；列包含 `open, high, low, close, volume`，索引为 datetime。
+        事件：查询 ETF 日线数据；当 frequency=weekly 时按周聚合生成OHLCV。
+        """
+        try:
+            etf_service = EtfService()
+            records = etf_service.query_daily(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if not records:
+                self.logger.warning(f"未获取到ETF {ts_code} 的数据")
+                return None
+            
+            # 若返回为ORM对象列表（EtfDaily实例），先转换为字典列表再构建DataFrame
+            if records and not isinstance(records[0], dict):
+                try:
+                    records = [
+                        {
+                            'trade_date': r.trade_date,
+                            'open': float(r.open) if r.open is not None else None,
+                            'high': float(r.high) if r.high is not None else None,
+                            'low': float(r.low) if r.low is not None else None,
+                            'close': float(r.close) if r.close is not None else None,
+                            'vol': float(r.vol) if r.vol is not None else None,
+                            'amount': float(r.amount) if r.amount is not None else None,
+                        }
+                        for r in records
+                    ]
+                except Exception:
+                    try:
+                        records = [dict(r.__dict__) for r in records]
+                    except Exception:
+                        pass
+            print(records)
+            df = pd.DataFrame(records)
+            if df.empty:
+                self.logger.warning(f"ETF {ts_code} 数据为空")
+                return None
+            column_mapping = {
+                'trade_date': 'datetime',
+                'open': 'open',
+                'high': 'high',
+                'low': 'low',
+                'close': 'close',
+                'vol': 'volume',
+            }
+            existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
+            df.rename(columns=existing_columns, inplace=True)
+
+            # 确保列名为字符串并小写（backtrader内部会做lower，这里先统一为字符串以避免'int'无lower报错）
+            try:
+                df.columns = [str(c) for c in df.columns]
+            except Exception:
+                pass
+            if 'datetime' in df.columns:
+                df['datetime'] = pd.to_datetime(df['datetime'])
+                df.set_index('datetime', inplace=True)
+                df.sort_index(inplace=True)
+                df = df[~df.index.duplicated(keep='first')]
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df.dropna(inplace=True)
+            for sig_col in ['nine_down_turn', 'nine_up_turn']:
+                if sig_col not in df.columns:
+                    df[sig_col] = 0
+                df[sig_col] = pd.to_numeric(df[sig_col], errors='coerce').fillna(0).astype(int)
+            if frequency == 'weekly':
+                df = df.resample('W-FRI').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum',
+                    'nine_down_turn': 'max',
+                    'nine_up_turn': 'max',
+                }).dropna()
+            self.logger.info(f"成功获取ETF {ts_code} 数据，共 {len(df)} 条记录")
+            return df
+        except Exception as e:
+            self.logger.error(f"获取ETF数据失败: {str(e)}")
+            return None
     
     def create_backtest_task(self, 
                            strategy_name: str,
                            stock_code: str,
+                           stock_name: str,
                            start_date: str,
                            end_date: str,
                            initial_cash: float = 100000,
                            commission: float = 0.001,
                            strategy_params: Dict[str, Any] = None,
                            frequency: str = "daily",
+                           data_source: str = "stock",
                            user=None) -> str:
         """
         创建回测任务
         
         Args:
             strategy_name: 策略名称
-            stock_code: 股票代码
+            stock_code: 标的代码；当 data_source=stock 时为股票代码，当 data_source=etf 时为 ETF ts_code
             start_date: 开始日期
             end_date: 结束日期
             initial_cash: 初始资金
             commission: 手续费率
             strategy_params: 策略参数
             frequency: 数据频率，"daily"（默认）或"weekly"
+            data_source: 数据来源类型，支持 "stock" 或 "etf"
             user: 用户对象
         
         Returns:
             任务ID
         """
         task_id = str(uuid.uuid4())
-        
-        # 获取股票名称
-        stock_name = self._get_stock_name(stock_code)
+        # 规范化数据来源
+        data_source = (data_source or 'stock').lower()
+        if data_source not in {'stock', 'etf'}:
+            data_source = 'stock'
+
+        # 获取标的名称
+        # if data_source == 'etf':
+        #     stock_name = self._get_etf_name(stock_code)
+        # else:
+        #     stock_name = self._get_stock_name(stock_code)
         
         task = BacktestTask.objects.create(
             task_id=task_id,
@@ -242,6 +354,7 @@ class BacktestService:
             commission=Decimal(str(commission)),
             strategy_params=strategy_params or {},
             frequency=frequency or "daily",
+            data_source=data_source,
             status='pending'
         )
         
@@ -264,17 +377,25 @@ class BacktestService:
             task.status = 'running'
             task.save()
             
-            # 获取股票数据
-            df = self.get_stock_data(
-                task.stock_code,
-                task.start_date.strftime('%Y-%m-%d'),
-                task.end_date.strftime('%Y-%m-%d'),
-                frequency=getattr(task, 'frequency', 'daily')
-            )
+            # 按数据来源获取历史数据
+            if getattr(task, 'data_source', 'stock') == 'etf':
+                df = self.get_etf_data(
+                    ts_code=task.stock_code,
+                    start_date=task.start_date.strftime('%Y-%m-%d'),
+                    end_date=task.end_date.strftime('%Y-%m-%d'),
+                    frequency=getattr(task, 'frequency', 'daily')
+                )
+            else:
+                df = self.get_stock_data(
+                    stock_code=task.stock_code,
+                    start_date=task.start_date.strftime('%Y-%m-%d'),
+                    end_date=task.end_date.strftime('%Y-%m-%d'),
+                    frequency=getattr(task, 'frequency', 'daily')
+                )
             
             if df is None or df.empty:
-                raise ValueError(f"无法获取股票 {task.stock_code} 的数据")
-            print(f"股票 {task.stock_code} 数据长度: {len(df)}")
+                raise ValueError(f"无法获取标的 {task.stock_code} 的数据（来源：{getattr(task, 'data_source', 'stock')}）")
+            print(f"标的 {task.stock_code} 数据长度: {len(df)}，来源：{getattr(task, 'data_source', 'stock')}" )
             # 获取策略类
             strategy_class = StrategyRegistry.get_strategy(task.strategy_name)
             if strategy_class is None:
@@ -508,6 +629,26 @@ class BacktestService:
             return stock_object.name if stock_object else stock_code
         except:
             return stock_code
+
+    def _get_etf_name(self, ts_code: str) -> str:
+        """
+        获取ETF名称
+        
+        Args:
+            ts_code: ETF 的 TS 代码（如 510300.SH）
+        
+        Returns:
+            ETF名称字符串；若查询失败则返回原始 ts_code
+        """
+        try:
+            etf_service = EtfService()
+            basics = etf_service.query_basic(ts_code=ts_code)
+            if basics:
+                row = basics[0]
+                return row.get('extname') or row.get('csname') or ts_code
+            return ts_code
+        except Exception:
+            return ts_code
 
     def _to_ts_code(self, stock_code: str) -> str:
         """

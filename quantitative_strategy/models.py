@@ -65,6 +65,18 @@ class BacktestTask(models.Model):
         verbose_name='数据频率',
         help_text='数据频率类型：daily（日频，默认）或 weekly（周频）'
     )
+    # 数据来源类型：stock（个股，默认）、etf（基金）
+    DATA_SOURCE_CHOICES = [
+        ('stock', '个股'),
+        ('etf', 'ETF'),
+    ]
+    data_source = models.CharField(
+        max_length=20,
+        choices=DATA_SOURCE_CHOICES,
+        default='stock',
+        verbose_name='数据来源',
+        help_text='标的类型：stock（个股）或 etf（基金）；当为etf时，stock_code字段存放ETF ts_code'
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name='状态')
     error_message = models.TextField(blank=True, verbose_name='错误信息')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
@@ -78,7 +90,7 @@ class BacktestTask(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-        return f'{self.task_id} - {self.strategy_name} - {self.stock_code}'
+        return f'{self.task_id} - {self.strategy_name} - {self.stock_code} ({self.data_source})'
     
     def mark_completed(self):
         """标记任务完成"""

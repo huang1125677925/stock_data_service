@@ -69,12 +69,13 @@ def create_backtest(request):
     Request Body:
         {
             "strategy_name": "ma_cross",
-            "stock_code": "000001",
+            "stock_code": "000001" 或 ETF ts_code （当 data_source=etf 时，如 "510300.SH"）, 
             "start_date": "2023-01-01",
             "end_date": "2023-12-31",
             "initial_cash": 100000,
             "commission": 0.001,
             "frequency": "daily",  # 可选：daily（默认）或 weekly（周频）
+            "data_source": "stock" 或 "etf"，默认 "stock",
             "strategy_params": {
                 "short_period": 5,
                 "long_period": 20
@@ -95,20 +96,26 @@ def create_backtest(request):
         data = json.loads(request.body)
         
         # 验证必需参数
-        required_fields = ['strategy_name', 'stock_code', 'start_date', 'end_date']
+        required_fields = ['strategy_name', 'stock_code', 'stock_name', 'start_date', 'end_date']
         for field in required_fields:
             if field not in data:
                 return error_response(f"缺少必需参数: {field}", 400)
         
         strategy_name = data['strategy_name']
         stock_code = data['stock_code']
+        stock_name = data['stock_name']
         start_date = data['start_date']
         end_date = data['end_date']
         frequency = str(data.get('frequency', 'daily')).lower()
+        data_source = str(data.get('data_source', 'stock')).lower()
 
         # 校验频率参数
         if frequency not in ('daily', 'weekly'):
             return error_response("frequency 参数仅支持 'daily' 或 'weekly'", 400)
+
+        # 校验数据来源
+        if data_source not in ('stock', 'etf'):
+            return error_response("data_source 参数仅支持 'stock' 或 'etf'", 400)
         
         # 验证日期格式
         try:
@@ -124,9 +131,15 @@ def create_backtest(request):
         except ValueError:
             return error_response("日期格式错误，请使用YYYY-MM-DD格式", 400)
         
-        # 验证股票代码格式
-        if not stock_code or len(stock_code) != 6 or not stock_code.isdigit():
-            return error_response("股票代码格式错误，请输入6位数字代码", 400)
+        # 验证标的代码格式：根据数据来源不同校验规则不同
+        if data_source == 'stock':
+            if not stock_code or len(stock_code) != 6 or not stock_code.isdigit():
+                return error_response("股票代码格式错误，请输入6位数字代码", 400)
+        else:
+            # ETF 使用 ts_code 形如 510300.SH / 159915.SZ / 430047.BJ
+            import re
+            if not re.match(r"^\d{6}\.(SH|SZ|BJ)$", stock_code):
+                return error_response("ETF代码格式错误，请使用如 510300.SH 的 ts_code 格式", 400)
         
         # 获取可选参数
         initial_cash = float(data.get('initial_cash', 100000))
@@ -150,12 +163,14 @@ def create_backtest(request):
         task_id = backtest_service.create_backtest_task(
             strategy_name=strategy_name,
             stock_code=stock_code,
+            stock_name=stock_name,
             start_date=start_date,
             end_date=end_date,
             initial_cash=initial_cash,
             commission=commission,
             strategy_params=strategy_params,
             frequency=frequency,
+            data_source=data_source,
             user=request.user
         )
         
@@ -269,6 +284,7 @@ def get_backtest_history(request):
         strategy_name (str): 策略名称过滤
         stock_code (str): 股票代码过滤
         status (str): 状态过滤
+        data_source (str): 数据来源过滤，支持 stock/etf
     
     Returns:
         {
@@ -287,6 +303,7 @@ def get_backtest_history(request):
         strategy_name = request.GET.get('strategy_name')
         stock_code = request.GET.get('stock_code')
         status = request.GET.get('status')
+        data_source = request.GET.get('data_source')
         
         # 验证分页参数
         limit, offset = validate_pagination_params(limit, offset)
@@ -306,6 +323,8 @@ def get_backtest_history(request):
         
         if status:
             queryset = queryset.filter(status=status)
+        if data_source:
+            queryset = queryset.filter(data_source=data_source)
         
         # 获取总数
         total = queryset.count()
@@ -327,6 +346,7 @@ def get_backtest_history(request):
                 'commission': float(task.commission),
                 'frequency': task.frequency,
                 'strategy_params': task.strategy_params,
+                'data_source': getattr(task, 'data_source', 'stock'),
                 'status': task.status,
                 'created_at': task.created_at.isoformat(),
                 'updated_at': task.updated_at.isoformat()
@@ -409,6 +429,7 @@ def get_backtest_result(request, task_id):
                 'strategy_name': task.strategy_name,
                 'stock_code': task.stock_code,
                 'stock_name': task.stock_name,
+                'data_source': getattr(task, 'data_source', 'stock'),
                 'start_date': task.start_date.strftime('%Y-%m-%d'),
                 'end_date': task.end_date.strftime('%Y-%m-%d'),
                 'initial_cash': float(task.initial_cash),
@@ -576,6 +597,7 @@ def get_observer_data(request, task_id):
                 'strategy_name': task.strategy_name,
                 'stock_code': task.stock_code,
                 'stock_name': task.stock_name,
+                'data_source': getattr(task, 'data_source', 'stock'),
                 'start_date': task.start_date.strftime('%Y-%m-%d'),
                 'end_date': task.end_date.strftime('%Y-%m-%d'),
                 'initial_cash': float(task.initial_cash),
