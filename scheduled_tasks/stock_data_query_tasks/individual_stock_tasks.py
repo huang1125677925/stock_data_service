@@ -804,7 +804,7 @@ def update_individual_stock_weekly_data():
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
 
         stock_code_list = [stock for stock in stocks if stock.index_type is None]
-        updated_stocks, updated_history = update_stock_weekly_history(stock_code_list=stock_code_list, days=3000)
+        updated_stocks, updated_history = update_stock_weekly_history(stock_code_list=stock_code_list, days=30)
 
         logger.info(f"个股周频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
         return {

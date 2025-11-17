@@ -24,6 +24,7 @@ try:
     from .strategies.simple_strategy import MultiIndicatorStrategy
     from .strategies.advanced_strategy import AdvancedStrategy
     from .strategies.minimal_strategy import MinimalStrategy
+    from .strategies.ma_cross_optimized_strategy import MACrossOptimizedStrategy
     # 导入新创建的单指标策略
     from .strategies.macd_strategy import MACDStrategy
     from .strategies.rsi_strategy import RSIStrategy
@@ -59,6 +60,7 @@ except ImportError:
     from quantitative_strategy.strategies.simple_strategy import MultiIndicatorStrategy
     from quantitative_strategy.strategies.advanced_strategy import AdvancedStrategy
     from quantitative_strategy.strategies.minimal_strategy import MinimalStrategy
+    from quantitative_strategy.strategies.ma_cross_optimized_strategy import MACrossOptimizedStrategy
     # 导入新创建的单指标策略
     from quantitative_strategy.strategies.macd_strategy import MACDStrategy
     from quantitative_strategy.strategies.rsi_strategy import RSIStrategy

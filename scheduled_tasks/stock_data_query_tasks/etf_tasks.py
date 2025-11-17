@@ -445,4 +445,4 @@ def update_etf_daily(
 
 if __name__ == '__main__':
     # sync_etf_basic()
-    update_etf_daily(recent_days=4000)
+    update_etf_daily(recent_days=3)

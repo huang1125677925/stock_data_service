@@ -254,6 +254,10 @@ CRONJOBS = [
     ('1 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
     ('30 19,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_fund_flow_data', f'>> {BASE_DIR}/logs/update_industry_sector_fund_flow_data.log 2>&1'),  # 每天16-22点每小时更新行业板块资金流数据
 
+    # ETF数据
+    ('25 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.etf_tasks.sync_etf_basic', f'>> {BASE_DIR}/logs/sync_etf_basic.log 2>&1'),  # 每周一至周五9:00更新ETF基本信息
+    ('45 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.etf_tasks.update_etf_daily', f'>> {BASE_DIR}/logs/update_etf_daily.log 2>&1'),  # 每周一至周五16:00-22:00更新ETF日频数据
+
     # 大盘数据
     ('45 18,20 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_stock_market_fund_flow', f'>> {BASE_DIR}/logs/fetch_stock_market_fund_flow.log 2>&1'),  # 每天16-22点每小时更新大盘资金流数据
     ('15 18,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_all_index_high_low_statistics', f'>> {BASE_DIR}/logs/fetch_all_index_high_low_statistics.log 2>&1'),  # 每天16-22点每小时更新大盘日频数据
@@ -261,7 +265,7 @@ CRONJOBS = [
     # 个股数据 
     ('22 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
     ('13 17,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
-    ('30 17,22 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_weekly_data', f'>> {BASE_DIR}/logs/update_individual_stock_weekly_data.log 2>&1'),
+    ('30 17,22 * * 5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_weekly_data', f'>> {BASE_DIR}/logs/update_individual_stock_weekly_data.log 2>&1'),
     ('50 17,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
 ]
 
