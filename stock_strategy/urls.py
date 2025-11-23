@@ -26,4 +26,6 @@ urlpatterns = [
     path('individual-analysis/volatility/<str:stock_code>/', analyze_volatility_indicators, name='analyze_volatility_indicators'),
     path('individual-analysis/price-transform/<str:stock_code>/', analyze_price_transform_indicators, name='analyze_price_transform_indicators'),
     path('individual-analysis/cycle/<str:stock_code>/', analyze_cycle_indicators, name='analyze_cycle_indicators'),
+    # MACD XGBoost预测接口
+    path('index-analysis/macd-up-prediction/<str:stock_code>/', views.IndexMacdXgbGrowthDatesView.as_view(), name='get_index_macd_xgb_growth_dates'),
 ]

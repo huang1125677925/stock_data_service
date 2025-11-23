@@ -36,6 +36,7 @@ try:
     from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from .strategies.nineturn_strategy import NineTurnStrategy
     from .strategies.ma_10_trailing_strategy import MATenTrailingStrategy
+    from .strategies.dca_strategy import DCAInvestmentStrategy
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService
 except ImportError:
@@ -72,6 +73,7 @@ except ImportError:
     from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from quantitative_strategy.strategies.nineturn_strategy import NineTurnStrategy
     from quantitative_strategy.strategies.ma_10_trailing_strategy import MATenTrailingStrategy
+    from quantitative_strategy.strategies.dca_strategy import DCAInvestmentStrategy
 
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService

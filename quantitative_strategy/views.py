@@ -304,34 +304,49 @@ def get_backtest_history(request):
         stock_code = request.GET.get('stock_code')
         status = request.GET.get('status')
         data_source = request.GET.get('data_source')
-        
+
         # 验证分页参数
         limit, offset = validate_pagination_params(limit, offset)
-        
-        # 构建查询
-        queryset = BacktestTask.objects.all()
-        
-        # 如果用户已登录，只显示该用户的任务
-        queryset = queryset.filter(user=request.user)
-        
-        # 应用过滤条件
+
+        # 基础查询：按用户过滤，按创建时间倒序，且仅提取必要字段以减少IO
+        fields = [
+            'id', 'task_id', 'strategy_name', 'stock_code', 'stock_name',
+            'start_date', 'end_date', 'initial_cash', 'commission', 'frequency',
+            'strategy_params', 'status', 'created_at', 'updated_at', 'completed_at',
+            'error_message', 'data_source'
+        ]
+        queryset = (
+            BacktestTask.objects
+            .filter(user=request.user)
+            .order_by('-created_at')
+            .only(*fields)
+        )
+
+        # 应用过滤条件（使用精确匹配确保索引命中）
         if strategy_name:
             queryset = queryset.filter(strategy_name=strategy_name)
-        
         if stock_code:
             queryset = queryset.filter(stock_code=stock_code)
-        
         if status:
             queryset = queryset.filter(status=status)
         if data_source:
             queryset = queryset.filter(data_source=data_source)
-        
-        # 获取总数
+
+        # 获取总数（与分页分离，避免COUNT与大范围切片一起触发慢查询）
         total = queryset.count()
-        
-        # 分页查询
-        tasks = queryset[offset:offset + limit]
-        
+
+        # 分页查询（先切片再转为列表，避免后续多次数据库访问）
+        tasks = list(queryset[offset:offset + limit])
+
+        # 批量预取回测结果，避免循环中 N+1 查询
+        results_qs = (
+            BacktestResult.objects
+            .filter(task__in=tasks)
+            .only('task_id', 'total_return', 'annual_return', 'sharpe_ratio', 'max_drawdown', 'total_trades', 'win_rate')
+        )
+        # 使用字典映射：key 为任务主键（FK列 task_id），value 为结果对象
+        results_map = {r.task_id: r for r in results_qs}
+
         # 构建响应数据
         task_list = []
         for task in tasks:
@@ -351,34 +366,35 @@ def get_backtest_history(request):
                 'created_at': task.created_at.isoformat(),
                 'updated_at': task.updated_at.isoformat()
             }
-            
-            # 如果任务完成，添加结果摘要
+
+            # 如果任务完成，添加结果摘要（使用预取的映射）
             if task.status == 'completed':
-                try:
-                    result = BacktestResult.objects.get(task=task)
+                res = results_map.get(task.pk)
+                if res:
                     task_data['result_summary'] = {
-                        'total_return': float(result.total_return),
-                        'annual_return': float(result.annual_return),
-                        'sharpe_ratio': float(result.sharpe_ratio) if result.sharpe_ratio else None,
-                        'max_drawdown': float(result.max_drawdown) if result.max_drawdown else None,
-                        'total_trades': result.total_trades,
-                        'win_rate': float(result.win_rate) if result.win_rate else None
+                        'total_return': float(res.total_return),
+                        'annual_return': float(res.annual_return),
+                        'sharpe_ratio': float(res.sharpe_ratio) if res.sharpe_ratio is not None else None,
+                        'max_drawdown': float(res.max_drawdown) if res.max_drawdown is not None else None,
+                        'total_trades': res.total_trades,
+                        'win_rate': float(res.win_rate) if res.win_rate is not None else None
                     }
-                    task_data['completed_at'] = task.completed_at.isoformat() if task.completed_at else None
-                except BacktestResult.DoesNotExist:
-                    pass
+                task_data['completed_at'] = task.completed_at.isoformat() if task.completed_at else None
             elif task.status == 'failed':
                 task_data['error'] = task.error_message
                 task_data['completed_at'] = task.completed_at.isoformat() if task.completed_at else None
-            
+
             task_list.append(task_data)
-        
+
         return success_response({
             'total': total,
             'tasks': task_list,
             'limit': limit,
             'offset': offset
         })
+    except Exception as e:
+        # 统一错误响应（符合接口规范）
+        return error_response(f'获取回测历史失败: {str(e)}')
         
     except Exception as e:
         logger.error(f"获取回测历史失败: {str(e)}")

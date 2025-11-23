@@ -52,5 +52,9 @@ jieba==0.42.1
 
 tushare==1.4.24
 
+xgboost==3.1.2
+scikit-learn==1.7.2
+
+
 # MCP server (FastMCP) for SSE transport and modular tools
 mcp[cli]

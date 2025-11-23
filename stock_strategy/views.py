@@ -7,16 +7,22 @@ import json
 import pandas as pd
 from datetime import datetime
 import hashlib
+from drf_spectacular.utils import extend_schema
+from rest_framework.decorators import api_view
+from rest_framework.views import APIView
 from .services import rps_service, StockScreeningService
 from scheduled_tasks.stock_data_query_tasks.dc_board_rps import compute_board_rps
 from .models import IndexRPS
 from .industry_turnover_strategy import industry_turnover_strategy
-from common.response import success_response, error_response
+from common.response import success_response, error_response, drf_success_response, drf_error_response
 from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tagging_service
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
 from industry_stock_data.models import IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
+from .index_analysis.services import get_macd_xgb_recent_growth_dates
+from stock_strategy.serializers import SuccessResponseMacdXgbGrowthDatesSerializer
+from etfapp.serializers import ErrorResponseSerializer
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -640,3 +646,49 @@ def get_industry_fund_flow_correlation(request):
         logger = logging.getLogger(__name__)
         logger.error(f'获取行业资金流相关坐标点失败: {str(e)}')
         return error_response(f'获取行业资金流相关坐标点失败: {str(e)}', 500)
+
+class IndexMacdXgbGrowthDatesView(APIView):
+    """
+    指数MACD XGBoost最近上涨日预测视图
+    功能：
+    - 加载已保存的MACD XGBoost模型并进行预测。
+    - 返回最近指定天数内预测为“上涨”的交易日期列表。
+    参数：
+    - stock_code(str, 路径参数): 指数TS代码，如 '000001.SH'
+    - days(int, 查询参数，可选): 最近交易日数量，默认30
+    - token(str, 查询参数，可选): Tushare Token（覆盖环境变量）
+    返回值：
+    - 统一响应：code、message、timestamp、data
+      其中 data = { ts_code, list: [YYYYMMDD...], count, params }
+    事件：
+    - 解析参数 → 服务预测 → 返回统一响应
+    """
+
+    @extend_schema(
+        summary="指数MACD XGBoost最近上涨日预测",
+        description=(
+            "获取指定指数最近30天预测上涨的交易日期列表（基于已保存的MACD XGBoost模型）。\n"
+            "参数（Path）：stock_code（必填，指数TS代码），例如 000001.SH。\n"
+            "参数（Query）：days（可选，默认30），token（可选，覆盖环境变量）。\n"
+            "统一响应结构（success_response），data 包含 ts_code、list、count、params。"
+        ),
+        tags=["index-analysis"],
+        responses={
+            200: SuccessResponseMacdXgbGrowthDatesSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request, stock_code: str):
+        try:
+            days = int(request.GET.get('days', 30))
+            token = request.GET.get('token')
+
+            result = get_macd_xgb_recent_growth_dates(ts_code=stock_code, days=days, token=token)
+            if not result.get('success'):
+                return drf_error_response(result.get('message', '获取预测结果失败'), 500)
+
+            return drf_success_response(result.get('data'), result.get('message', 'success'))
+        except ValueError:
+            return drf_error_response('days参数格式错误，应为整数', 400)
+        except Exception as e:
+            return drf_error_response(f'获取预测上涨日期失败: {str(e)}', 500)
