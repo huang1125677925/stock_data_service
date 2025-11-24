@@ -10,6 +10,7 @@ django.setup()
 
 import pandas as pd
 import numpy as np
+import time
 import xgboost as xgb
 import joblib
 import inspect
@@ -20,6 +21,8 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 from datetime import datetime, timedelta
 from common.tushare_proxy import call_tushare
+from common.email_utils import send_qq_email
+from user_management.models import User
 
 
 warnings.filterwarnings('ignore')
@@ -838,6 +841,37 @@ def get_sse_index_codes(limit: int | None = None) -> list[str]:
         codes = codes[:limit]
     return codes
 
+def get_index_codes(limit: int | None = None, market: str = 'SSE') -> list[str]:
+    """
+    获取指定市场（market）的指数代码列表
+
+    功能：
+    - 通过 Tushare `index_basic` 接口查询指定市场（默认 SSE）的指数基本信息，提取指数代码列表。
+
+    参数：
+    - limit: 限制返回的指数数量，默认 None（返回全部），建议在批量训练时设置以控制请求量。
+
+    返回值：
+    - list[str]: 指数 TS 代码列表，例如 `['000001.SH', '000300.SH', ...]`
+
+    事件：
+    - 无
+    """
+    resp = call_tushare(
+        interface='index_basic',
+        params={'market': market},
+        fields='ts_code,name,market',
+        use_query=False,
+    )
+
+    if not isinstance(resp, dict) or resp.get('code') != 200:
+        msg = resp.get('message') if isinstance(resp, dict) else str(resp)
+        raise RuntimeError(f"获取 {market} 指数列表失败: {msg}")
+
+    records = resp.get('data', {}).get('records', [])
+    codes = [r for r in records if isinstance(r, dict) and r.get('ts_code')]
+    return codes
+
 def load_sse_indices_dataset(days: int = 365, limit: int = 30) -> pd.DataFrame:
     """
     批量获取多个 SSE 指数的技术面因子数据并聚合为训练样本
@@ -914,6 +948,197 @@ def select_recent_index_data(df: pd.DataFrame, ts_code: str | None = None, days:
 
     df_one = df[df['ts_code'] == ts_code].sort_values('trade_date')
     return df_one.tail(days)
+
+def scan_all_indices_recent_growth(
+    limit: int = 500,
+    forecast_days: int = 5,
+    growth_threshold: float = 0.05,
+    days_buffer: int = 90,
+    token: str | None = None,
+) -> dict:
+    """
+    使用已训练的 MACD XGBoost 上涨模型，批量扫描所有指数的“最近一天”是否存在未来5天内上涨≥5%的可能
+
+    功能：
+    - 加载本地保存的 `macd_xgb_up.joblib` 模型组件（模型/标准化器/特征列/参数）。
+    - 遍历上交所（SSE）全部或指定数量的指数代码，拉取最近一段时间的技术面数据。
+    - 针对每个指数的“最近一个交易日”样本进行预测，若预测类别为上涨事件（类别=1），打印并收集结果。
+
+    参数：
+    - limit(int | None): 限制扫描的指数数量，默认 None（扫描全部SSE指数）。
+    - forecast_days(int): 预测未来天数（仅用于文案与参数说明，模型本身已训练），默认 5。
+    - growth_threshold(float): 上涨阈值（仅用于文案与参数说明），默认 0.05（5%）。
+    - days_buffer(int): 在模型回看期之外额外补充的抓取天数，用于稳定滚动/滞后特征，默认 90。
+    - token(str | None): 可选的 Tushare Token（覆盖环境变量）。
+
+    返回值：
+    - dict: {
+        'email_content': str,         # HTML 格式的邮件内容（包含扫描总数与命中表格）
+        'hits': list[dict],           # 命中明细列表
+        'scanned_count': int,         # 实际扫描的指数数量
+        'hit_count': int,             # 命中数量
+      }
+
+    事件：
+    - 加载模型文件
+    - 获取SSE指数代码列表
+    - 逐指数抓取 idx_factor_pro 数据并生成最近样本预测
+    - 构建 HTML 邮件头与命中表格，打印并返回命中结果集合
+    """
+    # 加载模型文件
+    model_path = Path(__file__).resolve().parent / "models" / "macd_xgb_up.joblib"
+    if not model_path.exists():
+        raise RuntimeError(f"模型文件不存在: {model_path}。请先运行 main_predict() 生成模型。")
+
+    artifacts = joblib.load(model_path)
+    params = artifacts.get('params', {})
+    lookback_days = int(params.get('lookback_days', 60))
+
+    # 构建预测器并加载已训练好的组件
+    predictor = MACDPredictor(
+        lookback_days=lookback_days,
+        forecast_days=forecast_days,
+        growth_threshold=growth_threshold,
+        target_mode='up',
+    )
+    predictor.model = artifacts.get('model')
+    predictor.scaler = artifacts.get('scaler')
+    predictor.feature_columns = artifacts.get('feature_columns', [])
+
+    makret_list = ['SSE', 'SZSE']
+    # 获取指数列表
+    code_list = []
+    for market in makret_list:
+        codes = get_index_codes(limit=limit, market=market)
+        if not codes:
+            raise RuntimeError(f'未获取到任何{market}指数代码')
+        code_list.extend(codes)
+
+    # 时间范围与字段
+    end_date = datetime.now().strftime('%Y%m%d')
+    start_date = (datetime.now() - timedelta(days=lookback_days + days_buffer)).strftime('%Y%m%d')
+    fields = (
+        'ts_code,trade_date,open,high,low,close,'
+        'macd_bfq,macd_dif_bfq,macd_dea_bfq'
+    )
+
+    hits: list[dict] = []
+
+    for code in code_list:
+        resp = call_tushare(
+            interface='idx_factor_pro',
+            params={'ts_code': code['ts_code'], 'start_date': start_date, 'end_date': end_date},
+            token=token,
+            fields=fields,
+            use_query=False,
+        )
+        time.sleep(0.1)
+
+        # 仅处理成功返回的数据
+        if not isinstance(resp, dict) or resp.get('code') != 200:
+            continue
+
+        records = resp.get('data', {}).get('records', [])
+        if not records:
+            continue
+
+        df = pd.DataFrame(records).sort_values('trade_date').reset_index(drop=True)
+        processed = predictor.prepare_features(df, for_inference=True)
+        if processed.empty:
+            continue
+
+        # 取最近一条样本进行预测
+        latest_row = processed.iloc[[-1]]
+        latest_features = latest_row[predictor.feature_columns]
+        latest_scaled = predictor.scaler.transform(latest_features)
+
+        y_pred = predictor.model.predict(latest_scaled)[0]
+        y_proba = predictor.model.predict_proba(latest_scaled)[0]
+
+        if int(y_pred) == 1:
+            last_date = str(latest_row['trade_date'].iloc[0])
+            result = {
+                'ts_code': code['ts_code'],
+                'trade_date': last_date,
+                'probability_1': float(y_proba[1]),
+                'confidence': float(max(y_proba)),
+                'params': {
+                    'forecast_days': forecast_days,
+                    'growth_threshold': growth_threshold,
+                }
+            }
+            # 打印命中结果
+            print(
+                f"命中: 市场 {code['market']} 指数 {code['ts_code']}-{code['name']} 在 {last_date} 存在未来{forecast_days}天上涨≥{growth_threshold*100:.0f}% 的可能，"
+                f"预测概率为 {y_proba[1]:.2%}，置信度 {max(y_proba):.2%}"
+            )
+            hits.append(result)
+    # 组装整体邮件内容（包含扫描总数与命中明细）
+    scanned_count = len(code_list)
+    hit_count = len(hits)
+    # 以 HTML 形式构建更友好的邮件内容：包含基本信息与命中明细表格
+    header_html = (
+        f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#333;\">"
+        f"<h2 style=\"margin:0 0 8px;\">MACD XGBoost 指数扫描结果</h2>"
+        f"<p style=\"margin:0;\">扫描时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
+        f"<p style=\"margin:0;\">预测参数：未来{forecast_days}天，上涨阈值≥{growth_threshold*100:.0f}%</p>"
+        f"<p style=\"margin:0 0 12px;\">共扫描 {scanned_count} 只指数，命中 {hit_count} 只</p>"
+        f"</div>"
+    )
+
+    # 命中明细表格（若无命中则输出提示）
+    if hits:
+        table_header = (
+            "<table style=\"width:100%;border-collapse:collapse;border:1px solid #e5e7eb;\">"
+            "<thead>"
+            "<tr style=\"background:#f9fafb;\">"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">市场</th>"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">代码</th>"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">名称</th>"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">交易日</th>"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">预测上涨概率</th>"
+            "<th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left;\">置信度</th>"
+            "</tr>"
+            "</thead><tbody>"
+        )
+
+        rows_html = []
+        for idx, h in enumerate(hits):
+            code_info = next((c for c in code_list if c.get('ts_code') == h['ts_code']), None)
+            market = code_info.get('market') if code_info else 'SSE'
+            name = code_info.get('name') if code_info else h['ts_code']
+            row_bg = '#ffffff' if idx % 2 == 0 else '#fcfcfc'
+            prob = f"{h['probability_1']*100:.2f}%"
+            conf = f"{h['confidence']*100:.2f}%"
+            rows_html.append(
+                (
+                    f"<tr style=\"background:{row_bg};\">"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{market}</td>"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{h['ts_code']}</td>"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{name}</td>"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{h['trade_date']}</td>"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{prob}</td>"
+                    f"<td style=\"padding:8px;border:1px solid #e5e7eb;\">{conf}</td>"
+                    f"</tr>"
+                )
+            )
+
+        table_footer = "</tbody></table>"
+        table_section = (
+            f"<div style=\"margin-top:8px;\"><strong>命中明细</strong></div>" +
+            table_header + "".join(rows_html) + table_footer
+        )
+    else:
+        table_section = "<p style=\"margin-top:8px;color:#666;\">暂无命中</p>"
+
+    email_content = header_html + table_section
+
+    return {
+        'email_content': email_content,
+        'hits': hits,
+        'scanned_count': scanned_count,
+        'hit_count': hit_count,
+    }
 
 def main_predict(
     lookback_days: int = 60,
@@ -1171,9 +1396,75 @@ def batch_test_macd_xgboost():
 
     return pd.DataFrame(rows)
 
+def send_macd_xgboost_results_email(
+    usernames: list[str] | None = None,
+    sender_email: str = "1125677925@qq.com",
+    auth_code: str = "wsxmvqhgoeszigdh",
+) -> dict:
+    """
+    发送 MACD XGBoost 指数增长预测结果到指定用户邮箱
+
+    功能：
+    - 根据提供的用户名列表查询用户邮箱，生成命中结果的 HTML 邮件内容，并统一发送邮件。
+
+    参数：
+    - usernames(list[str] | None): 用户名列表；若为 None 则使用系统预设用户名集合。
+    - sender_email(str): 发件人邮箱地址；默认使用当前配置值。
+    - auth_code(str): QQ 邮箱 SMTP 授权码；默认使用当前配置值。
+
+    返回值：
+    - dict: {
+        'emails': list[str],          # 实际发送的收件人邮箱列表
+        'scanned_count': int,         # 扫描指数数量
+        'hit_count': int,             # 命中数量
+        'send_result': dict,          # 邮件发送返回结果（含 code/message 等）
+    }
+
+    事件：
+    - 查询用户邮箱 → 执行指数扫描 → 生成 HTML 邮件内容 → 发送邮件。
+    """
+
+    default_user_list = [
+        "admin","Neil","Eleven","huang36077","windeve","sony","jnukylin","大森不胖",
+        "桐桐巴巴","LucHu","snoopy","金牛腾飞","wuxingchen","knight","tuwu","shine",
+        "zxxx241","Jerome","feng","鹏鹏涨了","xiafine","heatonc","SAM","Cyt4222525","catashd"
+    ]
+
+    names = (usernames or default_user_list)
+    user_email_list: list[str] = []
+    for uname in names:
+        if not uname or not str(uname).strip():
+            continue
+        user_object = User.objects.filter(username=str(uname).strip()).first()
+        if user_object is None:
+            print(f"用户 {uname} 不存在")
+            continue
+        print(f"用户 {uname} 的邮箱是 xxx{user_object.email[3:]}" )
+        user_email_list.append(user_object.email)
+
+    scan_hits = scan_all_indices_recent_growth()
+
+    send_result = send_qq_email(
+        subject=f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} XGBoost 指数增长预测结果",
+        body=scan_hits["email_content"],
+        to_emails=user_email_list,
+        sender_email=sender_email,
+        auth_code=auth_code,
+        use_html=True,
+    )
+
+    return {
+        "emails": user_email_list,
+        "scanned_count": scan_hits.get("scanned_count", 0),
+        "hit_count": scan_hits.get("hit_count", 0),
+        "send_result": send_result,
+    }
+
 if __name__ == "__main__":
     # 运行批量测试并打印结果
     # df_results = batch_test_macd_xgboost()
     # # 打印结果表（避免过长换行，用户可自行保存/分析）
     # print(df_results.to_string(index=False))
-    main_predict()
+    # main_predict()
+    # 使用封装好的函数发送结果邮件
+    send_macd_xgboost_results_email()
