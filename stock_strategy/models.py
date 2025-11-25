@@ -30,3 +30,61 @@ class IndexRPS(models.Model):
             'rps_value': float(self.rps_value),
             'created_at': self.created_at.isoformat()
         }
+
+
+class StockSelectionRecord(models.Model):
+    """
+    组件：选股记录模型（StockSelectionRecord）
+
+    功能：
+    - 存储模型运行过程中的个股命中记录，用于回溯与分析。
+
+    参数（字段）：
+    - market (CharField): 市场，如 `CN`、`US` 等。
+    - code (CharField): 证券代码，如 `600519`。
+    - name (CharField): 证券名称，如 `贵州茅台`。
+    - trade_date (DateField): 交易日期，命中记录对应的交易日。
+    - predict_rise_prob (DecimalField): 预测上涨概率(%)，0-100 区间，保留两位小数。
+    - confidence (DecimalField): 预测置信度(%)，0-100 区间，保留两位小数。
+    - prediction_type (CharField): 预测类型，如 `MACD_XGBoost`、`MA_Cross` 等，用于区分来源模型。
+    - created_at (DateTimeField): 记录创建时间。
+
+    返回值：
+    - to_dict() -> dict: 返回该记录的字典表示，便于序列化或接口返回。
+
+    事件：
+    - 本模型未内置事件。如需扩展可结合 Django 信号(post_save、pre_save)实现通知或联动。
+    """
+
+    market = models.CharField(max_length=20, verbose_name='市场')
+    code = models.CharField(max_length=20, verbose_name='代码')
+    name = models.CharField(max_length=50, verbose_name='名称')
+    trade_date = models.DateField(verbose_name='交易日')
+    predict_rise_prob = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='预测上涨概率(%)')
+    confidence = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='置信度(%)')
+    prediction_type = models.CharField(max_length=30, verbose_name='预测类型')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'stock_selection_record'
+        verbose_name = '选股记录'
+        verbose_name_plural = '选股记录'
+        # 按用户需求，存储前基于(交易日, 代码)去重，这里用唯一约束保证一致性
+        unique_together = ('code', 'trade_date')
+        ordering = ['-trade_date', '-predict_rise_prob']
+
+    def __str__(self):
+        return f'{self.trade_date} {self.code} {self.name} ({self.predict_rise_prob}%, {self.confidence}%)'
+
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'market': self.market,
+            'code': self.code,
+            'name': self.name,
+            'trade_date': self.trade_date.isoformat(),
+            'predict_rise_prob': float(self.predict_rise_prob),
+            'confidence': float(self.confidence),
+            'prediction_type': self.prediction_type,
+            'created_at': self.created_at.isoformat(),
+        }

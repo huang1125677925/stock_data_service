@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from common.tushare_proxy import call_tushare
 from common.email_utils import send_qq_email
 from user_management.models import User
+from stock_strategy.models import StockSelectionRecord
 
 
 warnings.filterwarnings('ignore')
@@ -1004,8 +1005,8 @@ def scan_all_indices_recent_growth(
     predictor.model = artifacts.get('model')
     predictor.scaler = artifacts.get('scaler')
     predictor.feature_columns = artifacts.get('feature_columns', [])
-
-    makret_list = ['SSE', 'SZSE']
+    # 'CICC', 'SW', 'SZSE', 'SSE', 
+    makret_list = ['CICC', 'SW', 'SZSE', 'SSE', ]
     # 获取指数列表
     code_list = []
     for market in makret_list:
@@ -1079,7 +1080,7 @@ def scan_all_indices_recent_growth(
     # 以 HTML 形式构建更友好的邮件内容：包含基本信息与命中明细表格
     header_html = (
         f"<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;color:#333;\">"
-        f"<h2 style=\"margin:0 0 8px;\">MACD XGBoost 指数扫描结果</h2>"
+        f"<h2 style=\"margin:0 0 8px;\">MACD XGBoost 指数扫描结果【此数据仅作参考，不构成任何交易建议】</h2>"
         f"<p style=\"margin:0;\">扫描时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
         f"<p style=\"margin:0;\">预测参数：未来{forecast_days}天，上涨阈值≥{growth_threshold*100:.0f}%</p>"
         f"<p style=\"margin:0 0 12px;\">共扫描 {scanned_count} 只指数，命中 {hit_count} 只</p>"
@@ -1088,6 +1089,33 @@ def scan_all_indices_recent_growth(
 
     # 命中明细表格（若无命中则输出提示）
     if hits:
+        # 将命中结果保存到选股记录表（按交易日+代码去重）
+        try:
+            for h in hits:
+                code_info = next((c for c in code_list if c.get('ts_code') == h['ts_code']), None)
+                market = code_info.get('market') if code_info else 'SSE'
+                name = code_info.get('name') if code_info else h['ts_code']
+                # 将 Tushare 的日期字符串转换为 date
+                trade_date = datetime.strptime(str(h['trade_date']), '%Y%m%d').date()
+
+                # 先查重：若同(交易日, 代码)已存在则跳过
+                exists = StockSelectionRecord.objects.filter(code=h['ts_code'], trade_date=trade_date).exists()
+                if exists:
+                    continue
+
+                # 保存记录（概率/置信度转为百分比数值）
+                StockSelectionRecord.objects.create(
+                    market=market,
+                    code=h['ts_code'],
+                    name=name,
+                    trade_date=trade_date,
+                    predict_rise_prob=float(h.get('probability_1', 0.0)) * 100.0,
+                    confidence=float(h.get('confidence', 0.0)) * 100.0,
+                    prediction_type='MACD_XGBoost_for_5',
+                )
+        except Exception as e:
+            print(f"保存选股记录失败: {e}")
+
         table_header = (
             "<table style=\"width:100%;border-collapse:collapse;border:1px solid #e5e7eb;\">"
             "<thead>"
@@ -1431,7 +1459,7 @@ def send_macd_xgboost_results_email(
     ]
 
     names = (usernames or default_user_list)
-    user_email_list: list[str] = []
+    user_email_list: list[str] = ['1605895800@qq.com', 'mymailbox_2003@163.com']
     for uname in names:
         if not uname or not str(uname).strip():
             continue
@@ -1468,3 +1496,15 @@ if __name__ == "__main__":
     # main_predict()
     # 使用封装好的函数发送结果邮件
     send_macd_xgboost_results_email()
+    # StockSelectionRecord.objects.create(
+    #     market = 'SSE',
+    #     code = '000692.SH',
+    #     name = '科创新能',
+    #     trade_date = datetime(2025, 11, 25),
+    #     predict_rise_prob = 0.749,
+    #     confidence = 0.749,
+    #     prediction_type = 'MACD_XGBoost_for_5',
+    # )
+    # exists = StockSelectionRecord.objects.filter(code='000692.SH', trade_date=datetime(2025, 11, 25)).exists()
+    # if exists:
+    #     print("记录已存在")

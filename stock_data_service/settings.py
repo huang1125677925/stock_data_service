@@ -268,7 +268,7 @@ CRONJOBS = [
     ('30 17,22 * * 5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_weekly_data', f'>> {BASE_DIR}/logs/update_individual_stock_weekly_data.log 2>&1'),
     ('50 17,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
 
-    ('0 19 * * 1-5', 'stock_strategy.index_analysis.macd_xgboost.send_macd_xgboost_results_email', f'>> {BASE_DIR}/logs/send_macd_xgboost_results_email.log 2>&1'),  # 每周一至周五16:00-22:00更新MACD XGBoost结果邮件
+    ('0 21 * * 1-5', 'stock_strategy.index_analysis.macd_xgboost.send_macd_xgboost_results_email', f'>> {BASE_DIR}/logs/send_macd_xgboost_results_email.log 2>&1'),  # 每周一至周五16:00-22:00更新MACD XGBoost结果邮件
 ]
 
 # Crontab配置
