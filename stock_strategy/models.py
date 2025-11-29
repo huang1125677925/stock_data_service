@@ -46,6 +46,7 @@ class StockSelectionRecord(models.Model):
     - trade_date (DateField): 交易日期，命中记录对应的交易日。
     - predict_rise_prob (DecimalField): 预测上涨概率(%)，0-100 区间，保留两位小数。
     - confidence (DecimalField): 预测置信度(%)，0-100 区间，保留两位小数。
+    - actual_rise_ratio_5d (DecimalField): 5日实际上涨比例(%)，0-100 区间，保留两位小数，可为空。
     - prediction_type (CharField): 预测类型，如 `MACD_XGBoost`、`MA_Cross` 等，用于区分来源模型。
     - created_at (DateTimeField): 记录创建时间。
 
@@ -62,6 +63,7 @@ class StockSelectionRecord(models.Model):
     trade_date = models.DateField(verbose_name='交易日')
     predict_rise_prob = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='预测上涨概率(%)')
     confidence = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='置信度(%)')
+    actual_rise_ratio_5d = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='5日实际上涨比例(%)')
     prediction_type = models.CharField(max_length=30, verbose_name='预测类型')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
 
@@ -85,6 +87,7 @@ class StockSelectionRecord(models.Model):
             'trade_date': self.trade_date.isoformat(),
             'predict_rise_prob': float(self.predict_rise_prob),
             'confidence': float(self.confidence),
+            'actual_rise_ratio_5d': float(self.actual_rise_ratio_5d) if self.actual_rise_ratio_5d is not None else None,
             'prediction_type': self.prediction_type,
             'created_at': self.created_at.isoformat(),
         }

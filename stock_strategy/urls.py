@@ -28,4 +28,6 @@ urlpatterns = [
     path('individual-analysis/cycle/<str:stock_code>/', analyze_cycle_indicators, name='analyze_cycle_indicators'),
     # MACD XGBoost预测接口
     path('index-analysis/macd-up-prediction/<str:stock_code>/', views.IndexMacdXgbGrowthDatesView.as_view(), name='get_index_macd_xgb_growth_dates'),
+    # 选股记录查询：5日实际上涨比例（APIView实现）
+    path('individual-analysis/actual-rise-ratio/', views.ActualRiseRatio5DView.as_view(), name='get_actual_rise_ratio_5d'),
 ]

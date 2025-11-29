@@ -5,14 +5,14 @@ from django.views.decorators.cache import cache_page
 from django.core.cache import cache
 import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
 from .services import rps_service, StockScreeningService
 from scheduled_tasks.stock_data_query_tasks.dc_board_rps import compute_board_rps
-from .models import IndexRPS
+from .models import IndexRPS, StockSelectionRecord
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response, drf_success_response, drf_error_response
 from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tagging_service
@@ -21,7 +21,7 @@ from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
 from industry_stock_data.models import IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 from .index_analysis.services import get_macd_xgb_recent_growth_dates
-from stock_strategy.serializers import SuccessResponseMacdXgbGrowthDatesSerializer
+from stock_strategy.serializers import SuccessResponseMacdXgbGrowthDatesSerializer, SuccessResponseActualRiseRatio5DSerializer
 from etfapp.serializers import ErrorResponseSerializer
 
 @csrf_exempt
@@ -692,3 +692,93 @@ class IndexMacdXgbGrowthDatesView(APIView):
             return drf_error_response('days参数格式错误，应为整数', 400)
         except Exception as e:
             return drf_error_response(f'获取预测上涨日期失败: {str(e)}', 500)
+
+
+class ActualRiseRatio5DView(APIView):
+    """
+    组件：5日实际上涨比例查询视图（ActualRiseRatio5DView）
+
+    功能：
+    - 基于 StockSelectionRecord 模型，按代码与可选过滤条件查询记录，并返回 5 日实际上涨比例等信息。
+
+    参数：
+    - stock_code (str, 路径参数): 股票或指数代码，例如 `000001` 或 `000001.SH`。
+    - start_date (str, 查询参数，可选): 开始日期，格式 `YYYY-MM-DD`。
+    - end_date (str, 查询参数，可选): 结束日期，格式 `YYYY-MM-DD`。
+    - prediction_type (str, 查询参数，可选): 过滤预测类型，如 `MACD_XGBoost`。
+
+    返回值：
+    - 统一响应（drf_success_response / drf_error_response）：
+      data = [
+        {
+          'market': str,
+          'code': str,
+          'name': str,
+          'trade_date': 'YYYY-MM-DD',
+          'predict_rise_prob': float,
+          'confidence': float,
+          'actual_rise_ratio_5d': float | null,
+          'prediction_type': str,
+          'created_at': 'YYYY-MM-DDTHH:mm:ss',
+        }, ...
+      ]
+
+    事件：
+    - 解析查询参数 → 构建并执行数据库查询 → 整理返回数据结构。
+    """
+
+    @extend_schema(
+        summary="查询5日实际上涨比例",
+        description=(
+            "按代码查询选股记录中的5日实际上涨比例，支持日期区间与预测类型过滤。\n"
+            "参数（Path）：stock_code。\n"
+            "参数（Query）：start_date, end_date, prediction_type。\n"
+            "注意：end_date 将被强制设为当前日期减3个交易日（不计周末），忽略传入的 end_date，以保证数据截止为最近交易日。\n"
+            "统一响应结构（success_response 样式，DRF封装为 drf_success_response）。"
+        ),
+        tags=["individual-analysis"],
+        responses={
+            200: SuccessResponseActualRiseRatio5DSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            start_date = request.GET.get('start_date')
+            # 强制将 end_date 设置为当前日期减3个交易日（不计周末），忽略传入参数
+            # 组件说明：
+            # 功能：规范查询截止日为最近的交易日，避免包含非交易日导致查询结果偏差。
+            # 参数：忽略 request.GET['end_date']。
+            # 返回值：不变，仍为统一 success_response/data 列表结构。
+            # 事件：无特别事件，仅内部日期处理。
+            days_to_subtract = 4
+            current_date = datetime.now().date()
+            trading_days_count = 0
+            temp_date = current_date
+            while trading_days_count < days_to_subtract:
+                temp_date = temp_date - timedelta(days=1)
+                # 周一=0 ... 周五=5（周六=5? 实际weekday: 周一=0, 周日=6）
+                if temp_date.weekday() < 5:  # 仅计工作日为交易日
+                    trading_days_count += 1
+            end_date = temp_date.strftime('%Y%m%d')
+            prediction_type = request.GET.get('prediction_type')
+
+            qs = StockSelectionRecord.objects.filter()
+            if prediction_type:
+                qs = qs.filter(prediction_type=prediction_type)
+            if start_date:
+                qs = qs.filter(trade_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(trade_date__lte=end_date)
+            qs = qs.order_by('trade_date')
+
+            if not qs.exists():
+                return drf_error_response('无选股记录', 404)
+
+            data = []
+            for r in qs:
+                data.append(r.to_dict())
+
+            return drf_success_response(data, '查询5日实际上涨比例成功')
+        except Exception as e:
+            return drf_error_response(f'查询5日实际上涨比例失败: {str(e)}', 500)

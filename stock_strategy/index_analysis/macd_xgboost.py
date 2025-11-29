@@ -24,9 +24,71 @@ from common.tushare_proxy import call_tushare
 from common.email_utils import send_qq_email
 from user_management.models import User
 from stock_strategy.models import StockSelectionRecord
+import re
 
 
 warnings.filterwarnings('ignore')
+
+def save_selection_records_from_text(text: str, prediction_type: str = 'MACD_XGBoost_for_5') -> int:
+    """
+    组件：从“命中”文本解析并保存选股记录（save_selection_records_from_text）
+
+    功能：
+    - 解析终端/日志中的“命中”文本行，抽取市场、代码、名称、交易日、预测概率与置信度，并保存到 `StockSelectionRecord` 表。
+    - 基于 `(code, trade_date)` 去重，避免重复写入同一天同代码的记录。
+
+    参数：
+    - text(str): 包含若干“命中:”行的原始文本，支持多行。
+    - prediction_type(str): 预测类型标识，如 `MACD_XGBoost_for_5`，用于区分来源模型。
+
+    返回值：
+    - int: 成功写入的记录条数。
+
+    事件：
+    - 文本解析 → 字段抽取 → 数据库写入（遇到重复自动跳过）。
+    """
+
+    if not text or not str(text).strip():
+        return 0
+
+    pattern = re.compile(
+        r"命中:\s*市场\s*(?P<market>\S+)\s*指数\s*(?P<code>[^-]+)-(?P<name>[^\s]+)\s*在\s*(?P<trade_date>\d{8})\s*存在未来(?P<days>\d+)天上涨≥(?P<threshold>\d+)%\s*的可能，预测概率为\s*(?P<prob>[\d\.]+)%[，,]\s*置信度\s*(?P<conf>[\d\.]+)%"
+    )
+
+    saved = 0
+    for m in pattern.finditer(text):
+        market = m.group('market').strip()
+        code = m.group('code').strip()
+        name = m.group('name').strip()
+        raw_date = m.group('trade_date').strip()
+        prob = float(m.group('prob'))  # 已是百分比数值，如 77.18
+        conf = float(m.group('conf'))  # 已是百分比数值
+
+        try:
+            trade_date = datetime.strptime(raw_date, '%Y%m%d').date()
+        except ValueError:
+            # 兼容 YYYY-MM-DD
+            trade_date = datetime.strptime(raw_date, '%Y-%m-%d').date()
+
+        # 去重
+        if StockSelectionRecord.objects.filter(code=code, trade_date=trade_date).exists():
+            continue
+
+        try:
+            StockSelectionRecord.objects.create(
+                market=market,
+                code=code,
+                name=name,
+                trade_date=trade_date,
+                predict_rise_prob=prob,
+                confidence=conf,
+                prediction_type=prediction_type,
+            )
+            saved += 1
+        except Exception as e:
+            print(f"保存选股记录失败（{code} {raw_date}）：{e}")
+
+    return saved
 
 class MACDPredictor:
     def __init__(
@@ -1495,7 +1557,7 @@ if __name__ == "__main__":
     # print(df_results.to_string(index=False))
     # main_predict()
     # 使用封装好的函数发送结果邮件
-    send_macd_xgboost_results_email()
+    # send_macd_xgboost_results_email()
     # StockSelectionRecord.objects.create(
     #     market = 'SSE',
     #     code = '000692.SH',
@@ -1508,3 +1570,19 @@ if __name__ == "__main__":
     # exists = StockSelectionRecord.objects.filter(code='000692.SH', trade_date=datetime(2025, 11, 25)).exists()
     # if exists:
     #     print("记录已存在")
+
+    text = """
+    命中: 市场 SSE 指数 000692.SH-科创新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 77.18%，置信度 77.18%
+    命中: 市场 SSE 指数 000813.SH-细分化工(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.65%，置信度 51.65%
+    命中: 市场 SSE 指数 000827.SH-中证环保 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 64.63%，置信度 64.63%
+    命中: 市场 SSE 指数 000941.SH-新能源(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 53.24%，置信度 53.24%
+    命中: 市场 SZSE 指数 399249.SZ-综企指数 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 92.71%，置信度 92.71%
+    命中: 市场 SZSE 指数 399259.SZ-创业低碳 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 54.21%，置信度 54.21%
+    命中: 市场 SZSE 指数 399614.SZ-深证材料 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 50.89%，置信度 50.89%
+    命中: 市场 SZSE 指数 399639.SZ-深证大宗 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.66%，置信度 51.66%
+    命中: 市场 SZSE 指数 399695.SZ-深证节能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 79.94%，置信度 79.94%
+    命中: 市场 SZSE 指数 399808.SZ-中证新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 85.20%，置信度 85.20%
+    """
+
+    saved = save_selection_records_from_text(text, prediction_type="MACD_XGBoost_for_5")
+    print(f"成功写入 {saved} 条记录")
