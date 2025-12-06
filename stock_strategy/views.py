@@ -751,16 +751,17 @@ class ActualRiseRatio5DView(APIView):
             # 参数：忽略 request.GET['end_date']。
             # 返回值：不变，仍为统一 success_response/data 列表结构。
             # 事件：无特别事件，仅内部日期处理。
-            days_to_subtract = 4
-            current_date = datetime.now().date()
-            trading_days_count = 0
-            temp_date = current_date
-            while trading_days_count < days_to_subtract:
-                temp_date = temp_date - timedelta(days=1)
-                # 周一=0 ... 周五=5（周六=5? 实际weekday: 周一=0, 周日=6）
-                if temp_date.weekday() < 5:  # 仅计工作日为交易日
-                    trading_days_count += 1
-            end_date = temp_date.strftime('%Y%m%d')
+            end_date = request.GET.get('end_date')
+            # days_to_subtract = 4
+            # current_date = datetime.now().date()
+            # trading_days_count = 0
+            # temp_date = current_date
+            # while trading_days_count < days_to_subtract:
+            #     temp_date = temp_date - timedelta(days=1)
+            #     # 周一=0 ... 周五=5（周六=5? 实际weekday: 周一=0, 周日=6）
+            #     if temp_date.weekday() < 5:  # 仅计工作日为交易日
+            #         trading_days_count += 1
+            # end_date = temp_date.strftime('%Y%m%d')
             prediction_type = request.GET.get('prediction_type')
 
             qs = StockSelectionRecord.objects.filter()

@@ -105,6 +105,61 @@ def fetch_index_daily(
     return resp
 
 
+def _end_date_after_n_trading_days(ts_code: str, trade_date: date, n: int, token: Optional[str] = None) -> Optional[str]:
+    """
+    组件：根据交易日顺延 N 个交易日，得到结束日期（跳过周末/节假日）
+
+    功能：
+    - 调用 Tushare `trade_cal` 获取从 `trade_date` 起的交易日列表；
+    - 返回第 `n` 个后续交易日的日期字符串（格式 `YYYYMMDD`）。
+
+    参数：
+    - ts_code(str): 带市场后缀的代码（用于推断交易所，如 `.SH`/`.SZ`）；
+    - trade_date(date): 起始交易日期；
+    - n(int): 顺延的交易日数量（例如 5 表示加 5 个交易日）；
+    - token(str|None): Tushare Token。
+
+    返回值：
+    - str|None: 结束日期字符串；若无法获取则返回 None。
+
+    事件：
+    - 调用 `trade_cal` 接口，过滤 `is_open=1` 的日期。
+    """
+    start_str = trade_date.strftime('%Y%m%d')
+    # 依据代码后缀推断交易所，默认为 SSE
+    exchange = 'SSE'
+    if str(ts_code).endswith('.SZ'):
+        exchange = 'SZSE'
+    elif str(ts_code).endswith('.SH'):
+        exchange = 'SSE'
+
+    # 设定一个足够的上界窗口（如 30 天）以覆盖 n 个交易日
+    end_bound = (trade_date + timedelta(days=30)).strftime('%Y%m%d')
+
+    resp = call_tushare(
+        interface='trade_cal',
+        params={'exchange': exchange, 'start_date': start_str, 'end_date': end_bound},
+        fields='cal_date,is_open',
+        token=token,
+        use_query=False,
+    )
+    if not isinstance(resp, dict) or resp.get('code') != 200:
+        return None
+    records = resp.get('data', {}).get('records', []) or []
+    # 过滤交易日
+    def _is_open(v):
+        return v in (1, '1', True)
+    open_days = [str(r.get('cal_date')) for r in records if _is_open(r.get('is_open'))]
+    if not open_days:
+        return None
+    # 若起始日非交易日，open_days[0] 为下一交易日；否则 open_days[0]==start_str
+    # 我们需要“增加 n 个交易日”，即取 open_days[n]
+    if len(open_days) <= n:
+        # 不足 n 个交易日时，取最后一个可用交易日作为结束
+        return open_days[-1]
+    return open_days[n]
+
+
 def compute_actual_rise_ratio_5d(ts_code: str, trade_date: date, token: Optional[str] = None) -> Optional[Decimal]:
     """
     组件：计算5日实际上涨比例（compute_actual_rise_ratio_5d）
@@ -126,7 +181,8 @@ def compute_actual_rise_ratio_5d(ts_code: str, trade_date: date, token: Optional
     """
     # 构造日期区间（包含交易日当日）
     start_str = trade_date.strftime('%Y%m%d')
-    end_str = (trade_date + timedelta(days=5)).strftime('%Y%m%d')
+    # 使用交易日历顺延 5 个交易日，避免周末/节假日偏差
+    end_str = _end_date_after_n_trading_days(ts_code, trade_date, 5, token=token) or start_str
 
     # 拉取所需字段，尽量精简
     resp = fetch_index_daily(

@@ -64,7 +64,7 @@ class StockSelectionRecord(models.Model):
     predict_rise_prob = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='预测上涨概率(%)')
     confidence = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='置信度(%)')
     actual_rise_ratio_5d = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name='5日实际上涨比例(%)')
-    prediction_type = models.CharField(max_length=30, verbose_name='预测类型')
+    prediction_type = models.CharField(max_length=200, verbose_name='预测类型')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
 
     class Meta:
