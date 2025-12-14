@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import pandas as pd
 from typing import Callable, Iterable
+from pathlib import Path
+import time
 
 try:
     # 优先使用项目内封装的 TuShare 代理
@@ -634,6 +636,159 @@ class ETFDataSource:
         - 无
         """
         code_list = self.list_etf_codes(list_status=list_status, etf_type=etf_type, limit=limit)
+        ts_codes = [c["ts_code"] for c in code_list]
+        df = self.load_daily(ts_codes, start_date, end_date)
+        code_info_map = {c["ts_code"]: {"name": c["name"], "market": c["market"]} for c in code_list}
+        return df, code_info_map
+
+
+class DCIndexDataSource:
+    """
+    东财指数数据源封装（dc_daily）
+
+    功能：
+    - 从本地清单文件 `dc_bk_list.txt` 读取东财板块/行业指数代码与名称；
+    - 逐代码调用 TuShare `dc_daily` 接口拉取历史行情数据；
+    - 统一输出包含价格基础列的 DataFrame，供特征提取组件使用。
+
+    参数：
+    - list_file_path(str|Path|None): 指数列表文件路径（默认 `index_analysis/dc_bk_list.txt`）；
+    - interface_name(str): 数据接口名称，默认 'dc_daily'；
+    - fetch_func(callable|None): 外部抓取函数；默认使用项目内的 `call_tushare`。
+
+    返回值：
+    - 无（通过成员方法返回 DataFrame 或 (DataFrame, dict) 元组）。
+
+    事件：无
+    """
+
+    def __init__(
+        self,
+        list_file_path: str | Path | None = None,
+        interface_name: str = "dc_daily",
+        fetch_func: Callable | None = None,
+    ) -> None:
+        # 组件目录位于 index_analysis/component，下移一级到 index_analysis 读取清单
+        default_path = Path(__file__).resolve().parent.parent / "dc_bk_list.txt"
+        self.list_file_path = Path(list_file_path) if list_file_path else default_path
+        self.interface_name = interface_name
+        self.fetch_func = fetch_func or call_tushare
+
+    def list_dc_index_codes(self, limit: int | None = None) -> list[dict]:
+        """
+        读取东财指数清单
+
+        功能：
+        - 解析 `dc_bk_list.txt` 文件，提取每行第一个字段为指数代码（如 'BK0475.DC'），
+          第二个字段为指数名称（如 '银行'），并去重输出统一结构列表。
+
+        参数：
+        - limit(int|None): 限制返回数量，默认 None（不限制）。
+
+        返回值：
+        - list[dict]: 每项为 { 'ts_code': str, 'name': str, 'market': 'DC' }。
+
+        事件：无
+        """
+        codes: list[dict] = []
+        seen: set[str] = set()
+        if not self.list_file_path.exists():
+            return []
+        try:
+            with self.list_file_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s or ".DC" not in s:
+                        continue
+                    parts = s.split()
+                    if not parts:
+                        continue
+                    code = parts[0]
+                    if not code or not code.endswith(".DC"):
+                        continue
+                    name = parts[1] if len(parts) > 1 else code
+                    if code in seen:
+                        continue
+                    seen.add(code)
+                    codes.append({"ts_code": code, "name": name, "market": "DC"})
+        except Exception:
+            return []
+
+        if isinstance(limit, int) and limit > 0:
+            codes = codes[:limit]
+        return codes
+
+    def load_daily(self, ts_codes: Iterable[str], start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        拉取东财指数日线数据（来自 `dc_daily`）
+
+        功能：
+        - 循环请求 TuShare `dc_daily` 指数日线数据，并合并为单一 DataFrame。
+
+        参数：
+        - ts_codes(Iterable[str]): 指数代码集合；
+        - start_date(str): 开始日期 'YYYYMMDD'；
+        - end_date(str): 结束日期 'YYYYMMDD'。
+
+        返回值：
+        - pandas.DataFrame: 列包含 `ts_code, trade_date, open, high, low, close` 等。
+
+        事件：无
+        """
+        if self.fetch_func is None:
+            raise RuntimeError("数据源不可用：未找到可用的 fetch 函数。")
+
+        frames: list[pd.DataFrame] = []
+        for code in ts_codes:
+            params = {"ts_code": code, "start_date": start_date, "end_date": end_date}
+            daily_resp = self.fetch_func(self.interface_name, params, use_query=False)
+            if not isinstance(daily_resp, dict) or daily_resp.get("code") != 200:
+                print(f"拉取{code}日线失败: {daily_resp.get('message') if isinstance(daily_resp, dict) else daily_resp}")
+                continue
+            df = pd.DataFrame(daily_resp.get("data", {}).get("records", []))
+            if df.empty:
+                continue
+
+            required_cols = {"ts_code", "trade_date", "open", "high", "low", "close"}
+            missing = required_cols - set(df.columns)
+            if missing:
+                for c in missing:
+                    df[c] = pd.NA
+
+            frames.append(df[["ts_code", "trade_date", "open", "high", "low", "close"]])
+            time.sleep(0.01)
+
+        if not frames:
+            return pd.DataFrame(columns=["ts_code", "trade_date", "open", "high", "low", "close"])  # 空结果占位
+
+        out = pd.concat(frames, ignore_index=True)
+        out.sort_values(["ts_code", "trade_date"], inplace=True)
+        out.reset_index(drop=True, inplace=True)
+        return out
+
+    def fetch_dc_daily_dataset(
+        self,
+        start_date: str,
+        end_date: str,
+        limit: int | None = None,
+    ) -> tuple[pd.DataFrame, dict]:
+        """
+        拉取东财指数列表与其日线数据集（一次性获取）
+
+        功能：
+        - 先读取指数清单，再批量拉取其 `dc_daily` 日线数据并返回聚合结果。
+
+        参数：
+        - start_date(str): 开始日期 'YYYYMMDD'；
+        - end_date(str): 结束日期 'YYYYMMDD'；
+        - limit(int|None): 代码数量上限，默认 None。
+
+        返回值：
+        - (DataFrame, dict): (聚合日线数据, 代码信息映射 { ts_code: {name, market} })。
+
+        事件：无
+        """
+        code_list = self.list_dc_index_codes(limit=limit)
         ts_codes = [c["ts_code"] for c in code_list]
         df = self.load_daily(ts_codes, start_date, end_date)
         code_info_map = {c["ts_code"]: {"name": c["name"], "market": c["market"]} for c in code_list}

@@ -14,7 +14,7 @@
 - 无
 """
 
-from .data_source import SWIndexDataSource, ETFDataSource, IndexDataSource
+from .data_source import SWIndexDataSource, ETFDataSource, IndexDataSource, DCIndexDataSource
 from .feature_extractor import SWIndexFeatureExtractor
 from .model_training import SWIndexModelTrainer
 from .model_predictor import SWIndexModelPredictor
@@ -24,6 +24,7 @@ __all__ = [
     'SWIndexDataSource',
     'IndexDataSource',
     'ETFDataSource',
+    'DCIndexDataSource',
     'SWIndexFeatureExtractor',
     'SWIndexModelTrainer',
     'SWIndexModelPredictor',

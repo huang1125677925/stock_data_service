@@ -183,7 +183,8 @@ class SWIndexFeatureExtractor:
     def _create_target(self, df: pd.DataFrame) -> pd.DataFrame:
         horizon = self.forecast_days if self.target_mode == 'up' else self.drop_forecast_days
         df['start_predict_close'] = df['close'].shift(horizon)
-        df['future_growth_rate'] = (df['close'] - df['start_predict_close']) / df['start_predict_close'].abs()
+        df['future_close'] = df['close'].shift(-horizon)
+        df['future_growth_rate'] = (df['future_close'] - df['close']) / df['close'].abs()
         if self.target_mode == 'up':
             df['target'] = (df['future_growth_rate'] > self.growth_threshold).astype(int)
         else:
@@ -222,7 +223,7 @@ class SWIndexFeatureExtractor:
         out = pd.concat(grouped, ignore_index=True)
         out.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-        exclude = {'ts_code', 'trade_date', 'target', 'future_macd', 'future_growth_rate', 'start_predict_close'}
+        exclude = {'ts_code', 'trade_date', 'target', 'future_macd', 'future_growth_rate', 'future_close', 'start_predict_close'}
         candidate_features = [c for c in out.columns if c not in exclude]
 
         if for_inference:
