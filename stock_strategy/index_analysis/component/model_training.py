@@ -83,12 +83,21 @@ class SWIndexModelTrainer:
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_test_scaled = self.scaler.transform(X_test)
 
+        # 类别不平衡处理：根据训练集正负样本比例设置 scale_pos_weight
+        pos = int(y_train.sum())
+        neg = int(len(y_train) - pos)
+        scale_pos_weight = float(neg / pos) if pos > 0 else 1.0
+
         self.model = xgb.XGBClassifier(
-            n_estimators=1000,
+            n_estimators=800,
             max_depth=6,
-            learning_rate=0.01,
+            learning_rate=0.03,
             subsample=0.8,
             colsample_bytree=0.8,
+            reg_alpha=0.0,
+            reg_lambda=1.0,
+            min_child_weight=1,
+            scale_pos_weight=scale_pos_weight,
             random_state=42,
             eval_metric='logloss',
         )
@@ -129,6 +138,8 @@ class SWIndexModelTrainer:
             'feature_importance': feature_importance,
             'train_df': train_df,
             'test_df': test_df,
+            'class_balance': {'pos': int(pos), 'neg': int(neg)},
+            'scale_pos_weight': scale_pos_weight,
         }
 
     def get_feature_importance(self, top_n: int = 15) -> pd.DataFrame | None:

@@ -173,22 +173,114 @@ class SWIndexFeatureExtractor:
         df['lower_shadow_ratio'] = lower_shadow / rng
         return df
 
+    def _calc_volume_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        量能与交易相关指标特征
+
+        功能：
+        - 使用 `vol, amount, turnover_rate, swing, pct_change` 构造基础变化率与滚动统计特征；
+        - 对缺失进行安全处理，避免除零问题。
+
+        参数：
+        - df(pd.DataFrame): 输入数据，需包含 `vol, amount, turnover_rate, swing, pct_change`（若缺失将补NA）。
+
+        返回值：
+        - pd.DataFrame: 增加量能与交易相关特征后的数据。
+
+        事件：无
+        """
+        # 保证列存在
+        for c in ['vol', 'amount', 'turnover_rate', 'swing', 'pct_change']:
+            if c not in df.columns:
+                df[c] = pd.NA
+
+        # 百分比变化
+        df['vol_pct_change'] = pd.to_numeric(df['vol'], errors='coerce').pct_change()
+        df['amount_pct_change'] = pd.to_numeric(df['amount'], errors='coerce').pct_change()
+        df['turnover_rate_pct_change'] = pd.to_numeric(df['turnover_rate'], errors='coerce').pct_change()
+        df['swing_pct_change'] = pd.to_numeric(df['swing'], errors='coerce').pct_change()
+
+        # 滚动统计
+        df['vol_5_mean'] = pd.to_numeric(df['vol'], errors='coerce').rolling(5).mean()
+        df['vol_5_std'] = pd.to_numeric(df['vol'], errors='coerce').rolling(5).std()
+        df['amount_5_mean'] = pd.to_numeric(df['amount'], errors='coerce').rolling(5).mean()
+        df['turnover_rate_5_mean'] = pd.to_numeric(df['turnover_rate'], errors='coerce').rolling(5).mean()
+        df['turnover_rate_5_std'] = pd.to_numeric(df['turnover_rate'], errors='coerce').rolling(5).std()
+        df['swing_5_mean'] = pd.to_numeric(df['swing'], errors='coerce').rolling(5).mean()
+        df['swing_5_std'] = pd.to_numeric(df['swing'], errors='coerce').rolling(5).std()
+
+        # 简单强度指标：成交量相对波动（避免除零）
+        vol_series = pd.to_numeric(df['vol'], errors='coerce')
+        vol_std_10 = vol_series.rolling(10).std()
+        df['vol_intensity_10'] = vol_series / vol_std_10.replace(0, np.nan)
+
+        return df
+
+    def _calc_moneyflow_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        资金流向特征（东财 DC moneyflow_ind_dc）
+
+        功能：
+        - 对资金流向基础列构造变化率与滚动统计特征；
+        - 提供简单符号特征（净流入为正/负）。
+
+        参数：
+        - df(pd.DataFrame): 输入数据，若包含以下列则进行特征工程：
+          `net_amount, net_amount_rate, buy_elg_amount, buy_elg_amount_rate, buy_lg_amount, buy_lg_amount_rate, buy_md_amount, buy_md_amount_rate, buy_sm_amount, buy_sm_amount_rate`。
+
+        返回值：
+        - pd.DataFrame: 增加资金流向相关特征后的数据。
+
+        事件：无
+        """
+        cols_amount = [
+            'net_amount', 'buy_elg_amount', 'buy_lg_amount', 'buy_md_amount', 'buy_sm_amount'
+        ]
+        cols_rate = [
+            'net_amount_rate', 'buy_elg_amount_rate', 'buy_lg_amount_rate', 'buy_md_amount_rate', 'buy_sm_amount_rate'
+        ]
+
+        # 标准化存在性
+        for c in cols_amount + cols_rate:
+            if c not in df.columns:
+                df[c] = pd.NA
+
+        # 数值化以保障计算安全
+        for c in cols_amount + cols_rate:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+
+        # 变化率与滚动统计
+        for c in cols_amount + cols_rate:
+            df[f'{c}_pct_change'] = df[c].pct_change()
+            df[f'{c}_5_mean'] = df[c].rolling(5).mean()
+            df[f'{c}_5_std'] = df[c].rolling(5).std()
+
+        # 简单符号特征
+        df['net_amount_positive'] = (df['net_amount'] > 0).astype('Int64')
+
+        return df
+
     def _create_lags(self, df: pd.DataFrame, n_lags: int = 10) -> pd.DataFrame:
+        new_cols: dict[str, pd.Series] = {}
         for lag in range(1, n_lags + 1):
-            df[f'macd_lag_{lag}'] = df['macd_bfq'].shift(lag)
-            df[f'dif_lag_{lag}'] = df['macd_dif_bfq'].shift(lag)
-            df[f'dea_lag_{lag}'] = df['macd_dea_bfq'].shift(lag)
+            new_cols[f'macd_lag_{lag}'] = df['macd_bfq'].shift(lag)
+            new_cols[f'dif_lag_{lag}'] = df['macd_dif_bfq'].shift(lag)
+            new_cols[f'dea_lag_{lag}'] = df['macd_dea_bfq'].shift(lag)
+        df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
         return df
 
     def _create_target(self, df: pd.DataFrame) -> pd.DataFrame:
         horizon = self.forecast_days if self.target_mode == 'up' else self.drop_forecast_days
-        df['start_predict_close'] = df['close'].shift(horizon)
-        df['future_close'] = df['close'].shift(-horizon)
-        df['future_growth_rate'] = (df['future_close'] - df['close']) / df['close'].abs()
-        if self.target_mode == 'up':
-            df['target'] = (df['future_growth_rate'] > self.growth_threshold).astype(int)
-        else:
-            df['target'] = (df['future_growth_rate'] < -self.drop_threshold).astype(int)
+        df = df.assign(
+            start_predict_close=df['close'].shift(horizon),
+            future_close=df['close'].shift(-horizon),
+            future_growth_rate=lambda x: (x['future_close'] - x['close']) / x['close'].abs(),
+            target=lambda x: (
+                (x['future_growth_rate'] > self.growth_threshold).astype(int)
+                if self.target_mode == 'up'
+                else (x['future_growth_rate'] < -self.drop_threshold).astype(int)
+            ),
+        )
         return df
 
     def transform(self, df: pd.DataFrame, for_inference: bool = False) -> tuple[pd.DataFrame, list[str]]:
@@ -202,6 +294,7 @@ class SWIndexFeatureExtractor:
 
         参数：
         - df(pd.DataFrame): 输入原始数据，至少包含 `ts_code, trade_date, open, high, low, close` 以及 MACD 三列；
+          若可用，包含 `pct_change, vol, amount, swing, turnover_rate` 将进一步生成量能与交易相关特征。
         - for_inference(bool): 是否为推理模式（不生成目标）。
 
         返回值：
@@ -215,6 +308,8 @@ class SWIndexFeatureExtractor:
         for _, g in df.groupby('ts_code'):
             g = self._calc_technical(g)
             g = self._calc_price(g)
+            g = self._calc_volume_indicators(g)
+            g = self._calc_moneyflow_indicators(g)
             g = self._create_lags(g, n_lags=10)
             if not for_inference:
                 g = self._create_target(g)

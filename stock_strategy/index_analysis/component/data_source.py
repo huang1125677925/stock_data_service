@@ -720,10 +720,12 @@ class DCIndexDataSource:
 
     def load_daily(self, ts_codes: Iterable[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
-        拉取东财指数日线数据（来自 `dc_daily`）
+        拉取东财指数日线数据（来自 `dc_daily`）并合并资金流向（`moneyflow_ind_dc`）
 
         功能：
-        - 循环请求 TuShare `dc_daily` 指数日线数据，并合并为单一 DataFrame。
+        - 循环请求 TuShare `dc_daily` 指数日线数据；
+        - 同步请求 TuShare `moneyflow_ind_dc` 资金流向数据；
+        - 以 `ts_code, trade_date` 左连接合并资金流向字段，输出统一数据集。
 
         参数：
         - ts_codes(Iterable[str]): 指数代码集合；
@@ -731,7 +733,8 @@ class DCIndexDataSource:
         - end_date(str): 结束日期 'YYYYMMDD'。
 
         返回值：
-        - pandas.DataFrame: 列包含 `ts_code, trade_date, open, high, low, close` 等。
+        - pandas.DataFrame: 列包含 `ts_code, trade_date, open, high, low, close, pct_change, vol, amount, swing, turnover_rate` 等，
+          以及资金流向字段：`net_amount, net_amount_rate, buy_elg_amount, buy_elg_amount_rate, buy_lg_amount, buy_lg_amount_rate, buy_md_amount, buy_md_amount_rate, buy_sm_amount, buy_sm_amount_rate`。
 
         事件：无
         """
@@ -741,7 +744,8 @@ class DCIndexDataSource:
         frames: list[pd.DataFrame] = []
         for code in ts_codes:
             params = {"ts_code": code, "start_date": start_date, "end_date": end_date}
-            daily_resp = self.fetch_func(self.interface_name, params, use_query=False)
+            fields = "ts_code,trade_date,open,high,low,close,pct_change,vol,amount,swing,turnover_rate"
+            daily_resp = self.fetch_func(self.interface_name, params, fields=fields, use_query=False)
             if not isinstance(daily_resp, dict) or daily_resp.get("code") != 200:
                 print(f"拉取{code}日线失败: {daily_resp.get('message') if isinstance(daily_resp, dict) else daily_resp}")
                 continue
@@ -749,17 +753,56 @@ class DCIndexDataSource:
             if df.empty:
                 continue
 
-            required_cols = {"ts_code", "trade_date", "open", "high", "low", "close"}
+            required_cols = {"ts_code", "trade_date", "open", "high", "low", "close", "pct_change", "vol", "amount", "swing", "turnover_rate"}
             missing = required_cols - set(df.columns)
             if missing:
                 for c in missing:
                     df[c] = pd.NA
 
-            frames.append(df[["ts_code", "trade_date", "open", "high", "low", "close"]])
+            # 合并资金流向数据
+            mf_fields = (
+                "trade_date,content_type,ts_code,name,pct_change,close,"
+                "net_amount,net_amount_rate,"
+                "buy_elg_amount,buy_elg_amount_rate,"
+                "buy_lg_amount,buy_lg_amount_rate,"
+                "buy_md_amount,buy_md_amount_rate,"
+                "buy_sm_amount,buy_sm_amount_rate,rank"
+            )
+            mf_resp = self.fetch_func(
+                interface="moneyflow_ind_dc",
+                params={"ts_code": code, "start_date": start_date, "end_date": end_date},
+                fields=mf_fields,
+                use_query=False,
+            )
+            if isinstance(mf_resp, dict) and mf_resp.get("code") == 200:
+                df_mf = pd.DataFrame(mf_resp.get("data", {}).get("records", []))
+                if not df_mf.empty:
+                    # 避免覆盖基础行情字段，去除重复列
+                    for dup in ["name", "pct_change", "close"]:
+                        if dup in df_mf.columns:
+                            df_mf.drop(columns=[dup], inplace=True)
+                    keep_cols = [
+                        "ts_code", "trade_date",
+                        "net_amount", "net_amount_rate",
+                        "buy_elg_amount", "buy_elg_amount_rate",
+                        "buy_lg_amount", "buy_lg_amount_rate",
+                        "buy_md_amount", "buy_md_amount_rate",
+                        "buy_sm_amount", "buy_sm_amount_rate",
+                    ]
+                    keep_cols = [c for c in keep_cols if c in df_mf.columns]
+                    try:
+                        df = df.merge(df_mf[keep_cols], on=["ts_code", "trade_date"], how="left")
+                    except Exception as e:
+                        print(f"资金流向合并失败 {code}: {e}")
+            else:
+                msg = mf_resp.get("message") if isinstance(mf_resp, dict) else str(mf_resp)
+                print(f"拉取{code}资金流向失败: {msg}")
+
+            frames.append(df)
             time.sleep(0.01)
 
         if not frames:
-            return pd.DataFrame(columns=["ts_code", "trade_date", "open", "high", "low", "close"])  # 空结果占位
+            return pd.DataFrame(columns=["ts_code", "trade_date", "open", "high", "low", "close", "pct_change", "vol", "amount", "swing", "turnover_rate"])  # 空结果占位
 
         out = pd.concat(frames, ignore_index=True)
         out.sort_values(["ts_code", "trade_date"], inplace=True)

@@ -13,6 +13,7 @@ except Exception:
     pass
 
 import time
+import datetime
 import pandas as pd
 from typing import Iterable
 
@@ -130,7 +131,9 @@ class DCIndexXGBPipeline:
         if df is None or df.empty:
             return {}
         df_features, feature_cols = self.feature_extractor.transform(df, for_inference=False)
-        result = self.trainer.train(df_features.dropna(), feature_cols)
+        # 仅按特征列与目标清理缺失，避免无关列导致样本被过度丢弃
+        df_train = df_features.dropna(subset=feature_cols + ['target'])
+        result = self.trainer.train(df_train, feature_cols)
         model_path, scaler_path = self._default_model_paths()
         self.trainer.save(model_path, scaler_path)
         return result
@@ -141,7 +144,7 @@ class DCIndexXGBPipeline:
         end_date: str,
         limit: int | None = None,
         prediction_type: str | None = None,
-        prob_threshold: float = 0.5,
+        prob_threshold: float = 0.3,
     ) -> list[dict]:
         """
         预测并保存到 StockSelectionRecord（示例）
@@ -175,7 +178,8 @@ class DCIndexXGBPipeline:
 
         out: list[dict] = []
         for code, g in df_features.groupby('ts_code'):
-            g = g.dropna()
+            # 预测阶段的数据在 transform(for_inference=True) 已按特征列清理缺失，
+            # 此处不再全量 dropna，避免误删含非关键列缺失的有效样本。
             if g.empty:
                 continue
             row = predictor.predict_latest(g)
@@ -448,9 +452,9 @@ def PredictIndexFromEtfXGB():
     预测指数并保存选择记录
     """
     pipeline = DCIndexXGBPipeline(
-        lookback_days=60,
-        forecast_days=3,
-        growth_threshold=0.03,
+        lookback_days=30,
+        forecast_days=5,
+        growth_threshold=0.05,
         target_mode='up',
         interface_name='dc_daily',
     )
@@ -464,13 +468,18 @@ if __name__ == '__main__':
     print('DCIndexXGBPipeline 已就绪：请在业务流程中调用 train/predict_and_save。')
     # 示例（谨慎执行，可能触发外部数据拉取）：
     pipeline = DCIndexXGBPipeline(
-        lookback_days=60,
-        forecast_days=3,
-        growth_threshold=0.03,
+        lookback_days=30,
+        forecast_days=5,
+        growth_threshold=0.05,
         target_mode='up',
         interface_name='dc_daily',
     )
     # pipeline.train(start_date='20230101', end_date='20251214', limit=500)
     # pipeline.predict_and_save(start_date='20250901', end_date='20251214', limit=500)
-    pipeline.send_email(start_date='20250901', end_date='20251214', limit=500)
+    end_date = datetime.datetime.now().strftime("%Y%m%d")
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=3650)).strftime("%Y%m%d")
+    pipeline.train(start_date=start_date, end_date=end_date, limit=500)
+    # pipeline.train(start_date='20230101', end_date='20251214', limit=500)
+    pipeline.predict_and_save(start_date='20250801', end_date='20251215', limit=500)
+    # pipeline.send_email(start_date=start_date, end_date=end_date, limit=500)
     # pipeline.train_test(start_date='20250101', end_date='20250901')
