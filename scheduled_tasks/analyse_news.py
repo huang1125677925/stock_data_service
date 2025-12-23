@@ -26,7 +26,7 @@ class NewsAnalyzer:
             base_url: API基础URL
             config_path: 配置文件路径
         """
-        self.api_key = "sk-6dbcf817918149cb96cbbd933dcc80bb"
+        self.api_key = "sk-901c17c669a241f098b25144957667ec"
         self.base_url = "https://api.deepseek.com/v1"
         
         # 支持的模型配置
@@ -223,25 +223,29 @@ def analyze_and_save_latest_news():
             close_old_connections()
             try:
                 # 从数据库中获取最新的新闻
-                latest_news_list = CCTVNews.objects.filter(ai_content__isnull=True).order_by('-publish_date')[:1]
+                latest_news_list = CCTVNews.objects.filter(ai_content__isnull=True).order_by('-publish_date')[:7]
                 
                 if not latest_news_list:
                     print("没有需要分析的新闻")
                     return
-                    
-                latest_news = latest_news_list[0]
-                test_news = latest_news.content
                 
-                # 过滤敏感词
-                test_news = SensitiveWordFilter().filter_text(test_news)
-                
-                # 分析新闻
                 analyzer = NewsAnalyzer()
-                result = analyzer.analyze_news(test_news)
                 
-                # 保存分析结果
-                latest_news.ai_content = result
-                latest_news.save()
+                # 遍历所有新闻
+                for latest_news in latest_news_list:
+                    if latest_news.ai_content:
+                        continue
+                    test_news = latest_news.content
+                    
+                    # 过滤敏感词
+                    test_news = SensitiveWordFilter().filter_text(test_news)
+                    
+                    # 分析新闻
+                    result = analyzer.analyze_news(test_news)
+                    
+                    # 保存分析结果
+                    latest_news.ai_content = result
+                    latest_news.save()
                 
                 print(f"✅ 已成功分析并保存新闻: {latest_news.title}")
             except Exception as e:
