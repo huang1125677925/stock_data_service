@@ -95,8 +95,11 @@ def fetch_index_daily(
     if end_date:
         params['end_date'] = end_date
 
+    # 当代码为东方财富板块（含“.DC”后缀）时，切换到 dc_daily 接口；否则保持原有指数接口
+    interface_name = 'dc_daily' if (ts_code and str(ts_code).upper().endswith('.DC')) else 'idx_factor_pro'
+
     resp = call_tushare(
-        interface='idx_factor_pro',
+        interface=interface_name,
         params=params,
         fields=fields,
         token=token,
