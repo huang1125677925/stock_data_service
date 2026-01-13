@@ -242,11 +242,11 @@ def get_news_list(url):
                 
                 # 从URL中提取发布日期
                 publish_date = ""
-                if '/2025/' in news_url:
-                    date_match = re.search(r'/2025/(\d{2})/(\d{2})/', news_url)
+                if '/2026/' in news_url:
+                    date_match = re.search(r'/2026/(\d{2})/(\d{2})/', news_url)
                     if date_match:
                         month, day = date_match.groups()
-                        publish_date = f"2025-{month}-{day}"
+                        publish_date = f"2026-{month}-{day}"
                 
                 final_result.append({
                     "title": title,

@@ -207,6 +207,7 @@ class DCIndexXGBPipeline:
             )
             out.append({
                 'ts_code': code,
+                'name': name,
                 'trade_date': str(trade_date),
                 'prediction': int(row['prediction']),
                 'prob_up_percent': float(prob_up * 100.0),
@@ -407,6 +408,7 @@ def send_dc_index_prediction_email(
         (
             f"<tr>"
             f"<td>{r.get('ts_code','')}</td>"
+            f"<td>{r.get('name','')}</td>"
             f"<td>{r.get('trade_date','')}</td>"
             f"<td>{int(r.get('prediction', 0))}</td>"
             f"<td>{float(r.get('prob_up_percent', 0.0)):.2f}%</td>"
@@ -426,6 +428,7 @@ def send_dc_index_prediction_email(
         <thead>
           <tr style='background: #f6f8fa;'>
             <th style='border: 1px solid #ddd; padding: 8px; text-align: left;'>代码</th>
+            <th style='border: 1px solid #ddd; padding: 8px; text-align: left;'>名称</th>
             <th style='border: 1px solid #ddd; padding: 8px; text-align: left;'>交易日</th>
             <th style='border: 1px solid #ddd; padding: 8px; text-align: left;'>预测值</th>
             <th style='border: 1px solid #ddd; padding: 8px; text-align: left;'>上涨概率</th>
@@ -467,19 +470,20 @@ def PredictIndexFromEtfXGB():
 if __name__ == '__main__':
     print('DCIndexXGBPipeline 已就绪：请在业务流程中调用 train/predict_and_save。')
     # 示例（谨慎执行，可能触发外部数据拉取）：
-    pipeline = DCIndexXGBPipeline(
-        lookback_days=30,
-        forecast_days=5,
-        growth_threshold=0.05,
-        target_mode='up',
-        interface_name='dc_daily',
-    )
+    # pipeline = DCIndexXGBPipeline(
+    #     lookback_days=30,
+    #     forecast_days=5,
+    #     growth_threshold=0.05,
+    #     target_mode='up',
+    #     interface_name='dc_daily',
+    # )
     # pipeline.train(start_date='20230101', end_date='20251214', limit=500)
     # pipeline.predict_and_save(start_date='20250901', end_date='20251214', limit=500)
-    end_date = datetime.datetime.now().strftime("%Y%m%d")
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=3650)).strftime("%Y%m%d")
-    pipeline.train(start_date=start_date, end_date=end_date, limit=500)
+    # end_date = datetime.datetime.now().strftime("%Y%m%d")
+    # start_date = (datetime.datetime.now() - datetime.timedelta(days=3650)).strftime("%Y%m%d")
+    # pipeline.train(start_date=start_date, end_date=end_date, limit=500)
     # pipeline.train(start_date='20230101', end_date='20251214', limit=500)
-    pipeline.predict_and_save(start_date='20250801', end_date='20251215', limit=500)
+    # pipeline.predict_and_save(start_date='20250801', end_date='20251215', limit=500)
     # pipeline.send_email(start_date=start_date, end_date=end_date, limit=500)
     # pipeline.train_test(start_date='20250101', end_date='20250901')
+    PredictIndexFromEtfXGB()

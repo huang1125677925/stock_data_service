@@ -121,4 +121,5 @@ def analyze_cctv_news():
 
 
 if __name__ == "__main__":
-    analyze_cctv_news()
+    # analyze_cctv_news()
+    fetch_cctv_news()
