@@ -9,6 +9,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
+from rest_framework.permissions import AllowAny
 from django.http import JsonResponse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from .services import individual_stock_service, stock_tag_service
@@ -18,11 +19,15 @@ from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStateme
 from .serializers import (
     IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, 
     IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer,
-    SuccessResponseConceptListSerializer, ErrorResponseSerializer
+    SuccessResponseConceptListSerializer, ErrorResponseSerializer,
+    SuccessResponseStockCorrelationSerializer, SuccessResponseStockVolatilityListSerializer,
 )
 from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 import json
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +257,282 @@ class StockHistoryView(APIView):
             logger.error(f"获取股票历史行情数据失败: {str(e)}")
             return error_response(f'获取股票历史行情数据失败: {str(e)}', 500)
 
+
+class StockDailyCorrelationView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="股票收盘价相关性矩阵",
+        description=(
+            "输入股票代码列表与时间范围，计算收盘价曲线的Pearson相关性，两两组合生成相关性矩阵。"
+        ),
+        tags=["individual_stock"],
+        responses={
+            200: SuccessResponseStockCorrelationSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            codes_str = request.query_params.get('stock_codes')
+            if not codes_str:
+                return error_response('参数缺失：stock_codes 必填（逗号分隔）', 400)
+            codes = [c.strip() for c in codes_str.split(',') if c.strip()]
+            seen = set()
+            ordered_codes = []
+            for c in codes:
+                if c not in seen:
+                    ordered_codes.append(c)
+                    seen.add(c)
+            if len(ordered_codes) < 2:
+                return error_response('至少提供两个不同的股票代码以计算相关性', 400)
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            def normalize_date(s):
+                if not s:
+                    return None
+                return s.replace('-', '')
+
+            sd_str = normalize_date(start_date)
+            ed_str = normalize_date(end_date)
+
+            bulk = individual_stock_service.get_stocks_history_bulk(ordered_codes, sd_str, ed_str, "daily")
+            series_list = []
+            for code in ordered_codes:
+                dailies = bulk.get(code, [])
+                if not dailies:
+                    series_list.append(pd.Series(dtype=float, name=code))
+                    continue
+                dates = [datetime.strptime(d['date'], '%Y-%m-%d').date() for d in dailies if d.get('date')]
+                closes = [float(d['close_price']) for d in dailies if d.get('close_price') is not None]
+                if not dates or not closes or len(dates) != len(closes):
+                    series_list.append(pd.Series(dtype=float, name=code))
+                    continue
+                s = pd.Series(data=closes, index=dates, name=code)
+                series_list.append(s)
+
+            if not series_list:
+                return error_response('查询范围内无任何日线数据', 404)
+
+            df = pd.concat(series_list, axis=1)
+            corr_df = df.corr(method='pearson', min_periods=2)
+
+            labels = list(corr_df.columns)
+            matrix = []
+            for row_values in corr_df.values.tolist():
+                row = []
+                for v in row_values:
+                    if v is None or (isinstance(v, float) and np.isnan(v)):
+                        row.append(None)
+                    else:
+                        row.append(round(float(v), 4))
+                matrix.append(row)
+
+            payload = {
+                'labels': labels,
+                'matrix': matrix,
+                'start_date': start_date,
+                'end_date': end_date,
+            }
+            return success_response(payload)
+        except Exception as e:
+            logger.error(f"股票收盘价相关性计算失败: {str(e)}")
+            return error_response(f'股票收盘价相关性计算失败: {str(e)}', 500)
+
+
+class StockDailyVolatilityView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="股票区间波动度统计",
+        description=(
+            "对股票列表在区间内的收盘价曲线进行统计：最高/最低、最大下跌/上涨、"
+            "最新价在区间的百分位、方差、均值、趋势与网格交易适配。时间范围需≥1年。"
+        ),
+        tags=["individual_stock"],
+        responses={
+            200: SuccessResponseStockVolatilityListSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        try:
+            codes_str = request.query_params.get('stock_codes')
+            if not codes_str:
+                return error_response('参数缺失：stock_codes 必填（逗号分隔）', 400)
+            codes = [c.strip() for c in codes_str.split(',') if c.strip()]
+            seen = set()
+            ordered_codes = []
+            for c in codes:
+                if c not in seen:
+                    ordered_codes.append(c)
+                    seen.add(c)
+            if len(ordered_codes) == 0:
+                return error_response('未提供有效的股票代码', 400)
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            sample_n_str = request.query_params.get('sample_n')
+            sample_n = None
+            if sample_n_str:
+                try:
+                    sample_n = int(sample_n_str)
+                except ValueError:
+                    return error_response('参数错误：sample_n 必须为整数', 400)
+                if sample_n is not None and sample_n < 10:
+                    return error_response('参数错误：sample_n 需≥10', 400)
+
+            def parse_date(s):
+                if not s:
+                    return None
+                return datetime.strptime(s, '%Y-%m-%d').date()
+
+            sd = parse_date(start_date)
+            ed = parse_date(end_date)
+            today = datetime.now().date()
+            if ed is None:
+                ed = today
+            if sd is None:
+                sd = ed - timedelta(days=365)
+
+            if (ed - sd).days < 365:
+                return error_response('时间范围至少需覆盖1年', 400)
+
+            sd_str = sd.strftime('%Y%m%d')
+            ed_str = ed.strftime('%Y%m%d')
+
+            bulk = individual_stock_service.get_stocks_history_bulk(ordered_codes, sd_str, ed_str, "daily")
+            items = []
+            skipped = 0
+            for code in ordered_codes:
+                dailies = bulk.get(code, [])
+                if not dailies or len(dailies) < 2:
+                    skipped += 1
+                    continue
+                dates = [datetime.strptime(d['date'], '%Y-%m-%d').date() for d in dailies if d.get('date')]
+                closes = [float(d['close_price']) for d in dailies if d.get('close_price') is not None]
+                if len(closes) < 2 or len(dates) != len(closes):
+                    skipped += 1
+                    continue
+                closes_np = np.array(closes, dtype=float)
+
+                highest_idx = int(np.argmax(closes_np))
+                lowest_idx = int(np.argmin(closes_np))
+                highest_val = float(closes_np[highest_idx])
+                lowest_val = float(closes_np[lowest_idx])
+                highest_date = dates[highest_idx].strftime('%Y-%m-%d')
+                lowest_date = dates[lowest_idx].strftime('%Y-%m-%d')
+
+                running_max = -np.inf
+                mdd = 0.0
+                mdd_start = 0
+                mdd_end = 0
+                peak_idx = 0
+                for i, price in enumerate(closes_np):
+                    if price > running_max:
+                        running_max = price
+                        peak_idx = i
+                    dd = price / running_max - 1.0
+                    if dd < mdd:
+                        mdd = dd
+                        mdd_start = peak_idx
+                        mdd_end = i
+                mdd_days = mdd_end - mdd_start if mdd_end >= mdd_start else 0
+
+                running_min = np.inf
+                max_rise = 0.0
+                rise_start = 0
+                rise_end = 0
+                trough_idx = 0
+                for i, price in enumerate(closes_np):
+                    if price < running_min:
+                        running_min = price
+                        trough_idx = i
+                    rise = price / running_min - 1.0
+                    if rise > max_rise:
+                        max_rise = rise
+                        rise_start = trough_idx
+                        rise_end = i
+                rise_days = rise_end - rise_start if rise_end >= rise_start else 0
+
+                latest_price = float(closes_np[-1])
+                latest_date = dates[-1].strftime('%Y-%m-%d')
+                denom = highest_val - lowest_val
+                if denom > 0:
+                    percentile = round((latest_price - lowest_val) / denom * 100.0, 2)
+                else:
+                    percentile = 100.0
+
+                mean_val = float(np.mean(closes_np))
+                var_val = float(np.var(closes_np, ddof=1))
+                std_val = float(np.std(closes_np, ddof=1))
+
+                idx = np.arange(len(closes_np), dtype=float)
+                use_sample = False
+                if sample_n and len(closes_np) > sample_n:
+                    step = max(1, len(closes_np) // sample_n)
+                    closes_fit = closes_np[::step]
+                    idx_fit = idx[::step]
+                    use_sample = True
+                else:
+                    closes_fit = closes_np
+                    idx_fit = idx
+                slope, intercept = np.polyfit(idx_fit, closes_fit, 1)
+                pred = slope * idx_fit + intercept
+                ss_res = float(np.sum((closes_fit - pred) ** 2))
+                ss_tot = float(np.sum((closes_fit - np.mean(closes_fit)) ** 2))
+                r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+                slope_scaled = slope / mean_val if mean_val != 0 else 0.0
+
+                trend = 'range'
+                if r2 >= 0.5 and abs(slope_scaled) >= 0.0005:
+                    trend = 'up' if slope_scaled > 0 else 'down'
+
+                range_ratio = (highest_val - lowest_val) / mean_val if mean_val > 0 else 0.0
+                grid_ok = trend == 'range' and 0.05 <= range_ratio <= 0.5
+
+                item = {
+                    'stock_code': code,
+                    'start_date': sd.strftime('%Y-%m-%d'),
+                    'end_date': ed.strftime('%Y-%m-%d'),
+                    'highest_value': round(highest_val, 4),
+                    'highest_date': highest_date,
+                    'lowest_value': round(lowest_val, 4),
+                    'lowest_date': lowest_date,
+                    'max_drawdown_pct': round(mdd * 100.0, 2),
+                    'mdd_start_date': dates[mdd_start].strftime('%Y-%m-%d'),
+                    'mdd_end_date': dates[mdd_end].strftime('%Y-%m-%d'),
+                    'mdd_days': int(mdd_days),
+                    'max_rise_pct': round(max_rise * 100.0, 2),
+                    'rise_start_date': dates[rise_start].strftime('%Y-%m-%d'),
+                    'rise_end_date': dates[rise_end].strftime('%Y-%m-%d'),
+                    'rise_days': int(rise_days),
+                    'latest_price': round(latest_price, 4),
+                    'latest_date': latest_date,
+                    'percentile_between_min_max': float(percentile),
+                    'mean': round(mean_val, 4),
+                    'variance': round(var_val, 6),
+                    'stddev': round(std_val, 4),
+                    'trend': trend,
+                    'grid_applicable': bool(grid_ok),
+                    'sample_used': bool(use_sample),
+                    'sample_n': int(sample_n) if sample_n else None,
+                }
+                items.append(item)
+
+            payload = {
+                'items': items,
+                'total': len(items),
+                'start_date': sd.strftime('%Y-%m-%d'),
+                'end_date': ed.strftime('%Y-%m-%d'),
+                'skipped': skipped,
+            }
+            return success_response(payload)
+        except Exception as e:
+            logger.error(f"股票区间波动度计算失败: {str(e)}")
+            return error_response(f'股票区间波动度计算失败: {str(e)}', 500)
 
 class StockInfoView(APIView):
     """
@@ -988,4 +1269,3 @@ class StockTagByStockView(APIView):
         except Exception as e:
             logger.error(f"获取股票{stock_code}标记失败: {str(e)}")
             return error_response(f"获取股票{stock_code}标记失败: {str(e)}", 500)
-

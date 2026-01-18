@@ -206,6 +206,39 @@ class IndividualStockService:
             logger.error(f"获取股票{stock_code}历史行情数据失败: {str(e)}")
             return None
     
+    def get_stocks_history_bulk(self, stock_codes: List[str], start_date: str = None, end_date: str = None, frequency: str = "daily") -> Dict[str, List[Dict]]:
+        valid_codes = [c for c in stock_codes if validate_stock_symbol(c)]
+        if not valid_codes:
+            return {}
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+        if not start_date:
+            start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+        try:
+            start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
+            end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
+            freq = (frequency or "daily").lower()
+            Model = IndividualStockDaily
+            if freq in ("weekly", "week", "w"):
+                Model = IndividualStockWeekly
+            qs = (
+                Model.objects.select_related('stock')
+                .filter(stock__code__in=valid_codes, date__gte=start_date_obj, date__lte=end_date_obj)
+                .order_by('stock__code', 'date')
+                .values('stock__code', 'date', 'close_price')
+            )
+            result: Dict[str, List[Dict]] = {code: [] for code in valid_codes}
+            for row in qs:
+                code = row['stock__code']
+                result[code].append({
+                    'date': row['date'].isoformat(),
+                    'close_price': float(row['close_price']) if row['close_price'] is not None else None,
+                })
+            return result
+        except Exception as e:
+            logger.error(f"批量获取股票历史行情数据失败: {str(e)}")
+            return {}
+    
     def get_stock_info(self, stock_code: str) -> Optional[Dict]:
         """
         获取股票详细信息

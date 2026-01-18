@@ -7,5 +7,21 @@ urlpatterns = [
     # ETF 日线行情查询
     path('daily/', views.EtfDailyListView.as_view(), name='etf_daily_list'),
     # ETF 最近一个交易日所有ETF行情查询
-    path('daily/latest/', views.EtfLatestDailyAllView.as_view(), name='etf_daily_latest_all'),
+    path(
+        'daily/latest/',
+        views.EtfLatestDailyAllView.as_view(),
+        name='etf_daily_latest_all',
+    ),
+    # ETF 收盘价相关性矩阵
+    path(
+        'daily/correlation/',
+        views.EtfDailyCorrelationView.as_view(),
+        name='etf_daily_correlation',
+    ),
+    # ETF 区间波动度统计
+    path(
+        'daily/volatility/',
+        views.EtfDailyVolatilityView.as_view(),
+        name='etf_daily_volatility',
+    ),
 ]

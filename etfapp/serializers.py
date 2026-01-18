@@ -124,3 +124,123 @@ class ErrorResponseSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     data = serializers.JSONField(allow_null=True, required=False)
     error = serializers.CharField(required=False)
+
+
+class CorrelationMatrixPayloadSerializer(serializers.Serializer):
+    """
+    ETF 收盘价相关性矩阵载荷
+    功能：用于描述相似度热力图所需的数据结构（标签与矩阵）。
+    参数：无
+    返回值：
+    - labels (str[]): ETF代码标签列表（矩阵行列顺序）
+    - matrix (number[][]): 相关性矩阵，取值范围[-1,1]，无数据用null
+    - start_date (str, 可选): 开始日期（YYYY-MM-DD）
+    - end_date (str, 可选): 结束日期（YYYY-MM-DD）
+    事件：无
+    """
+    labels = serializers.ListField(child=serializers.CharField())
+    matrix = serializers.ListField(child=serializers.ListField(child=serializers.FloatField(allow_null=True)))
+    start_date = serializers.CharField(required=False, allow_null=True)
+    end_date = serializers.CharField(required=False, allow_null=True)
+
+
+class SuccessResponseEtfCorrelationSerializer(serializers.Serializer):
+    """
+    ETF 收盘价相关性统一响应序列化器
+    功能：描述统一返回结构，其中 data 为相关性矩阵载荷。
+    参数：无
+    返回值：
+    - code (int): 状态码
+    - message (str): 信息
+    - timestamp (str): 时间戳（ISO 格式）
+    - data (CorrelationMatrixPayloadSerializer): 相关性矩阵载荷
+    事件：无
+    """
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = CorrelationMatrixPayloadSerializer()
+
+
+class EtfVolatilityItemSerializer(serializers.Serializer):
+    """
+    ETF 波动度指标项
+    功能：描述单个ETF在区间内的波动度统计。
+    参数：无
+    返回值：
+    - ts_code (str)
+    - start_date (str)
+    - end_date (str)
+    - highest_value (float)
+    - highest_date (str)
+    - lowest_value (float)
+    - lowest_date (str)
+    - max_drawdown_pct (float)
+    - mdd_start_date (str)
+    - mdd_end_date (str)
+    - mdd_days (int)
+    - max_rise_pct (float)
+    - rise_start_date (str)
+    - rise_end_date (str)
+    - rise_days (int)
+    - latest_price (float)
+    - latest_date (str)
+    - percentile_between_min_max (float)
+    - mean (float)
+    - variance (float)
+    - stddev (float)
+    - trend (str)  # up/down/range
+    - grid_applicable (bool)
+    - sample_used (bool)
+    - sample_n (int, 可选)
+    事件：无
+    """
+    ts_code = serializers.CharField()
+    start_date = serializers.CharField()
+    end_date = serializers.CharField()
+    highest_value = serializers.FloatField()
+    highest_date = serializers.CharField()
+    lowest_value = serializers.FloatField()
+    lowest_date = serializers.CharField()
+    max_drawdown_pct = serializers.FloatField()
+    mdd_start_date = serializers.CharField()
+    mdd_end_date = serializers.CharField()
+    mdd_days = serializers.IntegerField()
+    max_rise_pct = serializers.FloatField()
+    rise_start_date = serializers.CharField()
+    rise_end_date = serializers.CharField()
+    rise_days = serializers.IntegerField()
+    latest_price = serializers.FloatField()
+    latest_date = serializers.CharField()
+    percentile_between_min_max = serializers.FloatField()
+    mean = serializers.FloatField()
+    variance = serializers.FloatField()
+    stddev = serializers.FloatField()
+    trend = serializers.CharField()
+    grid_applicable = serializers.BooleanField()
+    sample_used = serializers.BooleanField()
+    sample_n = serializers.IntegerField(required=False, allow_null=True)
+
+
+class SuccessResponseEtfVolatilityListSerializer(serializers.Serializer):
+    """
+    ETF 波动度列表统一响应
+    功能：描述统一返回结构，其中 data 为指标项列表。
+    参数：无
+    返回值：
+    - code (int)
+    - message (str)
+    - timestamp (str)
+    - data (object): 包含 items、total、start_date、end_date
+    事件：无
+    """
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    class Payload(serializers.Serializer):
+        items = EtfVolatilityItemSerializer(many=True)
+        total = serializers.IntegerField()
+        start_date = serializers.CharField(allow_null=True, required=False)
+        end_date = serializers.CharField(allow_null=True, required=False)
+        skipped = serializers.IntegerField(required=False)
+    data = Payload()

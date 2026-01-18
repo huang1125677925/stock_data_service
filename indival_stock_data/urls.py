@@ -23,6 +23,19 @@ urlpatterns = [
     # 获取股票详细信息
     path('stocks/<str:stock_code>/info/', views.StockInfoView.as_view(), name='stock_info'),
     
+    # 股票收盘价相关性矩阵
+    path(
+        'daily/correlation/',
+        views.StockDailyCorrelationView.as_view(),
+        name='stock_daily_correlation',
+    ),
+    # 股票区间波动度统计
+    path(
+        'daily/volatility/',
+        views.StockDailyVolatilityView.as_view(),
+        name='stock_daily_volatility',
+    ),
+    
     # 策略选股结果管理接口
     # 获取策略结果列表或创建新的策略结果
     path('strategy-results/', views.StrategyResultView.as_view(), name='strategy_result_list'),

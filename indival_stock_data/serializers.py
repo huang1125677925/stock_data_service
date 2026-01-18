@@ -463,3 +463,58 @@ class ErrorResponseSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     data = serializers.JSONField(allow_null=True, required=False)
     error = serializers.CharField(required=False)
+
+
+class StockCorrelationMatrixPayloadSerializer(serializers.Serializer):
+    labels = serializers.ListField(child=serializers.CharField())
+    matrix = serializers.ListField(child=serializers.ListField(child=serializers.FloatField(allow_null=True)))
+    start_date = serializers.CharField(required=False, allow_null=True)
+    end_date = serializers.CharField(required=False, allow_null=True)
+
+
+class SuccessResponseStockCorrelationSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = StockCorrelationMatrixPayloadSerializer()
+
+
+class StockVolatilityItemSerializer(serializers.Serializer):
+    stock_code = serializers.CharField()
+    start_date = serializers.CharField()
+    end_date = serializers.CharField()
+    highest_value = serializers.FloatField()
+    highest_date = serializers.CharField()
+    lowest_value = serializers.FloatField()
+    lowest_date = serializers.CharField()
+    max_drawdown_pct = serializers.FloatField()
+    mdd_start_date = serializers.CharField()
+    mdd_end_date = serializers.CharField()
+    mdd_days = serializers.IntegerField()
+    max_rise_pct = serializers.FloatField()
+    rise_start_date = serializers.CharField()
+    rise_end_date = serializers.CharField()
+    rise_days = serializers.IntegerField()
+    latest_price = serializers.FloatField()
+    latest_date = serializers.CharField()
+    percentile_between_min_max = serializers.FloatField()
+    mean = serializers.FloatField()
+    variance = serializers.FloatField()
+    stddev = serializers.FloatField()
+    trend = serializers.CharField()
+    grid_applicable = serializers.BooleanField()
+    sample_used = serializers.BooleanField()
+    sample_n = serializers.IntegerField(required=False, allow_null=True)
+
+
+class SuccessResponseStockVolatilityListSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    class Payload(serializers.Serializer):
+        items = StockVolatilityItemSerializer(many=True)
+        total = serializers.IntegerField()
+        start_date = serializers.CharField(allow_null=True, required=False)
+        end_date = serializers.CharField(allow_null=True, required=False)
+        skipped = serializers.IntegerField(required=False)
+    data = Payload()
