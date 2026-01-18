@@ -40,6 +40,7 @@ try:
     from .strategies.grid_trading_strategy import GridTradingStrategy
     from .strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from .strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
+    from .strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService
 except ImportError:
@@ -80,6 +81,7 @@ except ImportError:
     from quantitative_strategy.strategies.grid_trading_strategy import GridTradingStrategy
     from quantitative_strategy.strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from quantitative_strategy.strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
+    from quantitative_strategy.strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
 
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService
@@ -620,6 +622,20 @@ class BacktestService:
         Returns:
             策略信息字典
         """
+        try:
+            import importlib
+            import pkgutil
+            pkg = importlib.import_module('quantitative_strategy.strategies')
+            for _, modname, ispkg in pkgutil.iter_modules(pkg.__path__):
+                if not ispkg and not modname.startswith('_'):
+                    full = f'quantitative_strategy.strategies.{modname}'
+                    if full not in sys.modules:
+                        try:
+                            importlib.import_module(full)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         return StrategyRegistry.get_all_strategies()
     
     def _get_stock_name(self, stock_code: str) -> str:
