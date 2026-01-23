@@ -36,7 +36,7 @@ try:
     from .strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from .strategies.nineturn_strategy import NineTurnStrategy
     from .strategies.ma_10_trailing_strategy import MATenTrailingStrategy
-    from .strategies.dca_strategy import DCAInvestmentStrategy
+    from .strategies.dca_strategy import DCASimpleStrategy
     from .strategies.grid_trading_strategy import GridTradingStrategy
     from .strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from .strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
@@ -77,7 +77,7 @@ except ImportError:
     from quantitative_strategy.strategies.macd_underwater_strategy import MACDUnderwaterStrategy
     from quantitative_strategy.strategies.nineturn_strategy import NineTurnStrategy
     from quantitative_strategy.strategies.ma_10_trailing_strategy import MATenTrailingStrategy
-    from quantitative_strategy.strategies.dca_strategy import DCAInvestmentStrategy
+    from quantitative_strategy.strategies.dca_strategy import DCASimpleStrategy
     from quantitative_strategy.strategies.grid_trading_strategy import GridTradingStrategy
     from quantitative_strategy.strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from quantitative_strategy.strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
