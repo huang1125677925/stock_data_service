@@ -66,6 +66,7 @@ class SuccessResponseEtfBasicListSerializer(serializers.Serializer):
     code = serializers.IntegerField()
     message = serializers.CharField()
     timestamp = serializers.CharField()
+
     class EtfBasicListPayloadSerializer(serializers.Serializer):
         """
         ETF 基本信息分页载荷
@@ -237,10 +238,100 @@ class SuccessResponseEtfVolatilityListSerializer(serializers.Serializer):
     code = serializers.IntegerField()
     message = serializers.CharField()
     timestamp = serializers.CharField()
+
     class Payload(serializers.Serializer):
         items = EtfVolatilityItemSerializer(many=True)
         total = serializers.IntegerField()
         start_date = serializers.CharField(allow_null=True, required=False)
         end_date = serializers.CharField(allow_null=True, required=False)
         skipped = serializers.IntegerField(required=False)
+
+    data = Payload()
+
+
+class IndexValuationMetricsSerializer(serializers.Serializer):
+    pe = serializers.FloatField(required=False, allow_null=True)
+    pe_ttm = serializers.FloatField(required=False, allow_null=True)
+    pb = serializers.FloatField(required=False, allow_null=True)
+    ps = serializers.FloatField(required=False, allow_null=True)
+    ps_ttm = serializers.FloatField(required=False, allow_null=True)
+    dv_ratio = serializers.FloatField(required=False, allow_null=True)
+    dv_ttm = serializers.FloatField(required=False, allow_null=True)
+    turnover_rate = serializers.FloatField(required=False, allow_null=True)
+    volume_ratio = serializers.FloatField(required=False, allow_null=True)
+    total_mv = serializers.FloatField(required=False, allow_null=True)
+    circ_mv = serializers.FloatField(required=False, allow_null=True)
+
+
+class IndexValuationConstituentsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    matched = serializers.IntegerField()
+    missing_daily_basic = serializers.IntegerField()
+    weight_sum = serializers.FloatField(required=False, allow_null=True)
+    mv_covered = serializers.FloatField(required=False, allow_null=True)
+    pe_coverage = serializers.FloatField(required=False, allow_null=True)
+    pe_ttm_coverage = serializers.FloatField(required=False, allow_null=True)
+    pb_coverage = serializers.FloatField(required=False, allow_null=True)
+    ps_coverage = serializers.FloatField(required=False, allow_null=True)
+    ps_ttm_coverage = serializers.FloatField(required=False, allow_null=True)
+
+
+class ConstituentDetailSerializer(serializers.Serializer):
+    ts_code = serializers.CharField()
+    weight = serializers.FloatField(required=False, allow_null=True)
+    pe = serializers.FloatField(required=False, allow_null=True)
+    pe_ttm = serializers.FloatField(required=False, allow_null=True)
+    pe_filled = serializers.FloatField(required=False, allow_null=True)
+    pe_ttm_filled = serializers.FloatField(required=False, allow_null=True)
+    pe_source = serializers.CharField(required=False, allow_null=True)
+    pe_ttm_source = serializers.CharField(required=False, allow_null=True)
+    profit_end_date = serializers.CharField(required=False, allow_null=True)
+    profit_dedt = serializers.FloatField(required=False, allow_null=True)
+    profit_dedt_ttm = serializers.FloatField(required=False, allow_null=True)
+    pb = serializers.FloatField(required=False, allow_null=True)
+    ps = serializers.FloatField(required=False, allow_null=True)
+    ps_ttm = serializers.FloatField(required=False, allow_null=True)
+    dv_ratio = serializers.FloatField(required=False, allow_null=True)
+    dv_ttm = serializers.FloatField(required=False, allow_null=True)
+    total_mv = serializers.FloatField(required=False, allow_null=True)
+    circ_mv = serializers.FloatField(required=False, allow_null=True)
+    mv_used = serializers.FloatField(required=False, allow_null=True)
+    mv_type = serializers.CharField(required=False, allow_null=True)
+
+
+class SuccessResponseIndexValuationSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+
+    class Payload(serializers.Serializer):
+        index_code = serializers.CharField()
+        trade_date = serializers.CharField()
+        index_basic = serializers.JSONField(required=False, allow_null=True)
+        constituents = IndexValuationConstituentsSerializer()
+        metrics = IndexValuationMetricsSerializer()
+        details = ConstituentDetailSerializer(many=True, required=False)
+
+    data = Payload()
+
+
+class IndexValuationDailyItemSerializer(serializers.Serializer):
+    trade_date = serializers.CharField()
+    weight_date = serializers.CharField(required=False, allow_null=True)
+    metrics = IndexValuationMetricsSerializer()
+    constituents = IndexValuationConstituentsSerializer()
+
+
+class SuccessResponseIndexValuationRangeSerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+
+    class Payload(serializers.Serializer):
+        index_code = serializers.CharField()
+        start_date = serializers.CharField()
+        end_date = serializers.CharField()
+        total = serializers.IntegerField()
+        items = IndexValuationDailyItemSerializer(many=True)
+
     data = Payload()

@@ -24,4 +24,20 @@ urlpatterns = [
         views.EtfDailyVolatilityView.as_view(),
         name='etf_daily_volatility',
     ),
+    # 指数估值信息查询
+    path(
+        'index/valuation/',
+        views.IndexValuationView.as_view(),
+        name='index_valuation',
+    ),
+    path(
+        'index/valuation/income/',
+        views.IndexValuationIncomeView.as_view(),
+        name='index_valuation_income',
+    ),
+    path(
+        'index/valuation/range/',
+        views.IndexValuationRangeView.as_view(),
+        name='index_valuation_range',
+    ),
 ]

@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'stock_strategy',
     'user_management',
     'scheduled_tasks',
+    'index_data',
     'forum',
     'indival_stock_data',
     'quantitative_strategy',

@@ -21,8 +21,6 @@ from .serializers import (
     SuccessResponseIrmQaShSerializer,
     SuccessResponseIrmQaSzSerializer,
     SuccessResponseCyqPerfSerializer,
-    SuccessResponseIndexClassifySerializer,
-    SuccessResponseIndexMemberAllSerializer,
     SuccessResponseIndexDailybasicSerializer,
     ErrorResponseSerializer,
 )
@@ -1071,89 +1069,6 @@ class CyqPerfProxyView(APIView):
             return success_response(data, "查询每日筹码及胜率成功")
         except Exception as e:
             return error_response(f"查询每日筹码及胜率失败: {str(e)}", 500)
-
-
-class IndexClassifyProxyView(APIView):
-    """
-    申万行业分类代理接口
-
-    功能：代理调用 Tushare 接口 `index_classify`，获取申万行业分类信息。
-    参数：无必填查询条件，支持 `fields`、`token`。
-    返回值：统一响应结构，`data.interface = "index_classify"`。
-    事件：无。
-    """
-
-    @extend_schema(
-        summary="申万行业分类",
-        description="获取申万行业分类信息。",
-        tags=["Tushare Proxy"],
-        parameters=[
-            OpenApiParameter("fields", OpenApiTypes.STR, OpenApiParameter.QUERY, description="限定返回字段列表", required=False),
-            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Tushare API Token", required=False),
-        ],
-        responses={
-            200: SuccessResponseIndexClassifySerializer,
-            500: ErrorResponseSerializer,
-        },
-    )
-    def get(self, request):
-        try:
-            fields = request.query_params.get("fields")
-            token = request.query_params.get("token")
-            resp = call_tushare("index_classify", params={}, fields=fields, token=token, use_query=False)
-            if resp.get("code") != 200:
-                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
-            data = resp.get("data") or {}
-            return success_response(data, "查询申万行业分类成功")
-        except Exception as e:
-            return error_response(f"查询申万行业分类失败: {str(e)}", 500)
-
-
-class IndexMemberAllProxyView(APIView):
-    """
-    申万行业成分构成(分级)代理接口
-
-    功能：代理调用 Tushare 接口 `index_member_all`，获取申万行业分级成分构成。
-    参数：支持 `l1_code`、`l2_code`、`l3_code`、`ts_code`、`is_new`、`fields`、`token`。
-    返回值：统一响应结构，`data.interface = "index_member_all"`。
-    事件：无。
-    """
-
-    @extend_schema(
-        summary="申万行业成分构成(分级)",
-        description="按分级或TS代码获取申万行业成分构成。",
-        tags=["Tushare Proxy"],
-        parameters=[
-            OpenApiParameter("l1_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="一级行业代码", required=False),
-            OpenApiParameter("l2_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="二级行业代码", required=False),
-            OpenApiParameter("l3_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="三级行业代码", required=False),
-            OpenApiParameter("ts_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="行业或指数TS代码", required=False),
-            OpenApiParameter("is_new", OpenApiTypes.INT, OpenApiParameter.QUERY, description="是否最新：1是/0否", required=False),
-            OpenApiParameter("fields", OpenApiTypes.STR, OpenApiParameter.QUERY, description="限定返回字段列表", required=False),
-            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Tushare API Token", required=False),
-        ],
-        responses={
-            200: SuccessResponseIndexMemberAllSerializer,
-            500: ErrorResponseSerializer,
-        },
-    )
-    def get(self, request):
-        try:
-            params = {}
-            for key in ("l1_code", "l2_code", "l3_code", "ts_code", "is_new"):
-                val = request.query_params.get(key)
-                if val:
-                    params[key] = val
-            fields = request.query_params.get("fields")
-            token = request.query_params.get("token")
-
-            resp = call_tushare("index_member_all", params=params, fields=fields, token=token, use_query=False)
-            if resp.get("code") != 200:
-                return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
-            data = resp.get("data") or {}
-            return success_response(data, "查询申万行业成分构成成功")
-        except Exception as e:
-            return error_response(f"查询申万行业成分构成失败: {str(e)}", 500)
 
 
 class IndexDailybasicProxyView(APIView):
