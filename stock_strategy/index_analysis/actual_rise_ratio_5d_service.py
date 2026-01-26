@@ -288,7 +288,7 @@ def update_actual_rise_ratio_5d():
                 errors.append(msg)
                 continue
 
-            ratio = compute_actual_rise_ratio_5d(ts_code=ts_code, trade_date=rec.trade_date, token=token)
+            ratio = compute_actual_rise_ratio_5d(ts_code=ts_code, trade_date=rec.trade_date)
             if ratio is None:
                 skipped += 1
                 msg = f"记录ID={rec.id} 无法计算比例或数据不足: code={ts_code}, date={rec.trade_date}"
@@ -296,12 +296,10 @@ def update_actual_rise_ratio_5d():
                 errors.append(msg)
                 continue
 
-            if not dry_run:
-                rec.actual_rise_ratio_5d = ratio
-                rec.save(update_fields=['actual_rise_ratio_5d'])
-                print(f"  -> 更新成功: ratio={ratio}")
-            else:
-                print(f"  -> Dry Run 计算结果: ratio={ratio}")
+            
+            rec.actual_rise_ratio_5d = ratio
+            rec.save(update_fields=['actual_rise_ratio_5d'])
+            print(f"  -> 更新成功: ratio={ratio}")
             updated += 1
 
 
