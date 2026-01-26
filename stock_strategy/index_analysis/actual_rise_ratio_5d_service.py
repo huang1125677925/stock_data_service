@@ -241,13 +241,7 @@ def compute_actual_rise_ratio_5d(ts_code: str, trade_date: date, token: Optional
     return Decimal(ratio).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-def update_actual_rise_ratio_5d(
-    stock_code: Optional[str] = None,
-    prediction_type: Optional[str] = None,
-    token: Optional[str] = None,
-    dry_run: bool = False,
-    limit: Optional[int] = None,
-) -> Dict[str, Any]:
+def update_actual_rise_ratio_5d():
     """
     组件：批量更新5日实际上涨比例（update_actual_rise_ratio_5d）
 
@@ -269,7 +263,7 @@ def update_actual_rise_ratio_5d(
     事件：
     - 读取数据库记录 → 拉取指数日线 → 计算比例 → 更新 `actual_rise_ratio_5d`
     """
-    qs = StockSelectionRecord.objects.filter(trade_date__isnull=False)
+    qs = StockSelectionRecord.objects.filter(trade_date__isnull=False, actual_rise_ratio_5d__isnull=True)
     if stock_code:
         qs = qs.filter(code=stock_code)
     if prediction_type:
@@ -277,6 +271,9 @@ def update_actual_rise_ratio_5d(
 
     if limit is not None and limit > 0:
         qs = qs[:limit]
+
+    total_count = qs.count()
+    print(f"开始执行5日实际上涨比例更新任务，待处理记录数: {total_count}")
 
     processed = 0
     updated = 0
@@ -288,35 +285,32 @@ def update_actual_rise_ratio_5d(
         for rec in qs.iterator():
             processed += 1
             ts_code = rec.code or ''
+            print(f"[{processed}/{total_count}] 正在处理记录 ID={rec.id}, code={ts_code}, date={rec.trade_date}")
 
             # 要求 ts_code 形态（包含市场后缀），否则跳过
             if '.' not in ts_code:
                 skipped += 1
-                errors.append(f"记录ID={rec.id} 代码缺少市场后缀: {ts_code}")
+                msg = f"记录ID={rec.id} 代码缺少市场后缀: {ts_code}"
+                print(f"  -> 跳过: {msg}")
+                errors.append(msg)
                 continue
 
             ratio = compute_actual_rise_ratio_5d(ts_code=ts_code, trade_date=rec.trade_date, token=token)
             if ratio is None:
                 skipped += 1
-                errors.append(f"记录ID={rec.id} 无法计算比例或数据不足: code={ts_code}, date={rec.trade_date}")
+                msg = f"记录ID={rec.id} 无法计算比例或数据不足: code={ts_code}, date={rec.trade_date}"
+                print(f"  -> 跳过: {msg}")
+                errors.append(msg)
                 continue
 
             if not dry_run:
                 rec.actual_rise_ratio_5d = ratio
                 rec.save(update_fields=['actual_rise_ratio_5d'])
+                print(f"  -> 更新成功: ratio={ratio}")
+            else:
+                print(f"  -> Dry Run 计算结果: ratio={ratio}")
             updated += 1
 
-    return {
-        'code': 200,
-        'message': 'update completed' if not dry_run else 'dry-run completed',
-        'data': {
-            'processed': processed,
-            'updated': updated,
-            'skipped': skipped,
-            'errors': errors,
-        }
-    }
 
 if __name__ == '__main__':
     resp = update_actual_rise_ratio_5d()
-    print(resp)
