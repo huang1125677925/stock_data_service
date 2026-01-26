@@ -273,7 +273,7 @@ CRONJOBS = [
     # ('0 21 * * 1-5', 'stock_strategy.index_analysis.index_xgboost.PredictIndexFromEtfXGB', f'>> {BASE_DIR}/logs/predict_index_from_etf_xgb.log 2>&1'),  # 每周一至周五16:00-22:00更新指数XGBoost预测结果
     # ('15 21 * * 1-5', 'stock_strategy.index_analysis.macd_xgboost.send_macd_xgboost_results_email', f'>> {BASE_DIR}/logs/send_macd_xgboost_results_email.log 2>&1'),  # 每周一至周五16:00-22:00更新MACD XGBoost结果邮件
     ('0 21 * * 1-5', 'stock_strategy.index_analysis.dc_index_xgboost.PredictIndexFromEtfXGB', f'>> {BASE_DIR}/logs/predict_index_from_etf_xgb.log 2>&1'),  # 每周一至周五16:00-22:00更新指数XGBoost预测结果
-    ('46 0 * * 1-5', 'stock_strategy.index_analysis.actual_rise_ratio_5d_service.update_actual_rise_ratio_5d', f'>> {BASE_DIR}/logs/update_actual_rise_ratio_5d.log 2>&1'),  # 每周一至周五16:00-22:00更新5日实际上涨比例
+    ('49 0 * * 1-5', 'stock_strategy.index_analysis.actual_rise_ratio_5d_service.update_actual_rise_ratio_5d', f'>> {BASE_DIR}/logs/update_actual_rise_ratio_5d.log 2>&1'),  # 每周一至周五16:00-22:00更新5日实际上涨比例
 ]
 
 # Crontab配置
