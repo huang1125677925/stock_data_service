@@ -264,13 +264,6 @@ def update_actual_rise_ratio_5d():
     - 读取数据库记录 → 拉取指数日线 → 计算比例 → 更新 `actual_rise_ratio_5d`
     """
     qs = StockSelectionRecord.objects.filter(trade_date__isnull=False, actual_rise_ratio_5d__isnull=True)
-    if stock_code:
-        qs = qs.filter(code=stock_code)
-    if prediction_type:
-        qs = qs.filter(prediction_type=prediction_type)
-
-    if limit is not None and limit > 0:
-        qs = qs[:limit]
 
     total_count = qs.count()
     print(f"开始执行5日实际上涨比例更新任务，待处理记录数: {total_count}")
