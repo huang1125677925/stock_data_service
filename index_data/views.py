@@ -1,4 +1,5 @@
 import math
+import concurrent.futures
 from datetime import datetime, timedelta
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
@@ -91,7 +92,10 @@ class IndexClassifyProxyView(APIView):
     申万行业分类查询接口
     功能：获取申万行业分类信息。
     参数（Query）：
+    - index_code(str, 可选)：指数代码
     - level(str, 可选)：行业分级（L1/L2/L3）
+    - parent_code(str, 可选)：父级代码（一级为0）
+    - src(str, 可选)：指数来源（SW2014/SW2021），默认 SW2021
     返回值：调用 success_response 返回数据；错误时调用 error_response。
     """
 
@@ -101,12 +105,16 @@ class IndexClassifyProxyView(APIView):
         summary="申万行业分类",
         description=(
             "获取申万行业分类信息。\n"
-            "参数（Query）：level。\n"
+            "参数（Query）：index_code, level, parent_code, src。\n"
+            "默认 src 为 SW2021。\n"
             "统一响应结构（success_response），data 为分类列表。"
         ),
         tags=["index"],
         parameters=[
+            OpenApiParameter("index_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="指数代码", required=False),
             OpenApiParameter("level", OpenApiTypes.STR, OpenApiParameter.QUERY, description="行业分级：L1/L2/L3", required=False),
+            OpenApiParameter("parent_code", OpenApiTypes.STR, OpenApiParameter.QUERY, description="父级代码（一级为0）", required=False),
+            OpenApiParameter("src", OpenApiTypes.STR, OpenApiParameter.QUERY, description="指数来源：SW2014/SW2021，默认 SW2021", required=False),
         ],
         responses={
             200: SuccessResponseIndexClassifySerializer,
@@ -116,9 +124,15 @@ class IndexClassifyProxyView(APIView):
     def get(self, request):
         try:
             params = {}
-            level = request.query_params.get("level")
-            if level:
-                params["level"] = level
+            # 处理查询参数
+            for key in ("index_code", "level", "parent_code", "src"):
+                val = request.query_params.get(key)
+                if val:
+                    params[key] = val
+            
+            # 设置默认值
+            if "src" not in params:
+                params["src"] = "SW2021"
 
             resp = call_tushare("index_classify", params=params, use_query=False)
             if resp.get("code") != 200:
@@ -222,7 +236,7 @@ class SwValuationAnalysisView(APIView):
                 return error_response("缺少必要参数: level, start_date, end_date", 400)
 
             # 1. 获取该level下的所有行业代码
-            resp_classify = call_tushare("index_classify", params={"level": level}, use_query=False)
+            resp_classify = call_tushare("index_classify", params={"level": level, "src": "SW2021"}, use_query=False)
             if resp_classify.get("code") != 200:
                 return error_response(f"获取行业分类失败: {resp_classify.get('message')}", 500)
             
@@ -243,27 +257,52 @@ class SwValuationAnalysisView(APIView):
 
             all_records = []
             
+            # 定义数据获取函数
+            def fetch_daily_data(date_str):
+                resp = call_tushare("sw_daily", params={"trade_date": date_str}, use_query=False)
+                if resp.get("code") == 200:
+                    records = resp.get("data", {}).get("records", [])
+                    return [r for r in records if r.get("ts_code") in valid_codes]
+                return []
+
+            def fetch_code_data(ts_code):
+                resp = call_tushare("sw_daily", params={"ts_code": ts_code, "start_date": start_date, "end_date": end_date}, use_query=False)
+                if resp.get("code") == 200:
+                    return resp.get("data", {}).get("records", [])
+                return []
+
+            # 并发配置
+            max_workers = 8
+
             # 如果天数少于行业数，按日期循环（减少API调用次数）
             # 注意：sw_daily按日期查询返回所有行业，我们需要过滤
             if days_diff < len(valid_codes):
+                date_list = []
                 current_dt = start_dt
                 while current_dt <= end_dt:
-                    date_str = current_dt.strftime("%Y%m%d")
-                    # 查询当日所有申万行业行情
-                    resp_daily = call_tushare("sw_daily", params={"trade_date": date_str}, use_query=False)
-                    if resp_daily.get("code") == 200:
-                        daily_records = resp_daily.get("data", {}).get("records", [])
-                        # 过滤出属于该level的行业
-                        filtered = [r for r in daily_records if r.get("ts_code") in valid_codes]
-                        all_records.extend(filtered)
+                    date_list.append(current_dt.strftime("%Y%m%d"))
                     current_dt += timedelta(days=1)
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(fetch_daily_data, d): d for d in date_list}
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            result = future.result()
+                            if result:
+                                all_records.extend(result)
+                        except Exception:
+                            pass
             else:
                 # 按代码循环
-                for code in valid_codes:
-                    resp_daily = call_tushare("sw_daily", params={"ts_code": code, "start_date": start_date, "end_date": end_date}, use_query=False)
-                    if resp_daily.get("code") == 200:
-                        daily_records = resp_daily.get("data", {}).get("records", [])
-                        all_records.extend(daily_records)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(fetch_code_data, code): code for code in valid_codes}
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            result = future.result()
+                            if result:
+                                all_records.extend(result)
+                        except Exception:
+                            pass
             
             # 3. 分组处理数据，计算分位数并提取最后一天数据
             final_records = []
