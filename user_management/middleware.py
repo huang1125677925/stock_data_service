@@ -33,7 +33,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/individual_stock/strategy-results/',
             '/django/api/individual_stock/stock-tags/',  # 股票标记API
             # '/django/api/stock/industry/performance-reports/',
-            # '/django/api/stock/industry/heatmap-data/',
+            '/django/api/index/index-basic',
             '/django/api/tasks/',
             '/django/api/docs/',  # 文档接口
             '/django/api/swagger/',  # Swagger 接口

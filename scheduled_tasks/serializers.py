@@ -1,80 +1,6 @@
 from rest_framework import serializers
 
 
-class IndexBasicRecordSerializer(serializers.Serializer):
-    ts_code = serializers.CharField(required=False)
-    name = serializers.CharField(required=False)
-    fullname = serializers.CharField(required=False)
-    market = serializers.CharField(required=False)
-    publisher = serializers.CharField(required=False)
-    index_type = serializers.CharField(required=False)
-    category = serializers.CharField(required=False)
-    base_date = serializers.CharField(required=False)
-    base_point = serializers.FloatField(required=False)
-    list_date = serializers.CharField(required=False)
-    weight_rule = serializers.CharField(required=False)
-    desc = serializers.CharField(required=False)
-    exp_date = serializers.CharField(required=False)
-
-
-class IndexBasicDataSerializer(serializers.Serializer):
-    interface = serializers.CharField()
-    count = serializers.IntegerField()
-    records = IndexBasicRecordSerializer(many=True)
-
-
-class SuccessResponseIndexBasicSerializer(serializers.Serializer):
-    code = serializers.IntegerField()
-    message = serializers.CharField()
-    timestamp = serializers.CharField()
-    data = IndexBasicDataSerializer()
-
-
-class IndexDailyRecordSerializer(serializers.Serializer):
-    ts_code = serializers.CharField(required=False)
-    trade_date = serializers.CharField(required=False)
-    close = serializers.FloatField(required=False)
-    open = serializers.FloatField(required=False)
-    high = serializers.FloatField(required=False)
-    low = serializers.FloatField(required=False)
-    pre_close = serializers.FloatField(required=False)
-    change = serializers.FloatField(required=False)
-    pct_chg = serializers.FloatField(required=False)
-    vol = serializers.FloatField(required=False)
-    amount = serializers.FloatField(required=False)
-
-
-class IndexDailyDataSerializer(serializers.Serializer):
-    interface = serializers.CharField()
-    count = serializers.IntegerField()
-    records = IndexDailyRecordSerializer(many=True)
-
-
-class SuccessResponseIndexDailySerializer(serializers.Serializer):
-    code = serializers.IntegerField()
-    message = serializers.CharField()
-    timestamp = serializers.CharField()
-    data = IndexDailyDataSerializer()
-
-
-class IndexWeightRecordSerializer(serializers.Serializer):
-    index_code = serializers.CharField(required=False)
-    con_code = serializers.CharField(required=False)
-    trade_date = serializers.CharField(required=False)
-    weight = serializers.FloatField(required=False)
-
-
-class IndexWeightDataSerializer(serializers.Serializer):
-    interface = serializers.CharField()
-    count = serializers.IntegerField()
-    records = IndexWeightRecordSerializer(many=True)
-
-
-class SuccessResponseIndexWeightSerializer(serializers.Serializer):
-    code = serializers.IntegerField()
-    message = serializers.CharField()
-    timestamp = serializers.CharField()
-    data = IndexWeightDataSerializer()
 
 
 class ErrorResponseSerializer(serializers.Serializer):
@@ -542,38 +468,4 @@ class SuccessResponseCyqPerfSerializer(serializers.Serializer):
     data = CyqPerfDataSerializer()
 
 
-# --- 大盘指数每日指标（index_dailybasic） ---
-class IndexDailybasicRecordSerializer(serializers.Serializer):
-    """
-    index_dailybasic 记录字段序列化器
 
-    功能：序列化大盘指数每日指标记录。
-    参数：无。
-    返回值：单条记录的序列化结构。
-    事件：无。
-    """
-    ts_code = serializers.CharField(required=False)
-    trade_date = serializers.CharField(required=False)
-    total_mv = serializers.FloatField(required=False)
-    float_mv = serializers.FloatField(required=False)
-    total_share = serializers.FloatField(required=False)
-    float_share = serializers.FloatField(required=False)
-    free_share = serializers.FloatField(required=False)
-    turnover_rate = serializers.FloatField(required=False)
-    turnover_rate_f = serializers.FloatField(required=False)
-    pe = serializers.FloatField(required=False)
-    pe_ttm = serializers.FloatField(required=False)
-    pb = serializers.FloatField(required=False)
-
-
-class IndexDailybasicDataSerializer(serializers.Serializer):
-    interface = serializers.CharField()
-    count = serializers.IntegerField()
-    records = IndexDailybasicRecordSerializer(many=True)
-
-
-class SuccessResponseIndexDailybasicSerializer(serializers.Serializer):
-    code = serializers.IntegerField()
-    message = serializers.CharField()
-    timestamp = serializers.CharField()
-    data = IndexDailybasicDataSerializer()
