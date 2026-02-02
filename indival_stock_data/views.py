@@ -60,6 +60,7 @@ class StockListView(APIView):
             industry = request.query_params.get('industry', None)
             dc_concept = request.query_params.get('dc_concept', None)
             stock_names_param = request.query_params.get('stock_names', None)
+            codes_param = request.query_params.get('codes', None)
 
             # 解析股票名列表参数，支持JSON数组或逗号分隔的字符串
             names_list = []
@@ -77,6 +78,10 @@ class StockListView(APIView):
                         names_list = [s.strip() for s in param_str.split(',') if s.strip()]
                 except Exception:
                     return error_response('stock_names参数格式错误，应为JSON数组或逗号分隔字符串', 400)
+            
+            codes_list = []
+            if codes_param:
+                codes_list = [c.strip() for c in codes_param.split(',') if c and c.strip()]
 
             # 使用数据库层面的过滤与分页，避免一次性加载全部数据
             queryset = IndividualStock.objects.all().order_by('code')
@@ -88,6 +93,8 @@ class StockListView(APIView):
                 queryset = queryset.filter(dc_concept__icontains=dc_concept)
             if names_list:
                 queryset = queryset.filter(name__in=names_list)
+            if codes_list:
+                queryset = queryset.filter(code__in=codes_list)
 
             if queryset.count() == 0:
                 return error_response("没有搜索到相关股票", 404)
