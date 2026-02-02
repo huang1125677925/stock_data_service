@@ -214,6 +214,7 @@ class SwValuationAnalysisView(APIView):
     - level(str, 必选)：行业分级（L1/L2/L3）
     - start_date(str, 必选)：开始日期 (YYYYMMDD)
     - end_date(str, 必选)：结束日期 (YYYYMMDD)
+    - index_codes(str, 可选)：行业代码列表，逗号分隔；若提供则优先使用该列表
     """
     permission_classes = [AllowAny]
 
@@ -225,6 +226,7 @@ class SwValuationAnalysisView(APIView):
             OpenApiParameter("level", OpenApiTypes.STR, OpenApiParameter.QUERY, description="行业分级：L1/L2/L3", required=True),
             OpenApiParameter("start_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="开始日期 (YYYYMMDD)", required=True),
             OpenApiParameter("end_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="结束日期 (YYYYMMDD)", required=True),
+            OpenApiParameter("index_codes", OpenApiTypes.STR, OpenApiParameter.QUERY, description="行业代码列表，逗号分隔；若提供则优先使用", required=False),
         ],
         responses={
             200: SuccessResponseSwValuationAnalysisSerializer,
@@ -236,17 +238,23 @@ class SwValuationAnalysisView(APIView):
             level = request.query_params.get("level")
             start_date = request.query_params.get("start_date")
             end_date = request.query_params.get("end_date")
+            index_codes_str = request.query_params.get("index_codes")
 
-            if not all([level, start_date, end_date]):
-                return error_response("缺少必要参数: level, start_date, end_date", 400)
+            if not all([start_date, end_date]):
+                return error_response("缺少必要参数: start_date, end_date", 400)
+            if not (index_codes_str or level):
+                return error_response("必须提供 level 或 index_codes 其中之一", 400)
 
-            # 1. 获取该level下的所有行业代码
-            resp_classify = call_tushare("index_classify", params={"level": level, "src": "SW2021"}, use_query=False)
-            if resp_classify.get("code") != 200:
-                return error_response(f"获取行业分类失败: {resp_classify.get('message')}", 500)
-            
-            classify_data = resp_classify.get("data", {}).get("records", [])
-            valid_codes = {item["index_code"] for item in classify_data if item.get("index_code")}
+            # 1. 获取行业代码集合
+            if index_codes_str:
+                valid_codes = {c.strip() for c in index_codes_str.split(",") if c.strip()}
+            else:
+                resp_classify = call_tushare("index_classify", params={"level": level, "src": "SW2021"}, use_query=False)
+                if resp_classify.get("code") != 200:
+                    return error_response(f"获取行业分类失败: {resp_classify.get('message')}", 500)
+                
+                classify_data = resp_classify.get("data", {}).get("records", [])
+                valid_codes = {item["index_code"] for item in classify_data if item.get("index_code")}
             
             if not valid_codes:
                 return success_response({"interface": "sw_valuation_analysis", "count": 0, "records": []}, "该Level下无行业数据")
@@ -814,3 +822,157 @@ class IndexValuationSummaryProxyView(APIView):
             return success_response({"items": ordered_results}, "获取指数估值摘要成功")
         except Exception as e:
             return error_response(f"获取指数估值摘要失败: {str(e)}", 500)
+
+
+class MarketCombinedDailyBasicView(APIView):
+    """
+    全市场综合指标接口
+    
+    功能：利用上证综指(000001.SH)和深证成指(399001.SZ)计算全市场综合指标。
+    参数：
+    - trade_date(str, 可选): 交易日期
+    - start_date(str, 可选): 开始日期
+    - end_date(str, 可选): 结束日期
+    - token(str, 可选): Tushare API Token
+    """
+    
+    @extend_schema(
+        summary="全市场综合指标",
+        description="利用上证综指和深证成指计算全市场综合指标。",
+        tags=["index"],
+        parameters=[
+            OpenApiParameter("trade_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="交易日期YYYYMMDD", required=False),
+            OpenApiParameter("start_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="开始日期YYYYMMDD", required=False),
+            OpenApiParameter("end_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="结束日期YYYYMMDD", required=False),
+            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Tushare API Token", required=False),
+        ],
+        responses={
+            200: SuccessResponseIndexDailybasicSerializer, 
+            500: ErrorResponseSerializer,
+        }
+    )
+    def get(self, request):
+        try:
+            import pandas as pd
+            import numpy as np
+            
+            trade_date = request.query_params.get("trade_date")
+            start_date = request.query_params.get("start_date")
+            end_date = request.query_params.get("end_date")
+            token = request.query_params.get("token")
+            
+            fields = "ts_code,trade_date,total_mv,float_mv,total_share,float_share,free_share,turnover_rate,turnover_rate_f,pe,pe_ttm,pb"
+            
+            targets = ["000001.SH", "399001.SZ"]
+            all_records = []
+            for ts in targets:
+                params = {"ts_code": ts}
+                if trade_date:
+                    params["trade_date"] = trade_date
+                if start_date:
+                    params["start_date"] = start_date
+                if end_date:
+                    params["end_date"] = end_date
+                resp = call_tushare("index_dailybasic", params=params, fields=fields, token=token, use_query=False)
+                if resp.get("code") != 200:
+                    return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
+                data = resp.get("data")
+                recs = data.get("records", []) if isinstance(data, dict) else []
+                if recs:
+                    all_records.extend(recs)
+            
+            if not all_records:
+                return success_response({"items": [], "fields": fields.split(',')}, "查询成功(无数据)")
+
+            df = pd.DataFrame(all_records)
+            
+            # Convert numeric columns
+            numeric_cols = ['total_mv', 'float_mv', 'total_share', 'float_share', 'free_share', 
+                            'turnover_rate', 'turnover_rate_f', 'pe', 'pe_ttm', 'pb']
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # Group by trade_date
+            grouped = df.groupby('trade_date')
+            
+            results = []
+            
+            for date, group in grouped:
+                # Sums
+                total_mv = group['total_mv'].sum()
+                float_mv = group['float_mv'].sum()
+                total_share = group['total_share'].sum()
+                float_share = group['float_share'].sum()
+                free_share = group['free_share'].sum()
+                
+                # PE/PB Calculation (Harmonic Mean weighted by MV effectively)
+                # PE = Total MV / Total Earnings
+                # Earnings = MV / PE
+                earnings_sum = 0
+                earnings_ttm_sum = 0
+                net_assets_sum = 0
+                
+                for _, row in group.iterrows():
+                    pe = row.get('pe')
+                    pe_ttm = row.get('pe_ttm')
+                    pb = row.get('pb')
+                    mv = row.get('total_mv', 0)
+                    
+                    if pe and pe != 0 and not np.isnan(pe):
+                        earnings_sum += mv / pe
+                    if pe_ttm and pe_ttm != 0 and not np.isnan(pe_ttm):
+                        earnings_ttm_sum += mv / pe_ttm
+                    if pb and pb != 0 and not np.isnan(pb):
+                        net_assets_sum += mv / pb
+                        
+                pe_avg = total_mv / earnings_sum if earnings_sum else None
+                pe_ttm_avg = total_mv / earnings_ttm_sum if earnings_ttm_sum else None
+                pb_avg = total_mv / net_assets_sum if net_assets_sum else None
+                
+                # Turnover Rate Calculation
+                # Weighted by float share (or free share)
+                implied_vol_sum = 0
+                implied_vol_f_sum = 0
+                
+                for _, row in group.iterrows():
+                    tr = row.get('turnover_rate')
+                    fs = row.get('float_share', 0)
+                    if tr is not None and not np.isnan(tr):
+                         implied_vol_sum += tr * fs
+                    
+                    tr_f = row.get('turnover_rate_f')
+                    frs = row.get('free_share', 0)
+                    if tr_f is not None and not np.isnan(tr_f):
+                         implied_vol_f_sum += tr_f * frs
+                
+                tr_avg = implied_vol_sum / float_share if float_share else None
+                tr_f_avg = implied_vol_f_sum / free_share if free_share else None
+                
+                results.append({
+                    "ts_code": "TOTAL_MARKET",
+                    "trade_date": date,
+                    "total_mv": total_mv,
+                    "float_mv": float_mv,
+                    "total_share": total_share,
+                    "float_share": float_share,
+                    "free_share": free_share,
+                    "turnover_rate": round(tr_avg, 4) if tr_avg is not None else None,
+                    "turnover_rate_f": round(tr_f_avg, 4) if tr_f_avg is not None else None,
+                    "pe": round(pe_avg, 4) if pe_avg is not None else None,
+                    "pe_ttm": round(pe_ttm_avg, 4) if pe_ttm_avg is not None else None,
+                    "pb": round(pb_avg, 4) if pb_avg is not None else None,
+                })
+            
+            # Sort by date descending
+            results.sort(key=lambda x: x['trade_date'], reverse=True)
+            
+            # Format return to match Tushare proxy style
+            return success_response({
+                "interface": "market_combined_daily_basic",
+                "count": len(results),
+                "records": replace_nan(results)
+            }, "计算全市场综合指标成功")
+
+        except Exception as e:
+            return error_response(f"计算全市场综合指标失败: {str(e)}", 500)

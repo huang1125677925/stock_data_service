@@ -10,6 +10,7 @@ from .views import (
     IndexWeightProxyView,
     IndexDailybasicProxyView,
     IndexValuationSummaryProxyView,
+    MarketCombinedDailyBasicView,
 )
 
 app_name = "index_data"
@@ -24,4 +25,5 @@ urlpatterns = [
     path("index-weight/", IndexWeightProxyView.as_view(), name="index-weight"),
     path("index-dailybasic/", IndexDailybasicProxyView.as_view(), name="index-dailybasic"),
     path("index-valuation-summary/", IndexValuationSummaryProxyView.as_view(), name="index-valuation-summary"),
+    path("market-combined-dailybasic/", MarketCombinedDailyBasicView.as_view(), name="market-combined-dailybasic"),
 ]
