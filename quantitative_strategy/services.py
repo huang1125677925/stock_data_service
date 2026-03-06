@@ -41,6 +41,7 @@ try:
     from .strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from .strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
     from .strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
+    from .strategies.grid_trading_daily_change_strategy import GridTradingDailyChangeStrategy
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService
 except ImportError:
@@ -82,6 +83,7 @@ except ImportError:
     from quantitative_strategy.strategies.grid_trading_enhanced_strategy import GridTradingEnhancedStrategy
     from quantitative_strategy.strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
     from quantitative_strategy.strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
+    from quantitative_strategy.strategies.grid_trading_daily_change_strategy import GridTradingDailyChangeStrategy
 
     from indival_stock_data.services import IndividualStockService
     from etfapp.services import EtfService
