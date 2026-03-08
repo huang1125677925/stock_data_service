@@ -40,6 +40,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/schema/',  # OpenAPI Schema 接口（供 Swagger/Redoc 使用）
             '/django/api/redoc/',  # ReDoc 接口
             '/django/api/strategy/',
+            '/django/api/ai/analyze/',
             '/django/api/stock/industry/statistics/',
             '/django/api/stock/industry/ranking/',
             '/django/api/stock/industry/comparison/',

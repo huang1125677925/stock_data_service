@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'django_comment_migrate',
     'personal_center',
     'etfapp',
+    'ai_service',
 ]
 
 MIDDLEWARE = [
@@ -213,6 +214,18 @@ LOGGING = {
 # 股票数据API配置
 STOCK_API_KEY = os.environ.get('STOCK_API_KEY')
 STOCK_API_BASE_URL = os.environ.get('STOCK_API_BASE_URL', 'https://api.example.com')
+
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
+DEEPSEEK_BASE_URL = os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')
+DEEPSEEK_MODEL_NAME = os.environ.get('DEEPSEEK_MODEL_NAME', 'deepseek-chat')
+AI_SYSTEM_PROMPT = os.environ.get(
+    'AI_SYSTEM_PROMPT',
+    '你是一个专业的金融分析师，擅长对结构化数据进行分析并给出简洁结论。',
+)
+AI_DEFAULT_PROMPT = os.environ.get(
+    'AI_DEFAULT_PROMPT',
+    '请根据以下数据进行分析，输出简洁的中文结果：\n{data}',
+)
 
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
