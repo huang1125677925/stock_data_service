@@ -21,9 +21,11 @@ def create_server() -> FastMCP:
     # Register modular tools
     from mcp_service.tools.news_data_tools import register_news_data_tools
     from mcp_service.tools.stock_data_tools import register_stock_data_tools
+    from mcp_service.tools.tushare import register_tushare_tools
 
     register_news_data_tools(mcp)
     register_stock_data_tools(mcp)
+    register_tushare_tools(mcp)
     return mcp
 
 
@@ -32,6 +34,25 @@ mcp = create_server()
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run the FastMCP server")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Server host")
+    parser.add_argument("--port", type=int, default=8008, help="Server port")
+    parser.add_argument("--path", type=str, default="/tushare/mcp", help="Path prefix for SSE (mount path)")
+    args = parser.parse_args()
+    
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+    
+    # FastMCP uses sse_path and message_path for its internal Starlette routes.
+    # To properly prefix the URLs when running directly via Uvicorn, 
+    # we need to prepend the path to these route settings.
+    if args.path:
+        base_path = args.path.rstrip("/")
+        mcp.settings.sse_path = f"{base_path}/sse"
+        mcp.settings.message_path = f"{base_path}/messages/"
+    
     # Run with SSE transport so clients can connect via SSE
-    # Default host: 0.0.0.0, port: 8000 (can be overridden via env/CLI)
+    # Default host: 0.0.0.0, port: 8000 (can be overridden via CLI)
     mcp.run(transport="sse")

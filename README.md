@@ -167,6 +167,11 @@ AkShare     定时任务   数据清洗   MySQL    REST API  用户界面
 - **市场数据统计**：整体市场数据分析
 - **市场指标计算**：技术指标计算服务
 
+### 10. MCP服务模块 (`mcp_service`)
+- **Tushare数据接口**：基于 FastMCP 的工具集成，支持各类数据接口
+- **SSE传输支持**：支持大模型或 AI 助手通过 SSE 协议直连访问数据
+- **模块化工具库**：提供可扩展的工具和资源，便于直接挂载和调试
+
 ## 💻 环境要求
 
 - **Python**: 3.13+
@@ -321,6 +326,34 @@ curl http://localhost:8001/
 # 测试股票数据API
 curl http://localhost:8001/api/stock/industry-sectors/
 ```
+
+### 6. MCP服务部署
+
+本项目提供基于 FastMCP 的 MCP（Model Context Protocol）服务器，支持 SSE 传输方式。
+
+#### 6.1 安装依赖
+确保已安装 `mcp[cli]` 依赖：
+```bash
+pip install -r requirements.txt
+```
+
+#### 6.2 启动服务 (SSE方式)
+
+**方式一：直接运行（默认）**
+```bash
+python mcp_service/server.py --host 0.0.0.0 --port 8008
+```
+默认监听 `0.0.0.0:8008`，可在 MCP 客户端中以 SSE 方式连接。SSE 的挂载路径前缀默认为 `/tushare/mcp/sse`。
+
+**方式二：使用 MCP CLI（推荐开发调试）**
+```bash
+# 交互开发/调试
+mcp dev mcp_service/server.py
+
+# 或运行
+mcp run mcp_service/server.py
+```
+> 注：详细的 MCP 工具及资源说明，请参考 `docs/mcp_service.md`。
 
 ## 📚 API文档
 

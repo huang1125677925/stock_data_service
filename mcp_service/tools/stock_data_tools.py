@@ -3,33 +3,61 @@
 提供股票基础数据、行情数据、财务数据、参考数据等接口
 """
 
-import json
-from typing import Dict, Any, Optional, List
-from mcp.server import Server
-from mcp.types import Tool, TextContent
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from mcp.server.fastmcp import FastMCP
+
+from common.tushare_proxy import call_tushare
+from mcp_service.tools.tushare._registry import error_payload
 
 
-def register_stock_data_tools(server: Server):
+def register_stock_data_tools(mcp: FastMCP) -> None:
     """注册股票数据相关的工具"""
-    
-    @server.tool()
+
+    def _call(
+        interface: str,
+        params: Dict[str, Any],
+        fields: Optional[str],
+        token: Optional[str],
+    ) -> Dict[str, Any]:
+        return call_tushare(
+            interface=interface,
+            params=params,
+            fields=fields,
+            token=token,
+            use_query=False,
+        )
+
+    @mcp.tool()
     def get_stock_basic(
         list_status: str = "L",
         exchange: Optional[str] = None,
         ts_code: Optional[str] = None,
+        name: Optional[str] = None,
         market: Optional[str] = None,
-        is_hs: Optional[str] = None
-    ) -> List[TextContent]:
+        is_hs: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取股票基础信息列表
-        
+
         Args:
             list_status (str): 上市状态 L上市 D退市 P暂停上市，默认是L
             exchange (str, optional): 交易所 SSE上交所 SZSE深交所 BSE北交所
             ts_code (str, optional): TS股票代码
+            name (str, optional): 名称
             market (str, optional): 市场类别 主板/创业板/科创板/CDR/北交所
             is_hs (str, optional): 是否沪深港通标的，N否 H沪股通 S深股通
-            
+            limit (int): 返回记录条数上限，默认 200（仅影响返回内容，不影响上游接口拉取）
+            offset (int): 返回记录偏移量，用于分页，默认 0
+            fields (str, optional): 返回字段列表（逗号分隔）
+            token (str, optional): Tushare API token（覆盖环境变量）
+
         Returns:
             包含股票基础信息的数据，字段包括：
             - ts_code: TS股票代码
@@ -47,46 +75,84 @@ def register_stock_data_tools(server: Server):
             - list_date: 上市日期
             - delist_date: 退市日期
             - is_hs: 是否沪深港通标的
-        """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "stock_basic",
-                "description": "获取股票基础信息列表",
-                "input_params": {
-                    "list_status": list_status,
-                    "exchange": exchange,
-                    "ts_code": ts_code,
-                    "market": market,
-                    "is_hs": is_hs
-                },
-                "output_fields": [
-                    "ts_code", "symbol", "name", "area", "industry", 
-                    "fullname", "enname", "cnspell", "market", "exchange",
-                    "curr_type", "list_status", "list_date", "delist_date", "is_hs"
-                ],
-                "note": "此接口返回股票基础信息，建议保存到本地后使用"
-            }, ensure_ascii=False, indent=2)
-        )]
 
-    @server.tool()
+            额外返回元信息字段：
+            - total_count: 上游接口返回的总记录数
+            - count: 当前返回 records 的记录数
+            - limit: 本次返回上限
+            - offset: 本次返回偏移
+            - truncated: 是否发生截断
+        """
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if name:
+            params["name"] = name
+        if market:
+            params["market"] = market
+        if list_status:
+            params["list_status"] = list_status
+        if exchange:
+            params["exchange"] = exchange
+        if is_hs:
+            params["is_hs"] = is_hs
+
+        try:
+            safe_offset = int(offset or 0)
+        except Exception:
+            safe_offset = 0
+        safe_offset = max(safe_offset, 0)
+
+        try:
+            safe_limit = int(limit or 0)
+        except Exception:
+            safe_limit = 200
+        if safe_limit <= 0:
+            safe_limit = 200
+        safe_limit = min(safe_limit, 10)
+
+        default_fields = (
+            "ts_code,symbol,name,area,industry,market,exchange,"
+            "list_status,list_date,is_hs"
+        )
+        resp = _call("stock_basic", params, fields or default_fields, token)
+        if resp.get("code") != 200:
+            return resp
+
+        data = resp.get("data") or {}
+        records = data.get("records") or []
+        total_count = data.get("count", len(records))
+        sliced = records[safe_offset:safe_offset + safe_limit]
+
+        data["total_count"] = total_count
+        data["count"] = len(sliced)
+        data["limit"] = safe_limit
+        data["offset"] = safe_offset
+        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
+        data["records"] = sliced
+        resp["data"] = data
+        return resp
+
+    @mcp.tool()
     def get_daily_data(
         ts_code: Optional[str] = None,
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> List[TextContent]:
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取A股日线行情数据
-        
+
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
-            
+
         注意：ts_code和trade_date至少需要输入一个参数
-        
+
         Returns:
             包含日线行情数据，字段包括：
             - ts_code: TS股票代码
@@ -101,43 +167,43 @@ def register_stock_data_tools(server: Server):
             - vol: 成交量（手）
             - amount: 成交额（千元）
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "daily",
-                "description": "获取A股日线行情数据（未复权）",
-                "input_params": {
-                    "ts_code": ts_code,
-                    "trade_date": trade_date,
-                    "start_date": start_date,
-                    "end_date": end_date
-                },
-                "output_fields": [
-                    "ts_code", "trade_date", "open", "high", "low", "close",
-                    "pre_close", "change", "pct_chg", "vol", "amount"
-                ],
-                "note": "交易日每天15点～16点之间入库，停牌期间不提供数据"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if not params:
+            return error_payload(
+                "ts_code 或 trade_date 或 start_date/end_date 至少提供一个参数",
+                400,
+                interface="daily",
+            )
+        return _call("daily", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_daily_basic(
         ts_code: Optional[str] = None,
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> List[TextContent]:
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取股票每日基本面指标
-        
+
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
-            
+
         注意：ts_code和trade_date至少需要输入一个参数
-        
+
         Returns:
             包含每日基本面指标，字段包括：
             - ts_code: TS股票代码
@@ -159,45 +225,43 @@ def register_stock_data_tools(server: Server):
             - total_mv: 总市值（万元）
             - circ_mv: 流通市值（万元）
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "daily_basic",
-                "description": "获取股票每日基本面指标",
-                "input_params": {
-                    "ts_code": ts_code,
-                    "trade_date": trade_date,
-                    "start_date": start_date,
-                    "end_date": end_date
-                },
-                "output_fields": [
-                    "ts_code", "trade_date", "close", "turnover_rate", "turnover_rate_f",
-                    "volume_ratio", "pe", "pe_ttm", "pb", "ps", "ps_ttm",
-                    "dv_ratio", "dv_ttm", "total_share", "float_share", "free_share",
-                    "total_mv", "circ_mv"
-                ],
-                "note": "交易日每日15点～17点之间更新"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if not params:
+            return error_payload(
+                "ts_code 或 trade_date 或 start_date/end_date 至少提供一个参数",
+                400,
+                interface="daily_basic",
+            )
+        return _call("daily_basic", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_financial_indicator(
         ts_code: Optional[str] = None,
         ann_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        period: Optional[str] = None
-    ) -> List[TextContent]:
+        period: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取上市公司财务指标数据
-        
+
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             ann_date (str, optional): 公告日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             period (str, optional): 报告期（如：20191231）
-            
+
         Returns:
             包含财务指标数据，字段包括：
             - ts_code: TS股票代码
@@ -368,76 +432,41 @@ def register_stock_data_tools(server: Server):
             - rd_exp: 研发费用
             - update_flag: 更新标识
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "fina_indicator",
-                "description": "获取上市公司财务指标数据",
-                "input_params": {
-                    "ts_code": ts_code,
-                    "ann_date": ann_date,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "period": period
-                },
-                "output_fields": [
-                    "ts_code", "ann_date", "end_date", "eps", "dt_eps", "total_revenue_ps",
-                    "revenue_ps", "capital_rese_ps", "surplus_rese_ps", "undist_profit_ps",
-                    "extra_item", "profit_dedt", "gross_margin", "current_ratio", "quick_ratio",
-                    "cash_ratio", "invturn_days", "arturn_days", "inv_turn", "ar_turn",
-                    "ca_turn", "fa_turn", "assets_turn", "op_income", "valuechange_income",
-                    "interst_income", "daa", "ebit", "ebitda", "fcff", "fcfe",
-                    "current_exint", "noncurrent_exint", "interestdebt", "netdebt",
-                    "tangible_asset", "working_capital", "networking_capital", "invest_capital",
-                    "retained_earnings", "diluted2_eps", "bps", "ocfps", "retainedps",
-                    "cfps", "ebit_ps", "fcff_ps", "fcfe_ps", "netprofit_margin",
-                    "grossprofit_margin", "cogs_of_sales", "expense_of_sales", "profit_to_gr",
-                    "saleexp_to_gr", "adminexp_of_gr", "finaexp_of_gr", "impai_ttm",
-                    "gc_of_gr", "op_of_gr", "ebit_of_gr", "roe", "roe_waa", "roe_dt",
-                    "roa", "npta", "roic", "roe_yearly", "roa2_yearly", "roe_avg",
-                    "opincome_of_ebt", "investincome_of_ebt", "n_op_profit_of_ebt",
-                    "tax_to_ebt", "dtprofit_to_profit", "salescash_to_or", "ocf_to_or",
-                    "ocf_to_opincome", "capitalized_to_da", "debt_to_assets", "assets_to_eqt",
-                    "dp_assets_to_eqt", "ca_to_assets", "nca_to_assets", "tbassets_to_totalassets",
-                    "int_to_talcap", "eqt_to_talcapital", "currentdebt_to_debt", "longdeb_to_debt",
-                    "ocf_to_shortdebt", "debt_to_eqt", "eqt_to_debt", "eqt_to_interestdebt",
-                    "tangibleasset_to_debt", "tangasset_to_intdebt", "tangibleasset_to_netdebt",
-                    "ocf_to_debt", "ocf_to_interestdebt", "ocf_to_netdebt", "ebit_to_interest",
-                    "longdebt_to_workingcapital", "ebitda_to_debt", "turn_days", "roa_yearly",
-                    "roa_dp", "fixed_assets", "profit_prefin_exp", "non_op_profit",
-                    "op_to_ebt", "nop_to_ebt", "ocf_to_profit", "cash_to_liqdebt",
-                    "cash_to_liqdebt_withinterest", "op_to_liqdebt", "op_to_debt",
-                    "roic_yearly", "total_fa_trun", "profit_to_op", "q_opincome",
-                    "q_investincome", "q_dtprofit", "q_eps", "q_netprofit_margin",
-                    "q_gsprofit_margin", "q_exp_to_sales", "q_profit_to_gr", "q_saleexp_to_gr",
-                    "q_adminexp_to_gr", "q_finaexp_to_gr", "q_impair_to_gr_ttm", "q_gc_to_gr",
-                    "q_op_to_gr", "q_roe", "q_dt_roe", "q_npta", "q_opincome_to_ebt",
-                    "q_investincome_to_ebt", "q_dtprofit_to_profit", "q_salescash_to_or",
-                    "q_ocf_to_sales", "q_ocf_to_or", "basic_eps_yoy", "dt_eps_yoy",
-                    "cfps_yoy", "op_yoy", "ebt_yoy", "netprofit_yoy", "dt_netprofit_yoy",
-                    "ocf_yoy", "roe_yoy", "bps_yoy", "assets_yoy", "eqt_yoy", "tr_yoy",
-                    "or_yoy", "q_gr_yoy", "q_gr_qoq", "q_sales_yoy", "q_sales_qoq",
-                    "q_op_yoy", "q_op_qoq", "q_profit_yoy", "q_profit_qoq", "q_netprofit_yoy",
-                    "q_netprofit_qoq", "equity_yoy", "rd_exp", "update_flag"
-                ],
-                "note": "单次最多返回100条记录，可通过设置日期多次请求获取更多数据"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if ann_date:
+            params["ann_date"] = ann_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if period:
+            params["period"] = period
+        if not params:
+            return error_payload(
+                "ts_code 或 ann_date 或 start_date/end_date 或 period 至少提供一个参数",
+                400,
+                interface="fina_indicator",
+            )
+        return _call("fina_indicator", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_top_list(
         trade_date: Optional[str] = None,
-        ts_code: Optional[str] = None
-    ) -> List[TextContent]:
+        ts_code: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取龙虎榜每日交易明细
-        
+
         Args:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             ts_code (str, optional): 股票代码（如：000001.SZ）
-            
+
         注意：trade_date和ts_code至少需要输入一个参数
-        
+
         Returns:
             包含龙虎榜数据，字段包括：
             - trade_date: 交易日期
@@ -456,42 +485,37 @@ def register_stock_data_tools(server: Server):
             - float_values: 当日流通市值
             - reason: 上榜理由
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "top_list",
-                "description": "获取龙虎榜每日交易明细",
-                "input_params": {
-                    "trade_date": trade_date,
-                    "ts_code": ts_code
-                },
-                "output_fields": [
-                    "trade_date", "ts_code", "name", "close", "pct_change",
-                    "turnover_rate", "amount", "l_sell", "l_buy", "l_amount",
-                    "net_amount", "net_rate", "amount_rate", "float_values", "reason"
-                ],
-                "note": "数据历史从2005年至今，单次请求返回最大10000行数据"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if trade_date:
+            params["trade_date"] = trade_date
+        if ts_code:
+            params["ts_code"] = ts_code
+        if not params:
+            return error_payload(
+                "trade_date 或 ts_code 至少提供一个参数", 400, interface="top_list"
+            )
+        return _call("top_list", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_block_trade(
         ts_code: Optional[str] = None,
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> List[TextContent]:
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取大宗交易数据
-        
+
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
-            
+
         注意：股票代码和日期至少输入一个参数
-        
+
         Returns:
             包含大宗交易数据，字段包括：
             - ts_code: TS股票代码
@@ -502,40 +526,41 @@ def register_stock_data_tools(server: Server):
             - buyer: 买方营业部
             - seller: 卖方营业部
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "block_trade",
-                "description": "获取大宗交易数据",
-                "input_params": {
-                    "ts_code": ts_code,
-                    "trade_date": trade_date,
-                    "start_date": start_date,
-                    "end_date": end_date
-                },
-                "output_fields": [
-                    "ts_code", "trade_date", "price", "vol", "amount", "buyer", "seller"
-                ],
-                "note": "单次最大1000条，总量不限制"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if not params:
+            return error_payload(
+                "ts_code 或 trade_date 或 start_date/end_date 至少提供一个参数",
+                400,
+                interface="block_trade",
+            )
+        return _call("block_trade", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_margin_data(
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        exchange_id: Optional[str] = None
-    ) -> List[TextContent]:
+        exchange_id: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取融资融券交易汇总数据
-        
+
         Args:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             exchange_id (str, optional): 交易所代码（SSE上交所 SZSE深交所 BSE北交所）
-            
+
         Returns:
             包含融资融券数据，字段包括：
             - trade_date: 交易日期
@@ -547,41 +572,42 @@ def register_stock_data_tools(server: Server):
             - rqmcl: 融券卖出量（股）
             - rzrqye: 融资融券余额（元）
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "margin",
-                "description": "获取融资融券每日交易汇总数据",
-                "input_params": {
-                    "trade_date": trade_date,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "exchange_id": exchange_id
-                },
-                "output_fields": [
-                    "trade_date", "exchange_id", "rzye", "rzmre", "rzche",
-                    "rqye", "rqmcl", "rzrqye"
-                ],
-                "note": "单次请求最大返回4000行数据，可根据日期循环"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if exchange_id:
+            params["exchange_id"] = exchange_id
+        if not params:
+            return error_payload(
+                "trade_date 或 start_date/end_date 或 exchange_id 至少提供一个参数",
+                400,
+                interface="margin",
+            )
+        return _call("margin", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_trade_calendar(
         exchange: str = "SSE",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        is_open: Optional[int] = None
-    ) -> List[TextContent]:
+        is_open: Optional[int] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取交易日历数据
-        
+
         Args:
-            exchange (str): 交易所代码，默认SSE（SSE上交所 SZSE深交所 CFFEX中金所 SHFE上期所 CZCE郑商所 DCE大商所 INE上能源）
+            exchange (str): 交易所代码，默认SSE（SSE上交所 SZSE深交所 CFFEX中金所
+                SHFE上期所 CZCE郑商所 DCE大商所 INE上能源）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             is_open (int, optional): 是否交易 0休市 1交易
-            
+
         Returns:
             包含交易日历数据，字段包括：
             - exchange: 交易所代码
@@ -589,36 +615,29 @@ def register_stock_data_tools(server: Server):
             - is_open: 是否交易（0休市 1交易）
             - pretrade_date: 上一交易日
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "trade_cal",
-                "description": "获取各大交易所交易日历数据",
-                "input_params": {
-                    "exchange": exchange,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "is_open": is_open
-                },
-                "output_fields": [
-                    "exchange", "cal_date", "is_open", "pretrade_date"
-                ],
-                "note": "默认提取的是上交所数据"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {"exchange": exchange}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if is_open is not None:
+            params["is_open"] = is_open
+        return _call("trade_cal", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_stock_company(
         ts_code: Optional[str] = None,
-        exchange: Optional[str] = None
-    ) -> List[TextContent]:
+        exchange: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取上市公司基础信息
-        
+
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             exchange (str, optional): 交易所代码（SSE上交所 SZSE深交所 BSE北交所）
-            
+
         Returns:
             包含上市公司基础信息，字段包括：
             - ts_code: TS股票代码
@@ -638,36 +657,31 @@ def register_stock_data_tools(server: Server):
             - main_business: 主要业务及产品
             - business_scope: 经营范围
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "stock_company",
-                "description": "获取上市公司基础信息",
-                "input_params": {
-                    "ts_code": ts_code,
-                    "exchange": exchange
-                },
-                "output_fields": [
-                    "ts_code", "exchange", "chairman", "manager", "secretary",
-                    "reg_capital", "setup_date", "province", "city", "introduction",
-                    "website", "email", "office", "employees", "main_business", "business_scope"
-                ],
-                "note": "单次提取4500条，可以根据交易所分批提取"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if exchange:
+            params["exchange"] = exchange
+        if not params:
+            return error_payload(
+                "ts_code 或 exchange 至少提供一个参数", 400, interface="stock_company"
+            )
+        return _call("stock_company", params, fields, token)
 
-    @server.tool()
+    @mcp.tool()
     def get_new_share(
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> List[TextContent]:
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         获取IPO新股上市列表数据
-        
+
         Args:
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
-            
+
         Returns:
             包含新股上市数据，字段包括：
             - ts_code: TS股票代码
@@ -683,20 +697,13 @@ def register_stock_data_tools(server: Server):
             - funds: 募集资金（亿元）
             - ballot: 中签率
         """
-        return [TextContent(
-            type="text",
-            text=json.dumps({
-                "interface": "new_share",
-                "description": "获取新股上市列表数据",
-                "input_params": {
-                    "start_date": start_date,
-                    "end_date": end_date
-                },
-                "output_fields": [
-                    "ts_code", "sub_code", "name", "ipo_date", "issue_date",
-                    "amount", "market_amount", "price", "pe", "limit_amount",
-                    "funds", "ballot"
-                ],
-                "note": "单次最大2000条，总量不限制"
-            }, ensure_ascii=False, indent=2)
-        )]
+        params: Dict[str, Any] = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if not params:
+            return error_payload(
+                "start_date 或 end_date 至少提供一个参数", 400, interface="new_share"
+            )
+        return _call("new_share", params, fields, token)
