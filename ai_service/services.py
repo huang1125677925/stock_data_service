@@ -1,15 +1,22 @@
 import json
 import logging
 import os
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
 from django.conf import settings
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+import traceback
+
+from mcp_service.server import create_server
 
 logger = logging.getLogger(__name__)
 
+# Initialize MCP Server globally
+mcp_server = create_server()
 
 class AiAgentService:
     def __init__(self):
@@ -109,6 +116,122 @@ class AiAgentService:
         except Exception as e:
             logger.error(f"Agent analysis failed: {e}")
             raise e
+
+    async def chat_stream_generator(self, messages_data: List[Dict]):
+        """
+        根据设计图中的交互逻辑，与 MCP Server 结合并返回 SSE 数据流。
+        messages_data: [{"role": "user", "content": "..."}]
+        """
+        try:
+            # 1. 获取可用 Tools
+            mcp_tools = await mcp_server.list_tools()
+            openai_tools = []
+            tool_name_map = {}  # 映射 openAI 支持的 name (如替换掉点号) 到真实的 tool name
+            
+            for t in mcp_tools:
+                safe_name = t.name.replace(".", "_")
+                tool_name_map[safe_name] = t.name
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": safe_name,
+                        "description": t.description,
+                        "parameters": t.inputSchema,
+                    }
+                })
+            
+            # 转换 messages 为 Langchain Messages
+            messages = []
+            messages.append(SystemMessage(content=self.system_prompt))
+            for m in messages_data:
+                if m["role"] == "user":
+                    messages.append(HumanMessage(content=m["content"]))
+                elif m["role"] == "assistant":
+                    messages.append(AIMessage(content=m["content"]))
+                elif m["role"] == "tool":
+                    messages.append(ToolMessage(content=m["content"], tool_call_id=m.get("tool_call_id", "")))
+
+            llm = ChatOpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                model=self.model_name,
+                temperature=0.3,
+            )
+            
+            if openai_tools:
+                llm = llm.bind_tools(openai_tools)
+            
+            rounds = 0
+            while rounds < 20:
+                rounds += 1
+                
+                is_tool_call = False
+                accumulated_message = None
+                
+                # 2. 发起 Chat 请求 (带 Tools + Messages)
+                async for chunk in llm.astream(messages):
+                    if accumulated_message is None:
+                        accumulated_message = chunk
+                    else:
+                        accumulated_message += chunk
+                        
+                    if chunk.tool_call_chunks:
+                        is_tool_call = True
+                        
+                    if not is_tool_call and chunk.content:
+                        # 流式返回最终文本回复
+                        yield f"data: {json.dumps({'type': 'text', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+
+                if is_tool_call and accumulated_message.tool_calls:
+                    # [状态推送 (可选)] 界面展示 Loading 状态
+                    for tc in accumulated_message.tool_calls:
+                        safe_tool_name = tc["name"]
+                        real_tool_name = tool_name_map.get(safe_tool_name, safe_tool_name)
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'正在调用工具 {real_tool_name}...'}, ensure_ascii=False)}\n\n"
+                    
+                    messages.append(accumulated_message)
+                    
+                    # 3. 执行工具 (JSON-RPC)
+                    for tc in accumulated_message.tool_calls:
+                        safe_tool_name = tc["name"]
+                        real_tool_name = tool_name_map.get(safe_tool_name, safe_tool_name)
+                        tool_args = tc["args"]
+                        tool_call_id = tc["id"]
+                        
+                        try:
+                            result_tuple = await mcp_server.call_tool(real_tool_name, tool_args)
+                            
+                            # 返回工具执行结果 (长文本)
+                            if result_tuple and isinstance(result_tuple[0], list) and len(result_tuple[0]) > 0:
+                                tool_result_text = result_tuple[0][0].text
+                            else:
+                                tool_result_text = str(result_tuple)
+                            
+                            # 后端截断结果并拼接为 role=tool 消息
+                            if len(tool_result_text) > 8000:
+                                tool_result_text = tool_result_text[:8000] + "\n...(由于长度限制已截断)"
+                            
+                            messages.append(ToolMessage(content=tool_result_text, tool_call_id=tool_call_id))
+                            
+                            # 推送工具卡片数据
+                            yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
+                            
+                        except Exception as e:
+                            logger.error(f"Tool {real_tool_name} execution failed: {e}")
+                            messages.append(ToolMessage(content=f"Error executing tool {real_tool_name}: {str(e)}", tool_call_id=tool_call_id))
+                    
+                    # 4. 再次发起 Chat 请求
+                    continue
+                else:
+                    # 结束循环，流式文本已经返回
+                    break
+                    
+            # 结束标志
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Chat stream failed: {e}\n{traceback.format_exc()}")
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
 
     # CRUD methods for Views
     def get_all_prompts_list(self) -> List[Dict]:

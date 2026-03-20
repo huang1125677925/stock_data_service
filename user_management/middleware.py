@@ -41,6 +41,7 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/redoc/',  # ReDoc 接口
             '/django/api/strategy/',
             '/django/api/ai/analyze/',
+            '/django/api/ai/chat/',
             '/django/api/stock/industry/statistics/',
             '/django/api/stock/industry/ranking/',
             '/django/api/stock/industry/comparison/',

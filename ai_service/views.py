@@ -1,3 +1,9 @@
+import json
+from django.http import StreamingHttpResponse, JsonResponse
+from django.views import View
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
@@ -10,6 +16,29 @@ from .serializers import (
     AiAnalyzeRequestSerializer,
     AiAnalyzeResponseSerializer,
 )
+
+@method_decorator(csrf_exempt, name='dispatch')
+class AiAgentChatView(View):
+    """
+    提供给 Android App 的大模型对话接口 (支持 SSE)
+    """
+    async def post(self, request, *args, **kwargs):
+        try:
+            body = json.loads(request.body)
+            messages = body.get("messages", [])
+            if not messages:
+                return error_response("messages 不能为空", 400)
+            
+            # 使用流式返回
+            response = StreamingHttpResponse(
+                ai_agent_service.chat_stream_generator(messages),
+                content_type='text/event-stream'
+            )
+            response['Cache-Control'] = 'no-cache'
+            response['X-Accel-Buffering'] = 'no'
+            return response
+        except Exception as e:
+            return error_response(str(e), 500)
 
 
 class PromptConfigListView(APIView):
