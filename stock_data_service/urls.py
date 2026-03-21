@@ -72,4 +72,5 @@ urlpatterns = [
     path('django/api/personal/', include('personal_center.urls')),
     path('django/api/etf/', include('etfapp.urls')),
     path('django/api/ai/', include('ai_service.urls')),
+    path('django/api/chat/', include('chat_service.urls')),
 ]

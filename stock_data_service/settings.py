@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'personal_center',
     'etfapp',
     'ai_service',
+    'chat_service',
 ]
 
 MIDDLEWARE = [
