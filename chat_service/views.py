@@ -291,19 +291,47 @@ class ConversationStreamView(View):
 
         async def stream_generator():
             assistant_parts = []
-            generator = ai_agent_service.chat_stream_generator(messages_data)
+            tool_cards = []
+            create_message_async = sync_to_async(
+                chat_conversation_service.create_message,
+            )
+            generator = ai_agent_service.chat_stream_generator(
+                messages_data,
+            )
             async for chunk in generator:
                 payload = _extract_sse_data(chunk)
-                if payload and payload.get('type') == 'text':
-                    assistant_parts.append(payload.get('content') or '')
+                if payload:
+                    payload_type = payload.get('type')
+                    if payload_type == 'text':
+                        assistant_parts.append(payload.get('content') or '')
+                    elif payload_type == 'tool_card':
+                        tool_cards.append(payload)
+                        tool_content = payload.get('result') or ''
+                        if tool_content:
+                            tool_name = payload.get('tool_name')
+                            tool_call_id = payload.get('tool_call_id')
+                            await create_message_async(
+                                conversation=conversation,
+                                role=Message.ROLE_TOOL,
+                                content=tool_content,
+                                tool_data={
+                                    'tool_name': tool_name,
+                                    'tool_call_id': tool_call_id,
+                                },
+                            )
                 yield chunk
             assistant_content = ''.join(assistant_parts).strip()
-            if assistant_content:
-                await sync_to_async(chat_conversation_service.create_message)(
+            assistant_tool_data = (
+                {'tool_cards': tool_cards}
+                if tool_cards
+                else None
+            )
+            if assistant_content or assistant_tool_data:
+                await create_message_async(
                     conversation=conversation,
                     role=Message.ROLE_ASSISTANT,
                     content=assistant_content,
-                    tool_data=None,
+                    tool_data=assistant_tool_data,
                 )
 
         response = StreamingHttpResponse(
