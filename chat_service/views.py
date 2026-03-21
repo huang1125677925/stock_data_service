@@ -284,6 +284,10 @@ class ConversationStreamView(View):
                 content=content,
                 tool_data=body.get('tool_data'),
             )
+            if conversation.title == '新会话':
+                await sync_to_async(
+                    chat_conversation_service.update_conversation,
+                )(conversation, title=content[:200])
         build_messages = sync_to_async(
             chat_conversation_service.build_chat_messages,
         )
