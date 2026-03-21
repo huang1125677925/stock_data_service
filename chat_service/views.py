@@ -4,6 +4,7 @@ from django.http import StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework.authentication import BaseAuthentication
 from rest_framework.views import APIView
 from common.response import success_response, error_response
 from ai_service.services import ai_agent_service
@@ -52,26 +53,65 @@ def _parse_bool(raw_value):
     return None
 
 
+class MiddlewareUserAuthentication(BaseAuthentication):
+    def authenticate(self, request):
+        raw_request = getattr(request, '_request', None)
+        raw_user = getattr(raw_request, 'user', None)
+        if getattr(raw_user, 'id', None):
+            return raw_user, None
+        return None
+
+
+def _get_authenticated_user(request):
+    user = getattr(request, 'user', None)
+    if getattr(user, 'id', None):
+        return user
+    raw_request = getattr(request, '_request', None)
+    raw_user = getattr(raw_request, 'user', None)
+    if getattr(raw_user, 'id', None):
+        return raw_user
+    return None
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationCollectionView(APIView):
-    authentication_classes = []
+    authentication_classes = [MiddlewareUserAuthentication]
 
     def post(self, request):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
         title = request.data.get('title')
         model_name = request.data.get('model')
-        conversation = chat_conversation_service.create_conversation(user=user, title=title, model_name=model_name)
-        return success_response(ConversationSerializer(conversation).data, '创建成功')
+        conversation = chat_conversation_service.create_conversation(
+            user=user,
+            title=title,
+            model_name=model_name,
+        )
+        data = ConversationSerializer(conversation).data
+        return success_response(data, '创建成功')
 
     def get(self, request):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        page = _parse_positive_int(request.GET.get('page'), 1, min_value=1, max_value=1000000)
-        page_size = _parse_positive_int(request.GET.get('page_size'), 20, min_value=1, max_value=200)
-        result = chat_conversation_service.list_conversations(user=user, page=page, page_size=page_size)
+        page = _parse_positive_int(
+            request.GET.get('page'),
+            1,
+            min_value=1,
+            max_value=1000000,
+        )
+        page_size = _parse_positive_int(
+            request.GET.get('page_size'),
+            20,
+            min_value=1,
+            max_value=200,
+        )
+        result = chat_conversation_service.list_conversations(
+            user=user,
+            page=page,
+            page_size=page_size,
+        )
         items = ConversationSerializer(result['items'], many=True).data
         return success_response(
             {
@@ -86,18 +126,35 @@ class ConversationCollectionView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationMessagesView(APIView):
-    authentication_classes = []
+    authentication_classes = [MiddlewareUserAuthentication]
 
     def get(self, request, conversation_id):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        conversation = chat_conversation_service.get_conversation_for_user(user=user, conversation_id=conversation_id)
+        conversation = chat_conversation_service.get_conversation_for_user(
+            user=user,
+            conversation_id=conversation_id,
+        )
         if not conversation:
             return error_response('会话不存在', code=404)
-        cursor = _parse_positive_int(request.GET.get('cursor'), 0, min_value=0, max_value=1000000000)
-        page_size = _parse_positive_int(request.GET.get('page_size'), 50, min_value=1, max_value=200)
-        result = chat_conversation_service.list_messages(conversation=conversation, cursor=cursor, page_size=page_size)
+        cursor = _parse_positive_int(
+            request.GET.get('cursor'),
+            0,
+            min_value=0,
+            max_value=1000000000,
+        )
+        page_size = _parse_positive_int(
+            request.GET.get('page_size'),
+            50,
+            min_value=1,
+            max_value=200,
+        )
+        result = chat_conversation_service.list_messages(
+            conversation=conversation,
+            cursor=cursor,
+            page_size=page_size,
+        )
         items = MessageSerializer(result['items'], many=True).data
         return success_response(
             {
@@ -108,10 +165,13 @@ class ConversationMessagesView(APIView):
         )
 
     def post(self, request, conversation_id):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        conversation = chat_conversation_service.get_conversation_for_user(user=user, conversation_id=conversation_id)
+        conversation = chat_conversation_service.get_conversation_for_user(
+            user=user,
+            conversation_id=conversation_id,
+        )
         if not conversation:
             return error_response('会话不存在', code=404)
         content = request.data.get('content')
@@ -129,17 +189,24 @@ class ConversationMessagesView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationDetailView(APIView):
-    authentication_classes = []
+    authentication_classes = [MiddlewareUserAuthentication]
 
     def patch(self, request, conversation_id):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        conversation = chat_conversation_service.get_conversation_for_user(user=user, conversation_id=conversation_id)
+        conversation = chat_conversation_service.get_conversation_for_user(
+            user=user,
+            conversation_id=conversation_id,
+        )
         if not conversation:
             return error_response('会话不存在', code=404)
         title = request.data.get('title') if 'title' in request.data else None
-        is_pinned = _parse_bool(request.data.get('is_pinned')) if 'is_pinned' in request.data else None
+        is_pinned = (
+            _parse_bool(request.data.get('is_pinned'))
+            if 'is_pinned' in request.data
+            else None
+        )
         if 'is_pinned' in request.data and is_pinned is None:
             return error_response('is_pinned 参数无效', code=400)
         if title is None and is_pinned is None:
@@ -152,10 +219,13 @@ class ConversationDetailView(APIView):
         return success_response(ConversationSerializer(updated).data, '更新成功')
 
     def delete(self, request, conversation_id):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        conversation = chat_conversation_service.get_conversation_for_user(user=user, conversation_id=conversation_id)
+        conversation = chat_conversation_service.get_conversation_for_user(
+            user=user,
+            conversation_id=conversation_id,
+        )
         if not conversation:
             return error_response('会话不存在', code=404)
         chat_conversation_service.soft_delete_conversation(conversation)
@@ -165,10 +235,13 @@ class ConversationDetailView(APIView):
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationStreamView(View):
     async def post(self, request, conversation_id):
-        user = getattr(request, 'user', None)
+        user = _get_authenticated_user(request)
         if not user:
             return error_response('未认证', code=401)
-        conversation = await sync_to_async(chat_conversation_service.get_conversation_for_user)(user, conversation_id)
+        get_conversation = sync_to_async(
+            chat_conversation_service.get_conversation_for_user,
+        )
+        conversation = await get_conversation(user, conversation_id)
         if not conversation:
             return error_response('会话不存在', code=404)
         try:
@@ -183,13 +256,17 @@ class ConversationStreamView(View):
                 content=content,
                 tool_data=body.get('tool_data'),
             )
-        messages_data = await sync_to_async(chat_conversation_service.build_chat_messages)(conversation)
+        build_messages = sync_to_async(
+            chat_conversation_service.build_chat_messages,
+        )
+        messages_data = await build_messages(conversation)
         if not messages_data:
             return error_response('请先写入用户消息', code=400)
 
         async def stream_generator():
             assistant_parts = []
-            async for chunk in ai_agent_service.chat_stream_generator(messages_data):
+            generator = ai_agent_service.chat_stream_generator(messages_data)
+            async for chunk in generator:
                 payload = _extract_sse_data(chunk)
                 if payload and payload.get('type') == 'text':
                     assistant_parts.append(payload.get('content') or '')
@@ -203,7 +280,10 @@ class ConversationStreamView(View):
                     tool_data=None,
                 )
 
-        response = StreamingHttpResponse(stream_generator(), content_type='text/event-stream')
+        response = StreamingHttpResponse(
+            stream_generator(),
+            content_type='text/event-stream',
+        )
         response['Cache-Control'] = 'no-cache'
         response['X-Accel-Buffering'] = 'no'
         return response
