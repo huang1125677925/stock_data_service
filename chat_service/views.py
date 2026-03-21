@@ -305,27 +305,20 @@ class ConversationStreamView(View):
                     if payload_type == 'text':
                         assistant_parts.append(payload.get('content') or '')
                     elif payload_type == 'tool_card':
-                        tool_cards.append(payload)
-                        tool_content = payload.get('result') or ''
-                        if tool_content:
-                            tool_name = payload.get('tool_name')
-                            tool_call_id = payload.get('tool_call_id')
-                            await create_message_async(
-                                conversation=conversation,
-                                role=Message.ROLE_TOOL,
-                                content=tool_content,
-                                tool_data={
-                                    'tool_name': tool_name,
-                                    'tool_call_id': tool_call_id,
-                                },
+                        raw_result = payload.get('result')
+                        if not isinstance(raw_result, str):
+                            raw_result = json.dumps(
+                                raw_result, ensure_ascii=False, indent=2,
                             )
+                        tool_cards.append(
+                            {
+                                'result': raw_result,
+                                'tool_name': payload.get('tool_name'),
+                            }
+                        )
                 yield chunk
             assistant_content = ''.join(assistant_parts).strip()
-            assistant_tool_data = (
-                {'tool_cards': tool_cards}
-                if tool_cards
-                else None
-            )
+            assistant_tool_data = tool_cards if tool_cards else None
             if assistant_content or assistant_tool_data:
                 await create_message_async(
                     conversation=conversation,
