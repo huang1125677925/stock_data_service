@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 from asgiref.sync import sync_to_async
 from django.http import StreamingHttpResponse
 from django.utils.decorators import method_decorator
@@ -289,43 +291,76 @@ class ConversationStreamView(View):
         if not messages_data:
             return error_response('请先写入用户消息', code=400)
 
-        async def stream_generator():
+        _SENTINEL = object()
+        logger = logging.getLogger(__name__)
+
+        async def _consume_and_save(queue):
             assistant_parts = []
             tool_cards = []
-            create_message_async = sync_to_async(
-                chat_conversation_service.create_message,
-            )
-            generator = ai_agent_service.chat_stream_generator(
-                messages_data,
-            )
-            async for chunk in generator:
-                payload = _extract_sse_data(chunk)
-                if payload:
-                    payload_type = payload.get('type')
-                    if payload_type == 'text':
-                        assistant_parts.append(payload.get('content') or '')
-                    elif payload_type == 'tool_card':
-                        raw_result = payload.get('result')
-                        if not isinstance(raw_result, str):
-                            raw_result = json.dumps(
-                                raw_result, ensure_ascii=False, indent=2,
-                            )
-                        tool_cards.append(
-                            {
-                                'result': raw_result,
-                                'tool_name': payload.get('tool_name'),
-                            }
-                        )
-                yield chunk
-            assistant_content = ''.join(assistant_parts).strip()
-            assistant_tool_data = tool_cards if tool_cards else None
-            if assistant_content or assistant_tool_data:
-                await create_message_async(
-                    conversation=conversation,
-                    role=Message.ROLE_ASSISTANT,
-                    content=assistant_content,
-                    tool_data=assistant_tool_data,
+            try:
+                generator = ai_agent_service.chat_stream_generator(
+                    messages_data,
                 )
+                async for chunk in generator:
+                    payload = _extract_sse_data(chunk)
+                    if payload:
+                        payload_type = payload.get('type')
+                        if payload_type == 'text':
+                            assistant_parts.append(
+                                payload.get('content') or '',
+                            )
+                        elif payload_type == 'tool_card':
+                            raw_result = payload.get('result')
+                            if not isinstance(raw_result, str):
+                                raw_result = json.dumps(
+                                    raw_result,
+                                    ensure_ascii=False,
+                                    indent=2,
+                                )
+                            tool_cards.append(
+                                {
+                                    'result': raw_result,
+                                    'tool_name': payload.get('tool_name'),
+                                }
+                            )
+                    await queue.put(chunk)
+            except Exception:
+                logger.exception('Error consuming AI stream')
+            finally:
+                await queue.put(_SENTINEL)
+                assistant_content = ''.join(assistant_parts).strip()
+                assistant_tool_data = (
+                    tool_cards if tool_cards else None
+                )
+                if assistant_content or assistant_tool_data:
+                    try:
+                        await sync_to_async(
+                            chat_conversation_service.create_message,
+                        )(
+                            conversation=conversation,
+                            role=Message.ROLE_ASSISTANT,
+                            content=assistant_content,
+                            tool_data=assistant_tool_data,
+                        )
+                    except Exception:
+                        logger.exception(
+                            'Failed to save assistant message',
+                        )
+
+        async def stream_generator():
+            queue = asyncio.Queue()
+            task = asyncio.create_task(
+                _consume_and_save(queue),
+            )
+            try:
+                while True:
+                    chunk = await queue.get()
+                    if chunk is _SENTINEL:
+                        break
+                    yield chunk
+            finally:
+                if not task.done():
+                    await asyncio.shield(task)
 
         response = StreamingHttpResponse(
             stream_generator(),
