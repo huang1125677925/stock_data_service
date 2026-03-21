@@ -57,6 +57,13 @@ class ChatConversationService:
         }
 
     @staticmethod
+    def get_message_for_conversation(conversation, message_id):
+        return Message.objects.filter(
+            id=message_id,
+            conversation=conversation,
+        ).first()
+
+    @staticmethod
     @transaction.atomic
     def create_message(conversation, role, content, tool_data=None):
         locked_conversation = Conversation.objects.select_for_update().get(id=conversation.id)
@@ -70,6 +77,20 @@ class ChatConversationService:
             seq=next_seq,
         )
         return message
+
+    @staticmethod
+    @transaction.atomic
+    def update_message_tool_data(conversation, message_id, tool_data):
+        locked_message = Message.objects.select_for_update().filter(
+            id=message_id,
+            conversation=conversation,
+        ).first()
+        if not locked_message:
+            return None
+        locked_message.tool_data = tool_data
+        locked_message.save(update_fields=['tool_data'])
+        Conversation.objects.filter(id=conversation.id).update(updated_at=timezone.now())
+        return locked_message
 
     @staticmethod
     def build_chat_messages(conversation):

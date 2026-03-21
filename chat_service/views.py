@@ -188,6 +188,32 @@ class ConversationMessagesView(APIView):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
+class ConversationMessageDetailView(APIView):
+    authentication_classes = [MiddlewareUserAuthentication]
+
+    def patch(self, request, conversation_id, message_id):
+        user = _get_authenticated_user(request)
+        if not user:
+            return error_response('未认证', code=401)
+        conversation = chat_conversation_service.get_conversation_for_user(
+            user=user,
+            conversation_id=conversation_id,
+        )
+        if not conversation:
+            return error_response('会话不存在', code=404)
+        if 'tool_data' not in request.data:
+            return error_response('tool_data 字段缺失', code=400)
+        updated = chat_conversation_service.update_message_tool_data(
+            conversation=conversation,
+            message_id=message_id,
+            tool_data=request.data.get('tool_data'),
+        )
+        if not updated:
+            return error_response('消息不存在', code=404)
+        return success_response(MessageSerializer(updated).data, '更新成功')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
 class ConversationDetailView(APIView):
     authentication_classes = [MiddlewareUserAuthentication]
 
