@@ -22,11 +22,79 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         idx_type: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        获取东财概念和行业指数行情数据
+
+        Args:
+            ts_code (str, optional): 板块代码，格式为 xxxxx.DC
+            trade_date (str, optional): 交易日期，格式 YYYYMMDD
+            start_date (str, optional): 开始日期，格式 YYYYMMDD
+            end_date (str, optional): 结束日期，格式 YYYYMMDD
+            idx_type (str, optional): 板块类型，可选值：概念板块、行业板块、地域板块
+            limit (int): 返回记录条数上限，默认 200
+            offset (int): 返回记录偏移量，默认 0
+            fields (str, optional): 指定返回字段，逗号分隔
+            token (str, optional): Tushare API token，优先级高于环境变量
+
+        Returns:
+            返回东财概念和行业指数行情数据，常用字段包括：
+            - ts_code: 板块代码
+            - trade_date: 交易日
+            - close: 收盘点位
+            - open: 开盘点位
+            - high: 最高点位
+            - low: 最低点位
+            - change: 涨跌点位
+            - pct_change: 涨跌幅
+            - vol: 成交量（股）
+            - amount: 成交额（元）
+            - swing: 振幅
+            - turnover_rate: 换手率
+
+            同时包含分页元信息：
+            - total_count: 上游接口返回的总记录数
+            - count: 当前返回 records 的记录数
+            - limit: 本次返回上限
+            - offset: 本次返回偏移
+            - truncated: 是否发生截断
+        """
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date, idx_type=idx_type)
-        return _call("dc_daily", params, fields, token)
+        try:
+            safe_offset = int(offset or 0)
+        except Exception:
+            safe_offset = 0
+        safe_offset = max(safe_offset, 0)
+
+        try:
+            safe_limit = int(limit or 0)
+        except Exception:
+            safe_limit = 200
+        if safe_limit <= 0:
+            safe_limit = 200
+        safe_limit = min(safe_limit, 500)
+
+        resp = _call("dc_daily", params, fields, token)
+        if resp.get("code") != 200:
+            return resp
+
+        data = resp.get("data") or {}
+        records = data.get("records") or []
+        total_count = data.get("count", len(records))
+        sliced = records[safe_offset:safe_offset + safe_limit]
+
+        data["total_count"] = total_count
+        data["count"] = len(sliced)
+        data["limit"] = safe_limit
+        data["offset"] = safe_offset
+        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
+        data["records"] = sliced
+        resp["data"] = data
+        return resp
 
     @safe_tool(mcp, name="tushare.stock.topic.dc_hot", description="东方财富App热榜 dc_hot")
     def dc_hot(
@@ -48,22 +116,155 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        idx_type: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        params: Dict[str, Any] = _clean(ts_code=ts_code, name=name, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("dc_index", params, fields, token)
+        """
+        获取东方财富概念板块数据
+
+        Args:
+            ts_code (str, optional): 指数代码，支持多个代码，逗号分隔
+            name (str, optional): 板块名称，例如：人形机器人
+            trade_date (str, optional): 交易日期，格式 YYYYMMDD
+            start_date (str, optional): 开始日期，格式 YYYYMMDD
+            end_date (str, optional): 结束日期，格式 YYYYMMDD
+            idx_type (str, optional): 板块类型，支持：行业板块、概念板块、地域板块
+            limit (int): 返回记录条数上限，默认 200
+            offset (int): 返回记录偏移量，默认 0
+            fields (str, optional): 指定返回字段，逗号分隔
+            token (str, optional): Tushare API token，优先级高于环境变量
+
+        Returns:
+            返回东方财富概念板块数据，常用字段包括：
+            - ts_code: 概念代码
+            - trade_date: 交易日期
+            - name: 概念名称
+            - leading: 领涨股票名称
+            - leading_code: 领涨股票代码
+            - pct_change: 涨跌幅
+            - leading_pct: 领涨股票涨跌幅
+            - total_mv: 总市值（万元）
+            - turnover_rate: 换手率
+            - up_num: 上涨家数
+            - down_num: 下降家数
+            - idx_type: 板块类型
+            - level: 行业层级
+
+            同时包含分页元信息：
+            - total_count: 上游接口返回的总记录数
+            - count: 当前返回 records 的记录数
+            - limit: 本次返回上限
+            - offset: 本次返回偏移
+            - truncated: 是否发生截断
+        """
+        if not idx_type:
+            return error_payload("idx_type 为必填参数，支持：行业板块、概念板块、地域板块", 400, interface="dc_index")
+
+        params: Dict[str, Any] = _clean(ts_code=ts_code, name=name, trade_date=trade_date, start_date=start_date, end_date=end_date, idx_type=idx_type)
+
+        try:
+            safe_offset = int(offset or 0)
+        except Exception:
+            safe_offset = 0
+        safe_offset = max(safe_offset, 0)
+
+        try:
+            safe_limit = int(limit or 0)
+        except Exception:
+            safe_limit = 200
+        if safe_limit <= 0:
+            safe_limit = 200
+        safe_limit = min(safe_limit, 500)
+
+        resp = _call("dc_index", params, fields, token)
+        if resp.get("code") != 200:
+            return resp
+
+        data = resp.get("data") or {}
+        records = data.get("records") or []
+        total_count = data.get("count", len(records))
+        sliced = records[safe_offset:safe_offset + safe_limit]
+
+        data["total_count"] = total_count
+        data["count"] = len(sliced)
+        data["limit"] = safe_limit
+        data["offset"] = safe_offset
+        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
+        data["records"] = sliced
+        resp["data"] = data
+        return resp
 
     @safe_tool(mcp, name="tushare.stock.topic.dc_member", description="东方财富概念成分 dc_member")
     def dc_member(
         ts_code: Optional[str] = None,
         con_code: Optional[str] = None,
         trade_date: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        获取东方财富概念成分数据
+
+        Args:
+            ts_code (str, optional): 板块指数代码
+            con_code (str, optional): 成分股票代码
+            trade_date (str, optional): 交易日期，格式 YYYYMMDD
+            limit (int): 返回记录条数上限，默认 200
+            offset (int): 返回记录偏移量，默认 0
+            fields (str, optional): 指定返回字段，逗号分隔
+            token (str, optional): Tushare API token，优先级高于环境变量
+
+        Returns:
+            返回东方财富概念成分数据，常用字段包括：
+            - trade_date: 交易日期
+            - ts_code: 概念代码
+            - con_code: 成分代码
+            - name: 成分股名称
+
+            同时包含分页元信息：
+            - total_count: 上游接口返回的总记录数
+            - count: 当前返回 records 的记录数
+            - limit: 本次返回上限
+            - offset: 本次返回偏移
+            - truncated: 是否发生截断
+        """
         params: Dict[str, Any] = _clean(ts_code=ts_code, con_code=con_code, trade_date=trade_date)
-        return _call("dc_member", params, fields, token)
+        try:
+            safe_offset = int(offset or 0)
+        except Exception:
+            safe_offset = 0
+        safe_offset = max(safe_offset, 0)
+
+        try:
+            safe_limit = int(limit or 0)
+        except Exception:
+            safe_limit = 200
+        if safe_limit <= 0:
+            safe_limit = 200
+        safe_limit = min(safe_limit, 500)
+
+        resp = _call("dc_member", params, fields, token)
+        if resp.get("code") != 200:
+            return resp
+
+        data = resp.get("data") or {}
+        records = data.get("records") or []
+        total_count = data.get("count", len(records))
+        sliced = records[safe_offset:safe_offset + safe_limit]
+
+        data["total_count"] = total_count
+        data["count"] = len(sliced)
+        data["limit"] = safe_limit
+        data["offset"] = safe_offset
+        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
+        data["records"] = sliced
+        resp["data"] = data
+        return resp
 
     @safe_tool(mcp, name="tushare.stock.topic.hm_detail", description="游资交易每日明细 hm_detail")
     def hm_detail(
