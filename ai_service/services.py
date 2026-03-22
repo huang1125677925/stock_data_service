@@ -14,6 +14,8 @@ import traceback
 
 from mcp_service.server import create_server
 
+from ai_service.model_config import get_active_model_config
+
 logger = logging.getLogger(__name__)
 
 # Initialize MCP Server globally
@@ -35,9 +37,10 @@ class AiAgentService:
         异常:
             无，初始化异常会在后续调用阶段暴露。
         """
-        self.api_key = getattr(settings, "DEEPSEEK_API_KEY", None) or "sk-901c17c669a241f098b25144957667ec"
-        self.base_url = getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-        self.model_name = getattr(settings, "DEEPSEEK_MODEL_NAME", "deepseek-chat")
+        model_config = get_active_model_config()
+        self.api_key = model_config["api_key"]
+        self.base_url = model_config["base_url"]
+        self.model_name = model_config["model_name"]
         self.system_prompt = getattr(
             settings,
             "AI_SYSTEM_PROMPT",
@@ -81,7 +84,7 @@ class AiAgentService:
 
     def _build_agent(self):
         if not self.api_key:
-            logger.warning("DEEPSEEK_API_KEY not configured, agent will not work.")
+            logger.warning("AI model API key not configured, agent will not work.")
             return None
 
         llm = ChatOpenAI(
