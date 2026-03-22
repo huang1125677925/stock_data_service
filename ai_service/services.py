@@ -346,9 +346,6 @@ class AiAgentService:
 
                         tool_result_text = self._extract_tool_result_text(result)
 
-                        if len(tool_result_text) > 8000:
-                            tool_result_text = tool_result_text[:8000] + "\n...(由于长度限制已截断)"
-
                         messages.append(ToolMessage(content=tool_result_text, tool_call_id=tool_call_id))
                         yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
                     
