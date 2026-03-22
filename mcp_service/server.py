@@ -1,16 +1,17 @@
 import sys
 import os
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
-
-from mcp_service.tavily_mcp_service import register_tavily_mcp_client
 
 # Resolve project root from this file's location
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = PROJECT_ROOT / "data" / "tushare_docs"
 
 # Add project root to Python path to enable imports
-sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from mcp.server.fastmcp import FastMCP
+from mcp_service.tavily_mcp_service import register_tavily_mcp_client
 
 
 def create_server() -> FastMCP:
