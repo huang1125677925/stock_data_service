@@ -1,6 +1,9 @@
 import sys
+import os
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+
+from mcp_service.tavily_mcp_service import register_tavily_mcp_client
 
 # Resolve project root from this file's location
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +31,11 @@ def create_server() -> FastMCP:
     register_stock_data_tools(mcp)
     register_tushare_tools(mcp)
     register_time_tools(mcp)
+    register_tavily_mcp_client(
+        url=os.getenv("TAVILY_MCP_URL", ""),
+        enabled=os.getenv("TAVILY_MCP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
+        timeout_seconds=int(os.getenv("TAVILY_MCP_TIMEOUT_SECONDS", "30")),
+    )
     return mcp
 
 

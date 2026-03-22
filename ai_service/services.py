@@ -3,10 +3,8 @@ import logging
 import os
 import asyncio
 import re
-import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
-import aiohttp
 
 from django.conf import settings
 from langchain.agents import create_agent
@@ -15,6 +13,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Tool
 import traceback
 
 from mcp_service.server import create_server
+from mcp_service.tavily_mcp_service import register_tavily_mcp_client
 
 logger = logging.getLogger(__name__)
 
@@ -24,98 +23,6 @@ mcp_server = create_server()
 class ToolRoute(TypedDict):
     source: str
     name: str
-
-
-class TavilyMCPClient:
-    def __init__(self, url: str, enabled: bool = True, timeout_seconds: int = 30):
-        """
-        初始化 Tavily MCP 远程客户端。
-        参数:
-            url: Tavily MCP 的 HTTP 端点地址。
-            enabled: 是否启用远程联网 MCP。
-            timeout_seconds: 单次请求超时时间（秒）。
-        返回值:
-            无。
-        异常:
-            无，初始化阶段不发起网络请求。
-        """
-        self.url = url
-        self.enabled = enabled and bool(url)
-        self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-
-    async def _request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        通过 JSON-RPC 调用 Tavily MCP 方法。
-        参数:
-            method: MCP 方法名，例如 tools/list、tools/call。
-            params: JSON-RPC 参数对象。
-        返回值:
-            MCP 响应中的 result 字段。
-        异常:
-            RuntimeError: 当 HTTP 请求失败或 MCP 返回 error 时抛出。
-        """
-        if not self.enabled:
-            raise RuntimeError("Tavily MCP is disabled")
-
-        payload = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-            "params": params or {},
-        }
-        async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            async with session.post(self.url, json=payload) as response:
-                text = await response.text()
-                if response.status >= 400:
-                    raise RuntimeError(f"Tavily MCP HTTP {response.status}: {text}")
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"Tavily MCP invalid JSON response: {text}") from exc
-
-        if isinstance(data, dict) and data.get("error"):
-            raise RuntimeError(f"Tavily MCP error: {data['error']}")
-        if not isinstance(data, dict) or "result" not in data:
-            raise RuntimeError(f"Tavily MCP unexpected response: {data}")
-        return data["result"]
-
-    async def list_tools(self) -> List[Dict[str, Any]]:
-        """
-        获取 Tavily MCP 可用工具列表。
-        参数:
-            无。
-        返回值:
-            工具元数据列表，每项包含 name、description、inputSchema。
-        异常:
-            RuntimeError: 当远程请求失败时抛出。
-        """
-        if not self.enabled:
-            return []
-        result = await self._request("tools/list")
-        tools = result.get("tools", [])
-        normalized: List[Dict[str, Any]] = []
-        for tool in tools:
-            normalized.append(
-                {
-                    "name": tool.get("name", ""),
-                    "description": tool.get("description", ""),
-                    "inputSchema": tool.get("inputSchema") or {"type": "object", "properties": {}},
-                }
-            )
-        return [t for t in normalized if t["name"]]
-
-    async def call_tool(self, name: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        调用 Tavily MCP 指定工具。
-        参数:
-            name: 工具名称。
-            args: 工具参数对象。
-        返回值:
-            MCP tools/call 的 result 对象。
-        异常:
-            RuntimeError: 当远程请求失败时抛出。
-        """
-        return await self._request("tools/call", {"name": name, "arguments": args or {}})
 
 
 class AiAgentService:
@@ -142,17 +49,21 @@ class AiAgentService:
             "AI_TOOL_POLICY_PROMPT",
             (
                 "工具使用策略：\n"
-                "1) 遇到用户问题时，先判断是否可由 tushare 相关工具回答，能回答就必须优先调用 tushare 工具。\n"
-                "2) 仅当 tushare 工具不存在对应能力或返回信息不足时，才调用 Tavily 联网工具补充。\n"
-                "3) 回答时优先基于工具结果，不要凭空编造数据。"
+                "1) 对于A股股票行情、财务数据、交易数据、上市公司信息等问题，优先使用 tushare 相关工具。\n"
+                "2) 以下情况必须使用 Tavily 联网搜索工具：\n"
+                "   - 用户问题涉及最新新闻、实时动态、政策变化\n"
+                "   - 用户问题涉及非A股市场（美股、港股、外盘等）\n"
+                "   - 用户问题涉及宏观经济、央行政策、利率汇率等\n"
+                "   - 用户问题涉及加密货币、数字货币\n"
+                "   - 用户问题需要解释概念、分析原因、提供建议\n"
+                "   - tushare 工具返回结果为空或错误时\n"
+                "   - 你判断 tushare 工具无法满足用户需求时\n"
+                "3) 回答时优先基于工具返回的结果，不要凭空编造数据。\n"
+                "4) 如果不确定使用哪个工具，可以先尝试 tushare 工具，如果结果不满意再使用联网搜索。"
             ),
         )
-        self.tavily_mcp_url = getattr(
-            settings,
-            "TAVILY_MCP_URL",
-            "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
-        )
-        self.tavily_mcp_enabled = getattr(settings, "TAVILY_MCP_ENABLED", True)
+        self.tavily_mcp_url = "https://mcp.tavily.com/mcp/?tavilyApiKey=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"
+        self.tavily_mcp_enabled = True
         self.default_prompt = getattr(
             settings,
             "AI_DEFAULT_PROMPT",
@@ -161,7 +72,7 @@ class AiAgentService:
         
         self.prompts_file = os.path.join(os.path.dirname(__file__), "prompts.json")
         self.prompts_map = self._load_active_prompts()
-        self.tavily_mcp_client = TavilyMCPClient(
+        self.tavily_mcp_client = register_tavily_mcp_client(
             url=self.tavily_mcp_url,
             enabled=self.tavily_mcp_enabled,
             timeout_seconds=getattr(settings, "TAVILY_MCP_TIMEOUT_SECONDS", 30),
@@ -281,12 +192,21 @@ class AiAgentService:
                 safe_name = f"{safe_name_base}_{index}"
             used_safe_names.add(safe_name)
             tool_route_map[safe_name] = {"source": source, "name": tool_name}
+            # 为 Tavily 工具增强描述，让 LLM 更清楚这是联网搜索工具
+            enhanced_description = description
+            if source == "tavily":
+                enhanced_description = (
+                    f"[联网搜索工具] {description} "
+                    "此工具可以搜索互联网获取实时信息、最新新闻、政策动态、"
+                    "非A股市场信息、宏观经济数据等 tushare 无法提供的内容。"
+                    "当本地数据工具无法回答问题时，请使用此工具。"
+                )
             openai_tools.append(
                 {
                     "type": "function",
                     "function": {
                         "name": safe_name,
-                        "description": description,
+                        "description": enhanced_description,
                         "parameters": input_schema,
                     },
                 }
@@ -349,6 +269,149 @@ class AiAgentService:
             return input_data
         return json.dumps(input_data, ensure_ascii=False)
 
+    def _get_latest_user_query(self, messages_data: List[Dict]) -> str:
+        """
+        获取最近一条用户消息文本。
+        参数:
+            messages_data: 对话消息列表。
+        返回值:
+            最近一条 role=user 的 content；若不存在则返回空字符串。
+        异常:
+            无。
+        """
+        for item in reversed(messages_data):
+            if item.get("role") == "user":
+                return str(item.get("content", "")).strip()
+        return ""
+
+    def _should_force_tavily_for_query(self, query: str) -> bool:
+        """
+        判断是否需要对当前问题优先触发一次联网查询。
+        参数:
+            query: 用户问题文本。
+        返回值:
+            True 表示应优先联网；False 表示按常规工具决策。
+        异常:
+            无。
+        """
+        if not query:
+            return False
+        # 明确需要实时联网的关键词模式
+        realtime_patterns = [
+            r"天气",
+            r"温度",
+            r"降雨|下雨|雨",
+            r"空气质量|AQI",
+            r"台风|预警",
+        ]
+        if any(re.search(pattern, query, re.IGNORECASE) for pattern in realtime_patterns):
+            return True
+        return False
+
+    def _is_non_tushare_query(self, query: str) -> bool:
+        """
+        判断问题是否明显不属于 tushare 能处理的范围。
+        参数:
+            query: 用户问题文本。
+        返回值:
+            True 表示问题不在 tushare 能力范围内，应尝试联网搜索。
+        异常:
+            无。
+        """
+        if not query:
+            return False
+        # tushare 能处理的关键词（股票、财务、交易相关）
+        tushare_keywords = [
+            r"股票|股价|股市|A股|个股|涨跌|涨停|跌停",
+            r"行情|K线|日线|分钟线|走势",
+            r"市值|市盈率|PE|PB|ROE|换手率",
+            r"财报|财务|利润|营收|净利润|毛利|资产负债",
+            r"龙虎榜|大宗交易|融资融券|北向资金|南向资金",
+            r"分红|送股|配股|增发|减持",
+            r"上市公司|IPO|新股|退市",
+            r"基金|ETF|LOF|指数|大盘|沪深300|上证|深证|创业板|科创板",
+            r"交易日|开盘|收盘|成交量|成交额",
+            r"概念股|板块|行业板块|地域板块",
+            r"[0-9]{6}\.(SZ|SH|BJ)|[0-9]{6}",  # 股票代码
+        ]
+        # 明确需要联网搜索的关键词
+        web_search_keywords = [
+            r"搜索|查一下|帮我查|网上|百度|谷歌",
+            r"怎么.*做|如何.*做|方法|教程|步骤",
+            r"是什么|什么是|定义|解释|介绍",
+            r"为什么|原因|背景",
+            r"比较|对比|区别|差异",
+            r"推荐|建议|最好的",
+            r"最新.*消息|最新.*新闻|最新.*动态|最新.*进展",
+            r"实时|现在|当前|今日(?!行情|涨跌)",
+            r"政策|法规|规定|监管",
+            r"宏观|经济形势|GDP|CPI|PPI|PMI",
+            r"美股|港股|外盘|海外市场|纳斯达克|道琼斯|标普",
+            r"加密货币|比特币|以太坊|数字货币",
+            r"汇率|外汇|人民币.*美元",
+            r"利率|降息|加息|央行|美联储",
+        ]
+        # 如果包含明确的联网搜索关键词，返回 True
+        for pattern in web_search_keywords:
+            if re.search(pattern, query, re.IGNORECASE):
+                return True
+        # 如果不包含任何 tushare 关键词，也返回 True
+        has_tushare_keyword = any(
+            re.search(pattern, query, re.IGNORECASE) for pattern in tushare_keywords
+        )
+        if not has_tushare_keyword:
+            return True
+        return False
+
+    def _build_forced_tavily_call(
+        self, query: str, tavily_tools: List[Dict[str, Any]]
+    ) -> tuple[Optional[str], Dict[str, Any]]:
+        """
+        基于 Tavily 工具定义构建一次兜底联网调用。
+        参数:
+            query: 用户问题文本。
+            tavily_tools: Tavily MCP 工具元数据列表。
+        返回值:
+            (tool_name, args)；当无法构建时 tool_name 为 None。
+        异常:
+            无。
+        """
+        if not tavily_tools:
+            return None, {}
+
+        preferred_names = ["tavily_search", "tavily_research"]
+        tool_map = {str(t.get("name", "")): t for t in tavily_tools if t.get("name")}
+        selected_tool = None
+        for name in preferred_names:
+            if name in tool_map:
+                selected_tool = tool_map[name]
+                break
+        if selected_tool is None:
+            for t in tavily_tools:
+                tool_name = str(t.get("name", ""))
+                if "search" in tool_name or "research" in tool_name:
+                    selected_tool = t
+                    break
+        if selected_tool is None:
+            return None, {}
+
+        tool_name = str(selected_tool.get("name", ""))
+        schema = selected_tool.get("inputSchema") or {}
+        properties = schema.get("properties") if isinstance(schema, dict) else {}
+        required = schema.get("required") if isinstance(schema, dict) else []
+        if not isinstance(properties, dict):
+            properties = {}
+        if not isinstance(required, list):
+            required = []
+
+        if "query" in properties:
+            return tool_name, {"query": query}
+        if "input" in properties:
+            return tool_name, {"input": query}
+        if len(required) == 1 and isinstance(required[0], str):
+            return tool_name, {required[0]: query}
+        return None, {}
+
     def resolve_prompt(self, interface_name: str, input_data: Any):
         # Refresh prompts map in case file changed
         self.prompts_map = self._load_active_prompts()
@@ -400,14 +463,41 @@ class AiAgentService:
         """
         try:
             local_tools = await mcp_server.list_tools()
+            logger.info(f"Loaded {len(local_tools)} local MCP tools")
             tavily_tools: List[Dict[str, Any]] = []
             if self.tavily_mcp_enabled:
                 try:
                     tavily_tools = await self.tavily_mcp_client.list_tools()
+                    logger.info(f"Loaded {len(tavily_tools)} Tavily MCP tools: {[t.get('name') for t in tavily_tools]}")
                 except Exception as tavily_error:
                     logger.warning(f"Failed to list Tavily MCP tools: {tavily_error}")
+            else:
+                logger.info("Tavily MCP is disabled")
 
             openai_tools, tool_route_map = self._build_tools_payload(local_tools, tavily_tools)
+            forced_tavily_result_text = ""
+            latest_user_query = self._get_latest_user_query(messages_data)
+            # 判断是否需要强制联网：实时信息查询 或 非 tushare 能力范围的问题
+            is_realtime_query = self._should_force_tavily_for_query(latest_user_query)
+            is_non_tushare = self._is_non_tushare_query(latest_user_query)
+            should_force_tavily = is_realtime_query or is_non_tushare
+            logger.info(
+                f"Query analysis - realtime: {is_realtime_query}, non_tushare: {is_non_tushare}, "
+                f"should_force_tavily: {should_force_tavily}, tavily_enabled: {self.tavily_mcp_enabled}, "
+                f"tavily_tools_count: {len(tavily_tools)}"
+            )
+            if self.tavily_mcp_enabled and should_force_tavily and tavily_tools:
+                forced_tool_name, forced_tool_args = self._build_forced_tavily_call(latest_user_query, tavily_tools)
+                if forced_tool_name:
+                    try:
+                        yield f"data: {json.dumps({'type': 'status', 'content': f'正在调用联网工具 {forced_tool_name}...'}, ensure_ascii=False)}\n\n"
+                        forced_result = await self.tavily_mcp_client.call_tool(forced_tool_name, forced_tool_args)
+                        forced_tavily_result_text = self._extract_tool_result_text(forced_result)
+                        if len(forced_tavily_result_text) > 8000:
+                            forced_tavily_result_text = forced_tavily_result_text[:8000] + "\n...(由于长度限制已截断)"
+                        yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': forced_tool_name, 'result': forced_tavily_result_text}, ensure_ascii=False)}\n\n"
+                    except Exception as forced_error:
+                        logger.warning(f"Forced Tavily call failed: {forced_error}")
 
             messages = []
             messages.append(SystemMessage(content=self._build_chat_system_prompt()))
@@ -418,6 +508,12 @@ class AiAgentService:
                     messages.append(AIMessage(content=m["content"]))
                 elif m["role"] == "tool":
                     messages.append(ToolMessage(content=m["content"], tool_call_id=m.get("tool_call_id", "")))
+            if forced_tavily_result_text:
+                messages.append(
+                    SystemMessage(
+                        content=f"以下为已获取的联网信息，请优先基于该信息回答，并可按需继续调用工具：\n{forced_tavily_result_text}"
+                    )
+                )
 
             llm = ChatOpenAI(
                 api_key=self.api_key,
