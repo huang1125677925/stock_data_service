@@ -453,6 +453,28 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """
+        获取同花顺行业概念板块列表信息。
+
+        Args:
+            ts_code (str, optional): 指数代码，如 "885001.TI"
+            exchange (str, optional): 市场类型，可选值：A-A股 / HK-港股 / US-美股
+            type (str, optional): 指数类型，可选值：
+                N-概念指数 / I-行业指数 / R-地域指数 /
+                S-同花顺特色指数 / ST-同花顺风格指数 /
+                TH-同花顺主题指数 / BB-同花顺宽基指数
+            fields (str, optional): 指定返回字段，逗号分隔，默认返回全部字段
+            token (str, optional): Tushare API token，优先级高于环境变量
+
+        Returns:
+            返回同花顺行业概念板块列表，字段包括：
+            - ts_code (str): 板块代码
+            - name (str): 板块名称
+            - count (int): 成分股个数
+            - exchange (str): 交易所（A/HK/US）
+            - list_date (str): 上市日期，格式 YYYYMMDD
+            - type (str): 指数类型（N-概念指数 / S-特色指数 等）
+        """
         params: Dict[str, Any] = _clean(ts_code=ts_code, exchange=exchange, type=type)
         return _call("ths_index", params, fields, token)
 
