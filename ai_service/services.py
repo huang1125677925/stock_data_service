@@ -350,7 +350,8 @@ class AiAgentService:
                         tool_result_text = self._extract_tool_result_text(result)
 
                         messages.append(ToolMessage(content=tool_result_text, tool_call_id=tool_call_id))
-                        yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
+                        tool_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+                        yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'args': tool_args, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
                     
                     continue
                 else:

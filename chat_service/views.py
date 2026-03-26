@@ -321,10 +321,14 @@ class ConversationStreamView(View):
                                     ensure_ascii=False,
                                     indent=2,
                                 )
+                            tool_args = payload.get('args')
+                            if not isinstance(tool_args, dict):
+                                tool_args = {}
                             tool_cards.append(
                                 {
                                     'result': raw_result,
                                     'tool_name': payload.get('tool_name'),
+                                    'args': tool_args,
                                 }
                             )
                     await queue.put(chunk)
