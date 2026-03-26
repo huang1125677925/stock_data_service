@@ -228,8 +228,8 @@ DOUBAO_SEED_API_KEY = os.environ.get('DOUBAO_SEED_API_KEY', '483dda0a-1fdc-4f79-
 DOUBAO_SEED_BASE_URL = os.environ.get('DOUBAO_SEED_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
 DOUBAO_SEED_MODEL_NAME = os.environ.get('DOUBAO_SEED_MODEL_NAME', 'doubao-seed-2-0-mini-260215')
 
-# 当前使用的模型提供商，默认豆包 Seed
-AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'doubao_seed')
+# 当前使用的模型提供商，默认 DeepSeek
+AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'deepseek')
 AI_SYSTEM_PROMPT = os.environ.get(
     'AI_SYSTEM_PROMPT',
     '你是一个专业的金融分析师，擅长对结构化数据进行分析并给出简洁结论。',
