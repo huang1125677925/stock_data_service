@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_index_tools(mcp: FastMCP) -> None:
@@ -22,6 +22,11 @@ def register_index_tools(mcp: FastMCP) -> None:
             token=token,
             use_query=False,
         )
+
+    def _paginate(resp: Dict[str, Any], limit: int, offset: int, max_limit: int = 500) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit or 30), max_limit))
+        safe_offset = max(0, int(offset or 0))
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @safe_tool(
         mcp,
@@ -60,9 +65,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """指数日线行情 index_daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not ts_code:
             return error_payload("ts_code 为必填参数", 400, interface="index_daily")
         params: Dict[str, Any] = {"ts_code": ts_code}
@@ -72,7 +80,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("index_daily", params, fields, token)
+        return _paginate(_call("index_daily", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -84,9 +92,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 26,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """指数周线行情 index_weekly。limit默认26（半年），最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -96,7 +107,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("index_weekly", params, fields, token)
+        return _paginate(_call("index_weekly", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -108,9 +119,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 24,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """指数月线行情 index_monthly。limit默认24（2年），最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -120,7 +134,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("index_monthly", params, fields, token)
+        return _paginate(_call("index_monthly", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -132,9 +146,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """指数成分和权重 index_weight。limit默认100，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not index_code:
             return error_payload(
                 "index_code 为必填参数",
@@ -148,7 +165,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("index_weight", params, fields, token)
+        return _paginate(_call("index_weight", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -160,9 +177,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         ts_code: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """大盘指数每日指标 index_dailybasic。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if trade_date:
             params["trade_date"] = trade_date
@@ -178,7 +198,7 @@ def register_index_tools(mcp: FastMCP) -> None:
                 400,
                 interface="index_dailybasic",
             )
-        return _call("index_dailybasic", params, fields, token)
+        return _paginate(_call("index_dailybasic", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -190,9 +210,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """国际主要指数日线行情 index_global。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -202,7 +225,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("index_global", params, fields, token)
+        return _paginate(_call("index_global", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -340,9 +363,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """申万行业日线行情 sw_daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -352,7 +378,7 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("sw_daily", params, fields, token)
+        return _paginate(_call("sw_daily", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -391,9 +417,12 @@ def register_index_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """中信行业指数日线行情 ci_daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -403,4 +432,4 @@ def register_index_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("ci_daily", params, fields, token)
+        return _paginate(_call("ci_daily", params, fields, token), limit, offset)

@@ -5,12 +5,17 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_stock_reference_data_tools(mcp: FastMCP) -> None:
     def _call(interface: str, params: Dict[str, Any], fields: Optional[str], token: Optional[str]) -> Dict[str, Any]:
         return call_tushare(interface=interface, params=params, fields=fields, token=token, use_query=False)
+
+    def _paginate(resp: Dict[str, Any], limit: int, offset: int, max_limit: int = 500) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit or 30), max_limit))
+        safe_offset = max(0, int(offset or 0))
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.top10_holders", description="前十大股东 top10_holders")
     def top10_holders(
@@ -89,9 +94,12 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
         ann_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """股票回购 repurchase。limit默认50，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ann_date:
             params["ann_date"] = ann_date
@@ -99,7 +107,7 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("repurchase", params, fields, token)
+        return _paginate(_call("repurchase", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.share_float", description="限售股解禁 share_float")
     def share_float(
@@ -108,9 +116,12 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
         float_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """限售股解禁 share_float。limit默认50，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -128,7 +139,7 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="share_float",
             )
-        return _call("share_float", params, fields, token)
+        return _paginate(_call("share_float", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.block_trade", description="大宗交易 block_trade")
     def block_trade(
@@ -136,9 +147,12 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """大宗交易 block_trade。limit默认50，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -150,7 +164,7 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
             params["end_date"] = end_date
         if not (ts_code or trade_date or start_date or end_date):
             return error_payload("ts_code 或 trade_date 或起止日期至少提供一个参数", 400, interface="block_trade")
-        return _call("block_trade", params, fields, token)
+        return _paginate(_call("block_trade", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.stk_holdernumber", description="股东人数 stk_holdernumber")
     def stk_holdernumber(
@@ -158,9 +172,12 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
         ann_date: Optional[str] = None,
         end_date: Optional[str] = None,
         start_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """股东人数 stk_holdernumber。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -172,7 +189,7 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if not params:
             return error_payload("至少提供一个筛选参数", 400, interface="stk_holdernumber")
-        return _call("stk_holdernumber", params, fields, token)
+        return _paginate(_call("stk_holdernumber", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.stk_holdertrade", description="股东增减持 stk_holdertrade")
     def stk_holdertrade(
@@ -182,9 +199,12 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
         end_date: Optional[str] = None,
         trade_type: Optional[str] = None,
         holder_type: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """股东增减持 stk_holdertrade。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -200,7 +220,7 @@ def register_stock_reference_data_tools(mcp: FastMCP) -> None:
             params["holder_type"] = holder_type
         if not params:
             return error_payload("至少提供一个筛选参数", 400, interface="stk_holdertrade")
-        return _call("stk_holdertrade", params, fields, token)
+        return _paginate(_call("stk_holdertrade", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.reference.stk_account", description="股票账户开户数据（停更）stk_account")
     def stk_account(

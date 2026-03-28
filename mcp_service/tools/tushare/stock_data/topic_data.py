@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_stock_topic_tools(mcp: FastMCP) -> None:
@@ -56,12 +56,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
             - swing: 振幅
             - turnover_rate: 换手率
 
-            同时包含分页元信息：
-            - total_count: 上游接口返回的总记录数
-            - count: 当前返回 records 的记录数
-            - limit: 本次返回上限
-            - offset: 本次返回偏移
-            - truncated: 是否发生截断
+            分页元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date, idx_type=idx_type)
         try:
@@ -79,22 +74,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         safe_limit = min(safe_limit, 500)
 
         resp = _call("dc_daily", params, fields, token)
-        if resp.get("code") != 200:
-            return resp
-
-        data = resp.get("data") or {}
-        records = data.get("records") or []
-        total_count = data.get("count", len(records))
-        sliced = records[safe_offset:safe_offset + safe_limit]
-
-        data["total_count"] = total_count
-        data["count"] = len(sliced)
-        data["limit"] = safe_limit
-        data["offset"] = safe_offset
-        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
-        data["records"] = sliced
-        resp["data"] = data
-        return resp
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @safe_tool(mcp, name="tushare.stock.topic.dc_hot", description="东方财富App热榜 dc_hot")
     def dc_hot(
@@ -153,12 +133,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
             - idx_type: 板块类型
             - level: 行业层级
 
-            同时包含分页元信息：
-            - total_count: 上游接口返回的总记录数
-            - count: 当前返回 records 的记录数
-            - limit: 本次返回上限
-            - offset: 本次返回偏移
-            - truncated: 是否发生截断
+            分页元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         if not idx_type:
             return error_payload("idx_type 为必填参数，支持：行业板块、概念板块、地域板块", 400, interface="dc_index")
@@ -180,22 +155,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         safe_limit = min(safe_limit, 500)
 
         resp = _call("dc_index", params, fields, token)
-        if resp.get("code") != 200:
-            return resp
-
-        data = resp.get("data") or {}
-        records = data.get("records") or []
-        total_count = data.get("count", len(records))
-        sliced = records[safe_offset:safe_offset + safe_limit]
-
-        data["total_count"] = total_count
-        data["count"] = len(sliced)
-        data["limit"] = safe_limit
-        data["offset"] = safe_offset
-        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
-        data["records"] = sliced
-        resp["data"] = data
-        return resp
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @safe_tool(mcp, name="tushare.stock.topic.dc_member", description="东方财富概念成分 dc_member")
     def dc_member(
@@ -226,12 +186,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
             - con_code: 成分代码
             - name: 成分股名称
 
-            同时包含分页元信息：
-            - total_count: 上游接口返回的总记录数
-            - count: 当前返回 records 的记录数
-            - limit: 本次返回上限
-            - offset: 本次返回偏移
-            - truncated: 是否发生截断
+            分页元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = _clean(ts_code=ts_code, con_code=con_code, trade_date=trade_date)
         try:
@@ -249,22 +204,7 @@ def register_stock_topic_tools(mcp: FastMCP) -> None:
         safe_limit = min(safe_limit, 500)
 
         resp = _call("dc_member", params, fields, token)
-        if resp.get("code") != 200:
-            return resp
-
-        data = resp.get("data") or {}
-        records = data.get("records") or []
-        total_count = data.get("count", len(records))
-        sliced = records[safe_offset:safe_offset + safe_limit]
-
-        data["total_count"] = total_count
-        data["count"] = len(sliced)
-        data["limit"] = safe_limit
-        data["offset"] = safe_offset
-        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
-        data["records"] = sliced
-        resp["data"] = data
-        return resp
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @safe_tool(mcp, name="tushare.stock.topic.hm_detail", description="游资交易每日明细 hm_detail")
     def hm_detail(

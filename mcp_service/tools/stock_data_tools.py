@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload
 
 
 def register_stock_data_tools(mcp: FastMCP) -> None:
@@ -38,7 +38,7 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         name: Optional[str] = None,
         market: Optional[str] = None,
         is_hs: Optional[str] = None,
-        limit: int = 200,
+        limit: int = 50,
         offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
@@ -53,9 +53,9 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             name (str, optional): 名称
             market (str, optional): 市场类别 主板/创业板/科创板/CDR/北交所
             is_hs (str, optional): 是否沪深港通标的，N否 H沪股通 S深股通
-            limit (int): 返回记录条数上限，默认 200（仅影响返回内容，不影响上游接口拉取）
-            offset (int): 返回记录偏移量，用于分页，默认 0
-            fields (str, optional): 返回字段列表（逗号分隔）
+            limit (int): 本页条数上限，默认 50，最大 500（不截断字段；全量请用 offset 翻页至 has_more 为 false）
+            offset (int): 本页偏移，默认 0；下一页使用返回 data.next_offset
+            fields (str, optional): 逗号分隔列名，缩小列集合可降低单次 token
             token (str, optional): Tushare API token（覆盖环境变量）
 
         Returns:
@@ -76,12 +76,7 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - delist_date: 退市日期
             - is_hs: 是否沪深港通标的
 
-            额外返回元信息字段：
-            - total_count: 上游接口返回的总记录数
-            - count: 当前返回 records 的记录数
-            - limit: 本次返回上限
-            - offset: 本次返回偏移
-            - truncated: 是否发生截断
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if ts_code:
@@ -106,32 +101,17 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         try:
             safe_limit = int(limit or 0)
         except Exception:
-            safe_limit = 200
+            safe_limit = 50
         if safe_limit <= 0:
-            safe_limit = 200
-        safe_limit = min(safe_limit, 10)
+            safe_limit = 50
+        safe_limit = min(safe_limit, 500)
 
         default_fields = (
             "ts_code,symbol,name,area,industry,market,exchange,"
             "list_status,list_date,is_hs"
         )
         resp = _call("stock_basic", params, fields or default_fields, token)
-        if resp.get("code") != 200:
-            return resp
-
-        data = resp.get("data") or {}
-        records = data.get("records") or []
-        total_count = data.get("count", len(records))
-        sliced = records[safe_offset:safe_offset + safe_limit]
-
-        data["total_count"] = total_count
-        data["count"] = len(sliced)
-        data["limit"] = safe_limit
-        data["offset"] = safe_offset
-        data["truncated"] = (safe_offset != 0) or (len(records) > len(sliced))
-        data["records"] = sliced
-        resp["data"] = data
-        return resp
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_daily_data(
@@ -139,6 +119,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -150,6 +132,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
+            limit (int): 返回记录条数上限，默认30，最大500
+            offset (int): 偏移量，用于翻页，默认0
 
         注意：ts_code和trade_date至少需要输入一个参数
 
@@ -166,6 +150,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - pct_chg: 涨跌幅（%）
             - vol: 成交量（手）
             - amount: 成交额（千元）
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if ts_code:
@@ -182,7 +168,10 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="daily",
             )
-        return _call("daily", params, fields, token)
+        safe_limit = max(1, min(int(limit or 30), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("daily", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_daily_basic(
@@ -190,6 +179,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -201,6 +192,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
+            limit (int): 返回记录条数上限，默认30，最大500
+            offset (int): 偏移量，用于翻页，默认0
 
         注意：ts_code和trade_date至少需要输入一个参数
 
@@ -210,20 +203,15 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - trade_date: 交易日期
             - close: 当日收盘价
             - turnover_rate: 换手率（%）
-            - turnover_rate_f: 换手率（自由流通股）
-            - volume_ratio: 量比
             - pe: 市盈率（总市值/净利润，亏损的PE为空）
             - pe_ttm: 市盈率（TTM，亏损的PE为空）
             - pb: 市净率（总市值/净资产）
             - ps: 市销率
-            - ps_ttm: 市销率（TTM）
             - dv_ratio: 股息率（%）
-            - dv_ttm: 股息率（TTM）（%）
-            - total_share: 总股本（万股）
-            - float_share: 流通股本（万股）
-            - free_share: 自由流通股本（万）
             - total_mv: 总市值（万元）
             - circ_mv: 流通市值（万元）
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if ts_code:
@@ -240,7 +228,24 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="daily_basic",
             )
-        return _call("daily_basic", params, fields, token)
+        safe_limit = max(1, min(int(limit or 30), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("daily_basic", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
+
+    # 财务指标默认只返回最核心的字段，避免 100+ 列撑爆上下文。
+    # 用户可通过 fields 参数自行扩展。
+    _FINA_DEFAULT_FIELDS = (
+        "ts_code,ann_date,end_date,"
+        "eps,bps,ocfps,"
+        "roe,roe_waa,roa,roic,"
+        "netprofit_margin,grossprofit_margin,"
+        "current_ratio,quick_ratio,"
+        "debt_to_assets,"
+        "tr_yoy,or_yoy,netprofit_yoy,dt_netprofit_yoy,"
+        "ebitda,fcff,fcfe,"
+        "basic_eps_yoy,assets_yoy,eqt_yoy"
+    )
 
     @mcp.tool()
     def get_financial_indicator(
@@ -249,6 +254,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         period: Optional[str] = None,
+        limit: int = 8,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -261,9 +268,22 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             period (str, optional): 报告期（如：20191231）
+            limit (int): 本页最大行数，默认8，最大80（单行字段多，请用小页；全量数据用翻页，勿增大单页代替）
+            offset (int): 本页偏移；若 data.has_more 为 true，下一页传 data.next_offset
+            fields (str, optional): 逗号分隔列名。默认仅核心指标列；需要 Tushare 全列时传 fields="all"。
+                全量行 = 固定查询条件 + 循环 offset 直至 has_more 为 false。
 
-        Returns:
-            包含财务指标数据，字段包括：
+        默认返回字段（核心财务指标）：
+            ts_code, ann_date, end_date,
+            eps, bps, ocfps,
+            roe, roe_waa, roa, roic,
+            netprofit_margin, grossprofit_margin,
+            current_ratio, quick_ratio, debt_to_assets,
+            tr_yoy, or_yoy, netprofit_yoy, dt_netprofit_yoy,
+            ebitda, fcff, fcfe,
+            basic_eps_yoy, assets_yoy, eqt_yoy
+
+        完整字段列表（需通过 fields 参数指定）包括：
             - ts_code: TS股票代码
             - ann_date: 公告日期
             - end_date: 报告期
@@ -449,12 +469,18 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fina_indicator",
             )
-        return _call("fina_indicator", params, fields, token)
+        safe_limit = max(1, min(int(limit or 8), 80))
+        safe_offset = max(0, int(offset or 0))
+        effective_fields = None if fields == "all" else (fields or _FINA_DEFAULT_FIELDS)
+        resp = _call("fina_indicator", params, effective_fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_top_list(
         trade_date: Optional[str] = None,
         ts_code: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -464,26 +490,18 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         Args:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             ts_code (str, optional): 股票代码（如：000001.SZ）
+            limit (int): 返回记录条数上限，默认50，最大500
+            offset (int): 偏移量，用于翻页，默认0
 
         注意：trade_date和ts_code至少需要输入一个参数
 
         Returns:
             包含龙虎榜数据，字段包括：
-            - trade_date: 交易日期
-            - ts_code: TS股票代码
-            - name: 名称
-            - close: 收盘价
-            - pct_change: 涨跌幅
-            - turnover_rate: 换手率
-            - amount: 总成交额
-            - l_sell: 龙虎榜卖出额
-            - l_buy: 龙虎榜买入额
-            - l_amount: 龙虎榜成交额
-            - net_amount: 龙虎榜净买入额
-            - net_rate: 龙虎榜净买额占比
-            - amount_rate: 龙虎榜成交额占比
-            - float_values: 当日流通市值
-            - reason: 上榜理由
+            - trade_date / ts_code / name / close / pct_change
+            - turnover_rate / amount / l_sell / l_buy / l_amount
+            - net_amount / net_rate / amount_rate / float_values / reason
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if trade_date:
@@ -494,7 +512,10 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             return error_payload(
                 "trade_date 或 ts_code 至少提供一个参数", 400, interface="top_list"
             )
-        return _call("top_list", params, fields, token)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("top_list", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_block_trade(
@@ -502,6 +523,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -513,18 +536,16 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             trade_date (str, optional): 交易日期（YYYYMMDD格式）
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
+            limit (int): 返回记录条数上限，默认50，最大500
+            offset (int): 偏移量，用于翻页，默认0
 
         注意：股票代码和日期至少输入一个参数
 
         Returns:
             包含大宗交易数据，字段包括：
-            - ts_code: TS股票代码
-            - trade_date: 交易日期
-            - price: 成交价
-            - vol: 成交量（万股）
-            - amount: 成交金额
-            - buyer: 买方营业部
-            - seller: 卖方营业部
+            - ts_code / trade_date / price / vol / amount / buyer / seller
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if ts_code:
@@ -541,7 +562,10 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="block_trade",
             )
-        return _call("block_trade", params, fields, token)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("block_trade", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_margin_data(
@@ -549,6 +573,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         exchange_id: Optional[str] = None,
+        limit: int = 60,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -560,17 +586,14 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             exchange_id (str, optional): 交易所代码（SSE上交所 SZSE深交所 BSE北交所）
+            limit (int): 返回记录条数上限，默认60，最大500
+            offset (int): 偏移量，用于翻页，默认0
 
         Returns:
             包含融资融券数据，字段包括：
-            - trade_date: 交易日期
-            - exchange_id: 交易所代码
-            - rzye: 融资余额（元）
-            - rzmre: 融资买入额（元）
-            - rzche: 融资偿还额（元）
-            - rqye: 融券余额（元）
-            - rqmcl: 融券卖出量（股）
-            - rzrqye: 融资融券余额（元）
+            - trade_date / exchange_id / rzye / rzmre / rzche / rqye / rqmcl / rzrqye
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if trade_date:
@@ -587,7 +610,10 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
                 400,
                 interface="margin",
             )
-        return _call("margin", params, fields, token)
+        safe_limit = max(1, min(int(limit or 60), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("margin", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_trade_calendar(
@@ -595,6 +621,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         is_open: Optional[int] = None,
+        limit: int = 90,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -607,13 +635,14 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
             is_open (int, optional): 是否交易 0休市 1交易
+            limit (int): 返回记录条数上限，默认90（约3个月），最大1000
+            offset (int): 偏移量，用于翻页，默认0
 
         Returns:
             包含交易日历数据，字段包括：
-            - exchange: 交易所代码
-            - cal_date: 日历日期
-            - is_open: 是否交易（0休市 1交易）
-            - pretrade_date: 上一交易日
+            - exchange / cal_date / is_open / pretrade_date
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {"exchange": exchange}
         if start_date:
@@ -622,7 +651,10 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             params["end_date"] = end_date
         if is_open is not None:
             params["is_open"] = is_open
-        return _call("trade_cal", params, fields, token)
+        safe_limit = max(1, min(int(limit or 90), 1000))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("trade_cal", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_stock_company(

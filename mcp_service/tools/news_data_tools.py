@@ -3,12 +3,17 @@
 
 提供新闻快讯、上市公司公告、新闻联播、新闻通讯、上证E互动等数据接口工具。
 所有接口都通过 scheduled_tasks 中的 Tushare 代理来获取数据，遵循架构规范。
+
+分页约定（不截断正文）：单次只返回一页 records；需要全量时保持其它查询参数不变，
+根据返回的 has_more / next_offset / remaining 递增 offset 再次调用，直至 has_more 为 false。
+缩小单次体量还可传 fields（逗号分隔，与 Tushare 文档一致）只取需要的列。
 """
 
 from __future__ import annotations
 from typing import Dict, Optional
 from mcp.server.fastmcp import FastMCP
 from common.response import error_response
+from mcp_service.tools.tushare._registry import apply_pagination
 
 
 def register_news_data_tools(mcp: FastMCP) -> None:
@@ -45,7 +50,13 @@ def register_news_data_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def get_news_flash(
-        src: str, start_date: str, end_date: str, token: Optional[str] = None
+        src: str,
+        start_date: str,
+        end_date: str,
+        limit: int = 20,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
     ) -> Dict:
         """
         获取新闻快讯数据
@@ -55,28 +66,22 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         限量：单次最大1500条新闻，可根据时间参数循环提取历史
 
         参数说明：
-        - src (str, 必选): 新闻来源，支持以下值：
-          * 'sina' - 新浪财经，获取新浪财经实时资讯
-          * 'wallstreetcn' - 华尔街见闻快讯
-          * '10jqka' - 同花顺财经新闻
-          * 'eastmoney' - 东方财富财经新闻
-          * 'yuncaijing' - 云财经新闻
-          * 'fenghuang' - 凤凰新闻
-          * 'jinrongjie' - 金融界新闻
-          * 'cls' - 财联社快讯
-          * 'yicai' - 第一财经快讯
+        - src (str, 必选): 新闻来源，支持：sina / wallstreetcn / 10jqka / eastmoney /
+          yuncaijing / fenghuang / jinrongjie / cls / yicai
         - start_date (str, 必选): 开始日期，格式：'2018-11-20 09:00:00'
         - end_date (str, 必选): 结束日期，格式：'2018-11-20 22:05:03'
+        - limit (int): 本页条数上限，默认20，最大500（仅控制本次返回，不截断字段内容）
+        - offset (int): 本页起始偏移，默认0；若 data.has_more 为 true，用 data.next_offset 继续请求
+        - fields (str, 可选): 逗号分隔字段名，不传则由上游返回默认列；可只取 datetime,title 等以减小体积
         - token (str, 可选): Tushare API token
 
-        返回数据字段：
-        - datetime: 新闻时间
-        - content: 内容
-        - title: 标题
-        - channels: 分类（默认不显示）
+        返回 data 元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params = {"src": src, "start_date": start_date, "end_date": end_date}
-        return _call_tushare_proxy("news", params, token=token)
+        safe_limit = max(1, min(int(limit or 20), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("news", params, fields=fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_company_announcements(
@@ -84,30 +89,20 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         ann_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict:
         """
         获取上市公司全量公告数据
 
         接口：anns_d
-        描述：获取全量公告数据，提供pdf下载URL
-        限量：单次最大2000条数据，可以根据日期循环获取全量
-        权限：本接口为单独权限
+        限量：单次最大2000条，可用 limit/offset 分页拉全量。
 
-        参数说明：
-        - ts_code (str, 可选): 股票代码，如 '000001.SZ'
-        - ann_date (str, 可选): 公告日期，格式：'20230621' (yyyymmdd)
-        - start_date (str, 可选): 公告开始日期，格式：'20230601' (yyyymmdd)
-        - end_date (str, 可选): 公告结束日期，格式：'20230630' (yyyymmdd)
-        - token (str, 可选): Tushare API token
-
-        返回数据字段：
-        - ann_date: 公告日期
-        - ts_code: 股票代码
-        - name: 股票名称
-        - title: 标题
-        - url: URL，原文下载链接
-        - rec_time: 发布时间（默认不显示）
+        - limit (int): 本页条数，默认50，最大500
+        - offset (int): 偏移；下一页用返回的 next_offset
+        - fields (str, 可选): 逗号分隔字段，缩小列集合
         """
         params = {}
         if ts_code:
@@ -118,32 +113,33 @@ def register_news_data_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-
-        return _call_tushare_proxy("anns_d", params, token=token)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("anns_d", params, fields=fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
-    def get_cctv_news(date: str, token: Optional[str] = None) -> Dict:
+    def get_cctv_news(
+        date: str,
+        limit: int = 20,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict:
         """
         获取新闻联播文字稿数据
 
         接口：cctv_news
-        描述：获取新闻联播文字稿数据，数据开始于2006年6月，超过12年历史
-        限量：可根据日期参数循环提取，总量不限制
-        权限：本接口需单独开权限
-
-        参数说明：
         - date (str, 必选): 日期，格式：'20181211' (YYYYMMDD)
-        - token (str, 可选): Tushare API token
-
-        返回数据字段：
-        - date: 日期
-        - title: 标题
-        - content: 内容
-
-        注意：新闻联播进行了分段处理，每一个大段都加了标题处理，便于选择和过滤
+        - limit (int): 本页条数（按段），默认20，最大200
+        - offset (int): 分页偏移；同一天条数多时分页取全量
+        - fields (str, 可选): 逗号分隔字段
         """
         params = {"date": date}
-        return _call_tushare_proxy("cctv_news", params, token=token)
+        safe_limit = max(1, min(int(limit or 20), 200))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("cctv_news", params, fields=fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_major_news(
@@ -151,28 +147,19 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         include_content: bool = False,
+        limit: int = 10,
+        offset: int = 0,
+        fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict:
         """
         获取新闻通讯（长篇）数据
 
         接口：major_news
-        描述：获取长篇通讯信息，覆盖主要新闻资讯网站，提供超过8年历史新闻
-        限量：单次最大400行记录，可循环提取保存到本地
-        权限：本接口需单独开权限
-
-        参数说明：
-        - src (str, 可选): 新闻来源，支持：新华网、凤凰财经、同花顺、新浪财经、华尔街见闻、中证网、财新网、第一财经、财联社
-        - start_date (str, 可选): 新闻发布开始时间，格式：'2018-11-21 00:00:00'
-        - end_date (str, 可选): 新闻发布结束时间，格式：'2018-11-22 00:00:00'
-        - include_content (bool, 可选): 是否包含新闻内容，默认False（内容字段默认不显示，需要在fields里指定）
-        - token (str, 可选): Tushare API token
-
-        返回数据字段：
-        - title: 标题
-        - content: 内容（仅当include_content=True时返回）
-        - pub_time: 发布时间
-        - src: 来源网站
+        - include_content (bool): 是否包含正文列；False 时仅标题等，单次 token 更小
+        - limit (int): 本页条数，默认10，最大200
+        - offset (int): 分页偏移
+        - fields (str, 可选): 若指定则覆盖默认列选择（与 include_content 同时用时以显式 fields 为准）
         """
         params = {}
         if src:
@@ -182,16 +169,16 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         if end_date:
             params["end_date"] = end_date
 
-        fields = None
-        if include_content:
-            fields = "title,content,pub_time,src"
+        effective_fields = fields
+        if effective_fields is None and include_content:
+            effective_fields = "title,content,pub_time,src"
+        elif effective_fields is None and not include_content:
+            effective_fields = "title,pub_time,src"
 
-        return _call_tushare_proxy(
-            "major_news",
-            params,
-            fields=fields,
-            token=token,
-        )
+        safe_limit = max(1, min(int(limit or 10), 200))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("major_news", params, fields=effective_fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_shanghai_interactive_qa(
@@ -201,33 +188,16 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         end_date: Optional[str] = None,
         pub_date_start: Optional[str] = None,
         pub_date_end: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict:
         """
-        获取上证E互动问答数据
+        获取上证E互动问答数据（irm_qa_sh）
 
-        接口：irm_qa_sh
-        描述：获取上交所e互动董秘问答文本数据，历史数据开始于2023年6月
-        上证e互动是由上海证券交易所建立的沟通平台，旨在引导和促进上市公司、投资者等各市场参与主体之间的信息沟通
-        限量：单次请求最大返回3000行数据，可根据股票代码，日期等参数循环提取全部数据
-        权限：用户后120积分可以试用，正式权限为10000积分
-
-        参数说明：
-        - ts_code (str, 可选): 股票代码，如 '600519.SH'
-        - trade_date (str, 可选): 交易日期，格式：'20250212' (YYYYMMDD)
-        - start_date (str, 可选): 开始日期，格式：'20250201' (YYYYMMDD)
-        - end_date (str, 可选): 结束日期，格式：'20250228' (YYYYMMDD)
-        - pub_date_start (str, 可选): 发布开始日期，格式：'2025-06-03 16:43:03'
-        - pub_date_end (str, 可选): 发布结束日期，格式：'2025-06-03 18:43:23'
-        - token (str, 可选): Tushare API token
-
-        返回数据字段：
-        - ts_code: 股票代码
-        - name: 公司名称
-        - trade_date: 日期
-        - q: 问题
-        - a: 回复
-        - pub_time: 回复时间
+        - limit / offset: 分页；全量则循环至 has_more 为 false
+        - fields (str, 可选): 只取必要列时可不传 q/a，例如 ts_code,trade_date,pub_time
         """
         params = {}
         if ts_code:
@@ -243,7 +213,10 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         if pub_date_end:
             params["pub_date"] = pub_date_end
 
-        return _call_tushare_proxy("irm_qa_sh", params, token=token)
+        safe_limit = max(1, min(int(limit or 20), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("irm_qa_sh", params, fields=fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_shenzhen_interactive_qa(
@@ -253,32 +226,16 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         end_date: Optional[str] = None,
         pub_date_start: Optional[str] = None,
         pub_date_end: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict:
         """
-        获取深证互动易问答数据
+        获取深证互动易问答数据（irm_qa_sz）
 
-        接口：irm_qa_sz
-        描述：获取深交所互动易董秘问答文本数据
-        深证互动易是深圳证券交易所建立的投资者与上市公司沟通平台
-        限量：单次请求最大返回3000行数据，可根据股票代码，日期等参数循环提取全部数据
-
-        参数说明：
-        - ts_code (str, 可选): 股票代码，如 '000001.SZ'
-        - trade_date (str, 可选): 交易日期，格式：'20250212' (YYYYMMDD)
-        - start_date (str, 可选): 开始日期，格式：'20250201' (YYYYMMDD)
-        - end_date (str, 可选): 结束日期，格式：'20250228' (YYYYMMDD)
-        - pub_date_start (str, 可选): 发布开始日期，格式：'2025-06-03 16:43:03'
-        - pub_date_end (str, 可选): 发布结束日期，格式：'2025-06-03 18:43:23'
-        - token (str, 可选): Tushare API token
-
-        返回数据字段：
-        - ts_code: 股票代码
-        - name: 公司名称
-        - trade_date: 日期
-        - q: 问题
-        - a: 回复
-        - pub_time: 回复时间
+        - limit / offset: 分页取全量
+        - fields (str, 可选): 按需缩小列集合
         """
         params = {}
         if ts_code:
@@ -294,4 +251,7 @@ def register_news_data_tools(mcp: FastMCP) -> None:
         if pub_date_end:
             params["pub_date"] = pub_date_end
 
-        return _call_tushare_proxy("irm_qa_sz", params, token=token)
+        safe_limit = max(1, min(int(limit or 20), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call_tushare_proxy("irm_qa_sz", params, fields=fields, token=token)
+        return apply_pagination(resp, safe_limit, safe_offset)

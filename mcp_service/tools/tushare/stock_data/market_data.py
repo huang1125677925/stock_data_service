@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_stock_market_tools(mcp: FastMCP) -> None:
@@ -15,17 +15,25 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
     def _clean(**kwargs: Any) -> Dict[str, Any]:
         return {k: v for k, v in kwargs.items() if v is not None and v != ""}
 
+    def _paginate(resp: Dict[str, Any], limit: int, offset: int, max_limit: int = 500) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit or 30), max_limit))
+        safe_offset = max(0, int(offset or 0))
+        return apply_pagination(resp, safe_limit, safe_offset)
+
     @safe_tool(mcp, name="tushare.stock.market.adj_factor", description="复权因子 adj_factor")
     def adj_factor(
         ts_code: Optional[str] = None,
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 60,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """复权因子 adj_factor。limit默认60，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("adj_factor", params, fields, token)
+        return _paginate(_call("adj_factor", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.bak_daily", description="备用行情 bak_daily")
     def bak_daily(
@@ -47,11 +55,14 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """历史日线 daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("daily", params, fields, token)
+        return _paginate(_call("daily", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.daily_basic", description="每日指标 daily_basic")
     def daily_basic(
@@ -59,13 +70,16 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """每日指标 daily_basic。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not ts_code and not trade_date:
             return error_payload("ts_code 或 trade_date 至少提供一个参数", 400, interface="daily_basic")
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("daily_basic", params, fields, token)
+        return _paginate(_call("daily_basic", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.ggt_daily", description="港股通每日成交统计 ggt_daily")
     def ggt_daily(
@@ -125,11 +139,14 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 24,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """月线行情 monthly。limit默认24（2年），最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("monthly", params, fields, token)
+        return _paginate(_call("monthly", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.realtime_list", description="实时排名_爬虫 realtime_list")
     def realtime_list(
@@ -191,11 +208,14 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """每日涨跌停价格 stk_limit。limit默认50，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("stk_limit", params, fields, token)
+        return _paginate(_call("stk_limit", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.stk_mins", description="历史分钟 stk_mins")
     def stk_mins(
@@ -203,15 +223,18 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         freq: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 60,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """历史分钟行情 stk_mins。分钟数据量大，limit默认60，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not ts_code:
             return error_payload("ts_code 为必填参数", 400, interface="stk_mins")
         if not freq:
             return error_payload("freq 为必填参数", 400, interface="stk_mins")
         params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq, start_date=start_date, end_date=end_date)
-        return _call("stk_mins", params, fields, token)
+        return _paginate(_call("stk_mins", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.stk_week_month_adj", description="周_月线复权行情_每日更新 stk_week_month_adj")
     def stk_week_month_adj(
@@ -220,13 +243,16 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """周/月线复权行情 stk_week_month_adj。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not freq:
             return error_payload("freq 为必填参数", 400, interface="stk_week_month_adj")
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date, freq=freq)
-        return _call("stk_week_month_adj", params, fields, token)
+        return _paginate(_call("stk_week_month_adj", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.stk_weekly_monthly", description="周_月线行情_每日更新 stk_weekly_monthly")
     def stk_weekly_monthly(
@@ -235,13 +261,16 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """周/月线行情 stk_weekly_monthly。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         if not freq:
             return error_payload("freq 为必填参数", 400, interface="stk_weekly_monthly")
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date, freq=freq)
-        return _call("stk_weekly_monthly", params, fields, token)
+        return _paginate(_call("stk_weekly_monthly", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.suspend_d", description="每日停复牌信息 suspend_d")
     def suspend_d(
@@ -262,8 +291,11 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """周线行情 weekly。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
-        return _call("weekly", params, fields, token)
+        return _paginate(_call("weekly", params, fields, token), limit, offset)
