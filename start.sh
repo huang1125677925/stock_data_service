@@ -8,6 +8,7 @@ pkill -f "uvicorn stock_data_service.asgi:application" || true
 
 # 使用虚拟环境的 Python 直接启动（无需 nohup）
 . venv/bin/activate
+export TUSHARE_TOKEN=119db86ff3fd948e85905f8c506e1012d33fe18bf4b726e99f33ab09
 exec uvicorn stock_data_service.asgi:application \
     --host 0.0.0.0 \
     --port 8001 \
