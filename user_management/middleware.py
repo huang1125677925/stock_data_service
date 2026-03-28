@@ -16,7 +16,10 @@ class AuthenticationMiddleware(MiddlewareMixin):
     """
     
     def __init__(self, get_response):
-        self.get_response = get_response
+        # 必须调用 super().__init__，否则 MiddlewareMixin._async_check() 不会执行，
+        # 中间件实例不会被标记为 async-capable，上层中间件会以 sync 模式调用它，
+        # 导致 get_response(request) 返回 coroutine 而非 HttpResponse。
+        super().__init__(get_response)
         # 不需要认证的路径
         self.exempt_urls = [
             'user_register',
@@ -31,14 +34,14 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/user/invitation/validate/',
             '/django/api/user/reset-password/',
             '/django/api/individual_stock/strategy-results/',
-            '/django/api/individual_stock/stock-tags/',  # 股票标记API
+            '/django/api/individual_stock/stock-tags/',
             # '/django/api/stock/industry/performance-reports/',
             '/django/api/index/index-basic',
             '/django/api/tasks/',
-            '/django/api/docs/',  # 文档接口
-            '/django/api/swagger/',  # Swagger 接口
-            '/django/api/schema/',  # OpenAPI Schema 接口（供 Swagger/Redoc 使用）
-            '/django/api/redoc/',  # ReDoc 接口
+            '/django/api/docs/',
+            '/django/api/swagger/',
+            '/django/api/schema/',
+            '/django/api/redoc/',
             '/django/api/strategy/',
             '/django/api/ai/analyze/',
             '/django/api/ai/chat/',
