@@ -61,3 +61,6 @@ mcp[cli]
 langgraph
 langchain
 langchain-openai
+
+# ASGI server (required for streaming responses)
+uvicorn[standard]
