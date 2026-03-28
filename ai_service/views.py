@@ -32,9 +32,9 @@ class AiAgentChatView(View):
             # 使用流式返回
             response = StreamingHttpResponse(
                 ai_agent_service.chat_stream_generator(messages),
-                content_type='text/event-stream'
+                content_type='text/event-stream; charset=utf-8',
             )
-            response['Cache-Control'] = 'no-cache'
+            response['Cache-Control'] = 'no-cache, no-transform'
             response['X-Accel-Buffering'] = 'no'
             return response
         except Exception as e:

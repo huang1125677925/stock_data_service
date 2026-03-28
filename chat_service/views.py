@@ -372,8 +372,8 @@ class ConversationStreamView(View):
 
         response = StreamingHttpResponse(
             stream_generator(),
-            content_type='text/event-stream',
+            content_type='text/event-stream; charset=utf-8',
         )
-        response['Cache-Control'] = 'no-cache'
+        response['Cache-Control'] = 'no-cache, no-transform'
         response['X-Accel-Buffering'] = 'no'
         return response

@@ -275,6 +275,11 @@ class AiAgentService:
             异常不会向外抛出，统一转换为 error 事件返回给调用方。
         """
         try:
+            # 首包尽快写出，避免反向代理/客户端长时间无数据而缓冲或超时
+            yield ": stream-open\n\n"
+            yield (
+                f"data: {json.dumps({'type': 'status', 'content': '正在准备回复...'}, ensure_ascii=False)}\n\n"
+            )
             local_tools = await mcp_server.list_tools()
             logger.info(f"Loaded {len(local_tools)} local MCP tools")
             openai_tools, tool_route_map = self._build_tools_payload(local_tools)
