@@ -8,6 +8,11 @@ from mcp.server.fastmcp import FastMCP
 from common.tushare_proxy import call_tushare
 from index_data.sw_valuation_analysis import run_sw_valuation_analysis
 from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
+from mcp_service.tools.tushare.index.index_sentiment import (
+    compute_sentiment_from_series,
+    default_lookback_dates,
+    prepare_daily_rows,
+)
 
 
 def register_index_tools(mcp: FastMCP) -> None:
@@ -86,6 +91,72 @@ def register_index_tools(mcp: FastMCP) -> None:
         if end_date:
             params["end_date"] = end_date
         return _paginate(_call("index_daily", params, fields, token), limit, offset)
+
+    @safe_tool(
+        mcp,
+        name="tushare.index.index_sentiment",
+        description=(
+            "指数情绪综合分：基于 index_basic 校验元信息、index_daily 计算动量/均线/当日强弱，"
+            "输出 0–100 分与交易参考提示（非投资建议）"
+        ),
+    )
+    def index_sentiment(
+        ts_code: str,
+        as_of_trade_date: Optional[str] = None,
+        lookback_calendar_days: int = 300,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        查询指定指数的情绪数值，供是否交易参考。数据源自 Tushare index_basic、index_daily。
+
+        Args:
+            ts_code: 指数代码，如 000300.SH
+            as_of_trade_date: 可选，只使用该日及之前的日线（YYYYMMDD），用于复盘/回测视角
+            lookback_calendar_days: 向前取日线窗口的自然日长度，默认约 300 天以保证足够交易日
+            token: Tushare token
+        """
+        if not ts_code:
+            return error_payload("ts_code 为必填参数", 400, interface="index_sentiment")
+        try:
+            lb = max(120, min(int(lookback_calendar_days or 300), 800))
+        except (TypeError, ValueError):
+            lb = 300
+        basic = _call(
+            "index_basic",
+            {"ts_code": ts_code},
+            "ts_code,name,market,category,fullname",
+            token,
+        )
+        if basic.get("code") != 200:
+            return basic
+        basic_recs = (basic.get("data") or {}).get("records") or []
+        if not basic_recs:
+            return error_payload(
+                f"未查到指数基础信息：{ts_code}（请确认代码与 index_basic 一致）",
+                404,
+                interface="index_sentiment",
+            )
+        meta = basic_recs[0]
+        start_d, end_d = default_lookback_dates(lb)
+        daily = _call(
+            "index_daily",
+            {"ts_code": ts_code, "start_date": start_d, "end_date": end_d},
+            "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount",
+            token,
+        )
+        if daily.get("code") != 200:
+            return daily
+        records = (daily.get("data") or {}).get("records") or []
+        rows = prepare_daily_rows(records, as_of_trade_date=as_of_trade_date)
+        payload, err = compute_sentiment_from_series(rows, index_meta=meta)
+        if err:
+            return error_payload(err, 422, interface="index_sentiment")
+        return {
+            "code": 200,
+            "message": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": payload,
+        }
 
     @safe_tool(
         mcp,
