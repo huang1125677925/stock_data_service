@@ -98,7 +98,7 @@ class EtfBasicListView(APIView):
                 items = [x for x in items if (name_filter in x.get('csname', '')) or (name_filter in x.get('extname', '')) or (name_filter in x.get('cname', ''))]
 
             # 4. 数据清洗 (日期格式转换 YYYYMMDD -> YYYY-MM-DD, 处理 NaN)
-            from index_data.views import replace_nan # 复用 NaN 处理逻辑
+            from index_data.utils import replace_nan
 
             def format_date(date_str):
                 if date_str and len(date_str) == 8:

@@ -1,4 +1,3 @@
-import math
 import concurrent.futures
 from datetime import datetime, timedelta
 from rest_framework.views import APIView
@@ -6,6 +5,7 @@ from rest_framework.permissions import AllowAny
 from common.response import success_response, error_response
 from common.tushare_proxy import call_tushare
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from .sw_valuation_analysis import run_sw_valuation_analysis
 from .serializers import (
     SuccessResponseIndexMemberAllSerializer,
     SuccessResponseIndexClassifySerializer,
@@ -19,18 +19,7 @@ from .serializers import (
     ErrorResponseSerializer,
 )
 
-
-def replace_nan(obj):
-    """
-    递归将数据中的 NaN 替换为 None，以便 JSON 序列化。
-    """
-    if isinstance(obj, float) and math.isnan(obj):
-        return None
-    elif isinstance(obj, dict):
-        return {k: replace_nan(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [replace_nan(item) for item in obj]
-    return obj
+from .utils import replace_nan
 
 
 class IndexMemberAllProxyView(APIView):
@@ -235,145 +224,15 @@ class SwValuationAnalysisView(APIView):
     )
     def get(self, request):
         try:
-            level = request.query_params.get("level")
-            start_date = request.query_params.get("start_date")
-            end_date = request.query_params.get("end_date")
-            index_codes_str = request.query_params.get("index_codes")
-
-            if not all([start_date, end_date]):
-                return error_response("缺少必要参数: start_date, end_date", 400)
-            if not (index_codes_str or level):
-                return error_response("必须提供 level 或 index_codes 其中之一", 400)
-
-            # 1. 获取行业代码集合
-            if index_codes_str:
-                valid_codes = {c.strip() for c in index_codes_str.split(",") if c.strip()}
-            else:
-                resp_classify = call_tushare("index_classify", params={"level": level, "src": "SW2021"}, use_query=False)
-                if resp_classify.get("code") != 200:
-                    return error_response(f"获取行业分类失败: {resp_classify.get('message')}", 500)
-                
-                classify_data = resp_classify.get("data", {}).get("records", [])
-                valid_codes = {item["index_code"] for item in classify_data if item.get("index_code")}
-            
-            if not valid_codes:
-                return success_response({"interface": "sw_valuation_analysis", "count": 0, "records": []}, "该Level下无行业数据")
-
-            # 2. 策略选择：按日期循环 vs 按代码循环
-            # 计算日期跨度
-            try:
-                start_dt = datetime.strptime(start_date, "%Y%m%d")
-                end_dt = datetime.strptime(end_date, "%Y%m%d")
-                days_diff = (end_dt - start_dt).days + 1
-            except ValueError:
-                return error_response("日期格式错误，应为YYYYMMDD", 400)
-
-            all_records = []
-            
-            # 定义数据获取函数
-            def fetch_daily_data(date_str):
-                resp = call_tushare("sw_daily", params={"trade_date": date_str}, use_query=False)
-                if resp.get("code") == 200:
-                    records = resp.get("data", {}).get("records", [])
-                    return [r for r in records if r.get("ts_code") in valid_codes]
-                return []
-
-            def fetch_code_data(ts_code):
-                resp = call_tushare("sw_daily", params={"ts_code": ts_code, "start_date": start_date, "end_date": end_date}, use_query=False)
-                if resp.get("code") == 200:
-                    return resp.get("data", {}).get("records", [])
-                return []
-
-            # 并发配置
-            max_workers = 8
-
-            # 如果天数少于行业数，按日期循环（减少API调用次数）
-            # 注意：sw_daily按日期查询返回所有行业，我们需要过滤
-            if days_diff < len(valid_codes):
-                date_list = []
-                current_dt = start_dt
-                while current_dt <= end_dt:
-                    date_list.append(current_dt.strftime("%Y%m%d"))
-                    current_dt += timedelta(days=1)
-                
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(fetch_daily_data, d): d for d in date_list}
-                    for future in concurrent.futures.as_completed(futures):
-                        try:
-                            result = future.result()
-                            if result:
-                                all_records.extend(result)
-                        except Exception:
-                            pass
-            else:
-                # 按代码循环
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(fetch_code_data, code): code for code in valid_codes}
-                    for future in concurrent.futures.as_completed(futures):
-                        try:
-                            result = future.result()
-                            if result:
-                                all_records.extend(result)
-                        except Exception:
-                            pass
-            
-            # 3. 分组处理数据，计算分位数并提取最后一天数据
-            final_records = []
-            
-            # 按 ts_code 分组
-            grouped_data = {}
-            for record in all_records:
-                code = record.get("ts_code")
-                if code:
-                    if code not in grouped_data:
-                        grouped_data[code] = []
-                    grouped_data[code].append(record)
-            
-            for code, records in grouped_data.items():
-                if not records:
-                    continue
-                
-                # 按日期排序，确保最后一条是该时间窗口内的最后一天
-                records.sort(key=lambda x: x.get("trade_date", ""))
-                
-                # 获取最后一条记录
-                latest_record = records[-1]
-                
-                # 计算PE分位数
-                pe_values = [r.get("pe") for r in records if r.get("pe") is not None]
-                current_pe = latest_record.get("pe")
-                if current_pe is not None and pe_values:
-                    # 分位数 = (小于等于当前值的数量 / 总数量) * 100
-                    count_le = sum(1 for v in pe_values if v <= current_pe)
-                    latest_record["pe_percentile"] = round((count_le / len(pe_values)) * 100, 2)
-                else:
-                    latest_record["pe_percentile"] = None
-                    
-                # 计算PB分位数
-                pb_values = [r.get("pb") for r in records if r.get("pb") is not None]
-                current_pb = latest_record.get("pb")
-                if current_pb is not None and pb_values:
-                    count_le = sum(1 for v in pb_values if v <= current_pb)
-                    latest_record["pb_percentile"] = round((count_le / len(pb_values)) * 100, 2)
-                else:
-                    latest_record["pb_percentile"] = None
-                
-                final_records.append(latest_record)
-
-            # 处理NaN
-            final_records = replace_nan(final_records)
-            
-            # 按代码排序
-            final_records.sort(key=lambda x: x.get("ts_code", ""))
-
-            result_data = {
-                "interface": "sw_valuation_analysis",
-                "count": len(final_records),
-                "records": final_records
-            }
-            
-            return success_response(result_data, "查询申万行业估值分析成功")
-
+            out = run_sw_valuation_analysis(
+                request.query_params.get("start_date") or "",
+                request.query_params.get("end_date") or "",
+                level=request.query_params.get("level"),
+                index_codes_str=request.query_params.get("index_codes"),
+            )
+            if out.code == 200:
+                return success_response(out.data, out.message)
+            return error_response(out.message, out.code)
         except Exception as e:
             return error_response(f"查询申万行业估值分析失败: {str(e)}", 500)
 

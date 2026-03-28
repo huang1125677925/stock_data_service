@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
+from index_data.sw_valuation_analysis import run_sw_valuation_analysis
 from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
@@ -433,3 +435,38 @@ def register_index_tools(mcp: FastMCP) -> None:
         if end_date:
             params["end_date"] = end_date
         return _paginate(_call("ci_daily", params, fields, token), limit, offset)
+
+    @safe_tool(
+        mcp,
+        name="django.index.sw_valuation_analysis",
+        description="申万行业估值分析（与 /django/api/index/sw-valuation-analysis/ 同源实现，非 HTTP）",
+    )
+    def sw_valuation_analysis(
+        start_date: str,
+        end_date: str,
+        level: Optional[str] = "L1",
+        index_codes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        与 GET /django/api/index/sw-valuation-analysis/ 相同实现：按 level 或 index_codes 拉取区间 sw_daily，输出最新一日 PE/PB 及历史分位数。
+
+        Args:
+            start_date: 开始日期 YYYYMMDD
+            end_date: 结束日期 YYYYMMDD
+            level: 行业分级 L1/L2/L3；未传 index_codes 时使用，默认 L1
+            index_codes: 可选，逗号分隔行业 ts_code，优先于 level
+        """
+        out = run_sw_valuation_analysis(
+            start_date,
+            end_date,
+            level=level,
+            index_codes_str=index_codes,
+        )
+        if out.code != 200:
+            return error_payload(out.message, out.code)
+        return {
+            "code": out.code,
+            "message": out.message,
+            "timestamp": datetime.now().isoformat(),
+            "data": out.data,
+        }
