@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_etf_tools(mcp: FastMCP) -> None:
@@ -23,6 +23,13 @@ def register_etf_tools(mcp: FastMCP) -> None:
             use_query=False,
         )
 
+    def _paginate(
+        resp: Dict[str, Any], limit: int, offset: int, max_limit: int = 500
+    ) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit or 30), max_limit))
+        safe_offset = max(0, int(offset or 0))
+        return apply_pagination(resp, safe_limit, safe_offset)
+
     @safe_tool(
         mcp,
         name="tushare.etf.etf_basic",
@@ -35,6 +42,8 @@ def register_etf_tools(mcp: FastMCP) -> None:
         list_status: str = "L",
         exchange: Optional[str] = None,
         mgr: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -51,7 +60,7 @@ def register_etf_tools(mcp: FastMCP) -> None:
             params["exchange"] = exchange
         if mgr:
             params["mgr"] = mgr
-        return _call("etf_basic", params, fields, token)
+        return _paginate(_call("etf_basic", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -62,6 +71,8 @@ def register_etf_tools(mcp: FastMCP) -> None:
         ts_code: Optional[str] = None,
         pub_date: Optional[str] = None,
         base_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -72,7 +83,7 @@ def register_etf_tools(mcp: FastMCP) -> None:
             params["pub_date"] = pub_date
         if base_date:
             params["base_date"] = base_date
-        return _call("etf_index", params, fields, token)
+        return _paginate(_call("etf_index", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -84,6 +95,8 @@ def register_etf_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -102,7 +115,7 @@ def register_etf_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fund_daily",
             )
-        return _call("fund_daily", params, fields, token)
+        return _paginate(_call("fund_daily", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -112,6 +125,8 @@ def register_etf_tools(mcp: FastMCP) -> None:
     def rt_etf_k(
         ts_code: str,
         topic: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -127,7 +142,7 @@ def register_etf_tools(mcp: FastMCP) -> None:
         params: Dict[str, Any] = {"ts_code": ts_code}
         if topic:
             params["topic"] = topic
-        return _call("rt_etf_k", params, fields, token)
+        return _paginate(_call("rt_etf_k", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -139,8 +154,10 @@ def register_etf_tools(mcp: FastMCP) -> None:
         trade_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        offset: Optional[int] = None,
-        limit: Optional[int] = None,
+        limit: int = 100,
+        offset: int = 0,
+        tushare_offset: Optional[int] = None,
+        tushare_limit: Optional[int] = None,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -153,17 +170,17 @@ def register_etf_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        if offset is not None:
-            params["offset"] = offset
-        if limit is not None:
-            params["limit"] = limit
+        if tushare_offset is not None:
+            params["offset"] = tushare_offset
+        if tushare_limit is not None:
+            params["limit"] = tushare_limit
         if not params:
             return error_payload(
                 "ts_code 或 trade_date 或 start_date/end_date 至少提供一个参数",
                 400,
                 interface="fund_adj",
             )
-        return _call("fund_adj", params, fields, token)
+        return _paginate(_call("fund_adj", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -175,6 +192,8 @@ def register_etf_tools(mcp: FastMCP) -> None:
         freq: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 60,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -187,4 +206,4 @@ def register_etf_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("stk_mins", params, fields, token)
+        return _paginate(_call("stk_mins", params, fields, token), limit, offset)

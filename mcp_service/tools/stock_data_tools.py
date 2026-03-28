@@ -660,6 +660,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
     def get_stock_company(
         ts_code: Optional[str] = None,
         exchange: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -669,6 +671,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         Args:
             ts_code (str, optional): 股票代码（如：000001.SZ）
             exchange (str, optional): 交易所代码（SSE上交所 SZSE深交所 BSE北交所）
+            limit (int): 本页条数上限，默认50，最大500；全量用 offset 翻页至 has_more 为 false
+            offset (int): 本页偏移，下一页使用返回的 data.next_offset
 
         Returns:
             包含上市公司基础信息，字段包括：
@@ -688,6 +692,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - employees: 员工人数
             - main_business: 主要业务及产品
             - business_scope: 经营范围
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if ts_code:
@@ -698,12 +704,17 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             return error_payload(
                 "ts_code 或 exchange 至少提供一个参数", 400, interface="stock_company"
             )
-        return _call("stock_company", params, fields, token)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("stock_company", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
     def get_new_share(
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -713,6 +724,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         Args:
             start_date (str, optional): 开始日期（YYYYMMDD格式）
             end_date (str, optional): 结束日期（YYYYMMDD格式）
+            limit (int): 本页条数上限，默认50，最大500
+            offset (int): 本页偏移；下一页使用 data.next_offset
 
         Returns:
             包含新股上市数据，字段包括：
@@ -728,6 +741,8 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - limit_amount: 个人申购上限（万股）
             - funds: 募集资金（亿元）
             - ballot: 中签率
+
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
         params: Dict[str, Any] = {}
         if start_date:
@@ -738,4 +753,7 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             return error_payload(
                 "start_date 或 end_date 至少提供一个参数", 400, interface="new_share"
             )
-        return _call("new_share", params, fields, token)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_offset = max(0, int(offset or 0))
+        resp = _call("new_share", params, fields, token)
+        return apply_pagination(resp, safe_limit, safe_offset)

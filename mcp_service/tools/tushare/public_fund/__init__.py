@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
-from mcp_service.tools.tushare._registry import error_payload, safe_tool
+from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
 def register_public_fund_tools(mcp: FastMCP) -> None:
@@ -23,6 +23,13 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
             use_query=False,
         )
 
+    def _paginate(
+        resp: Dict[str, Any], limit: int, offset: int, max_limit: int = 500
+    ) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit or 30), max_limit))
+        safe_offset = max(0, int(offset or 0))
+        return apply_pagination(resp, safe_limit, safe_offset)
+
     @safe_tool(
         mcp,
         name="tushare.public_fund.fund_basic",
@@ -32,6 +39,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         ts_code: Optional[str] = None,
         market: str = "E",
         status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -42,7 +51,7 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
             params["market"] = market
         if status:
             params["status"] = status
-        return _call("fund_basic", params, fields, token)
+        return _paginate(_call("fund_basic", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -55,6 +64,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         market: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -75,7 +86,7 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        return _call("fund_nav", params, fields, token)
+        return _paginate(_call("fund_nav", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -89,6 +100,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         period: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -111,7 +124,7 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fund_portfolio",
             )
-        return _call("fund_portfolio", params, fields, token)
+        return _paginate(_call("fund_portfolio", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -119,10 +132,12 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         description="公募基金公司 fund_company",
     )
     def fund_company(
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return _call("fund_company", {}, fields, token)
+        return _paginate(_call("fund_company", {}, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -133,8 +148,10 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         ts_code: Optional[str] = None,
         ann_date: Optional[str] = None,
         name: Optional[str] = None,
-        offset: Optional[int] = None,
-        limit: Optional[int] = None,
+        limit: int = 50,
+        offset: int = 0,
+        tushare_offset: Optional[int] = None,
+        tushare_limit: Optional[int] = None,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -145,11 +162,11 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
             params["ann_date"] = ann_date
         if name:
             params["name"] = name
-        if offset is not None:
-            params["offset"] = offset
-        if limit is not None:
-            params["limit"] = limit
-        return _call("fund_manager", params, fields, token)
+        if tushare_offset is not None:
+            params["offset"] = tushare_offset
+        if tushare_limit is not None:
+            params["limit"] = tushare_limit
+        return _paginate(_call("fund_manager", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -161,6 +178,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         ex_date: Optional[str] = None,
         pay_date: Optional[str] = None,
         ts_code: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -179,7 +198,7 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fund_div",
             )
-        return _call("fund_div", params, fields, token)
+        return _paginate(_call("fund_div", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -192,6 +211,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         market: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -212,7 +233,7 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fund_share",
             )
-        return _call("fund_share", params, fields, token)
+        return _paginate(_call("fund_share", params, fields, token), limit, offset)
 
     @safe_tool(
         mcp,
@@ -224,6 +245,8 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         trade_date: Optional[str] = None,
+        limit: int = 30,
+        offset: int = 0,
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -242,4 +265,4 @@ def register_public_fund_tools(mcp: FastMCP) -> None:
                 400,
                 interface="fund_factor_pro",
             )
-        return _call("fund_factor_pro", params, fields, token)
+        return _paginate(_call("fund_factor_pro", params, fields, token), limit, offset)
