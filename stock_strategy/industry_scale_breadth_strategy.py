@@ -68,7 +68,7 @@ class IndustryScaleBreadthStrategy:
             cache_key = f"industry_scale_breadth_{','.join(sector_codes) if sector_codes else 'all'}"
             try:
                 cached = cache.get(cache_key)
-                if cached:
+                if cached is not None and isinstance(cached, list):
                     logger.info("从缓存获取行业规模宽度数据")
                     return cached
             except Exception as e:
@@ -85,10 +85,16 @@ class IndustryScaleBreadthStrategy:
                 return []
 
             # 市场总市值（来自所有行业板块，不受 sector_codes 筛选影响）
-            all_sector_values = IndustrySector.objects.all().values('total_market_value')
-            market_total_value = sum(
-                v['total_market_value'] for v in all_sector_values if v.get('total_market_value')
-            )
+            all_sector_values = IndustrySector.objects.all().values("total_market_value")
+            market_total_value = 0
+            for v in all_sector_values:
+                raw = v.get("total_market_value")
+                if raw is None:
+                    continue
+                try:
+                    market_total_value += int(raw)
+                except (TypeError, ValueError):
+                    market_total_value += int(float(raw))
 
             stock_total = IndividualStock.objects.count()
             if stock_total > 0:
@@ -119,7 +125,13 @@ class IndustryScaleBreadthStrategy:
             for sector in sectors:
                 name = (sector['name'] or '').strip()
                 code = sector['code']
-                industry_total_value = sector.get('total_market_value') or 0
+                _mv = sector.get("total_market_value")
+                try:
+                    industry_total_value = (
+                        int(_mv) if _mv is not None else 0
+                    )
+                except (TypeError, ValueError):
+                    industry_total_value = int(float(_mv)) if _mv is not None else 0
                 if use_board_counts:
                     industry_company_count = sector_cons_by_name.get(
                         name,
@@ -141,7 +153,7 @@ class IndustryScaleBreadthStrategy:
                     'sector_name': name or sector.get('name') or '',
                     'industry_total_market_value': float(industry_total_value),
                     'market_total_market_value': float(market_total_value),
-                    'industry_company_count': industry_company_count,
+                    'industry_company_count': int(industry_company_count),
                     'market_total_company_count': int(market_total_company_count),
                     'market_cap_ratio': round(market_cap_ratio, 6),
                     'company_ratio': round(company_ratio, 6),
