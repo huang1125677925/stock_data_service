@@ -27,10 +27,12 @@ def create_server() -> FastMCP:
     from mcp_service.tools.stock_data_tools import register_stock_data_tools
     from mcp_service.tools.tushare import register_tushare_tools
     from mcp_service.tools.time_tools import register_time_tools
+    from mcp_service.tools.django_strategy_tools import register_django_strategy_tools
 
     register_news_data_tools(mcp)
     register_stock_data_tools(mcp)
     register_tushare_tools(mcp)
+    register_django_strategy_tools(mcp)
     register_time_tools(mcp)
     register_tavily_mcp_client(
         url=os.getenv("TAVILY_MCP_URL", ""),
