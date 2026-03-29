@@ -56,7 +56,7 @@ class IndustryScaleBreadthStrategy:
         Args:
             sector_codes: 行业板块代码列表（可选）；为空时计算所有板块
         Returns:
-            每行业的规模宽度指标列表；失败返回None
+            每行业的规模宽度指标列表；无板块时返回空列表；未捕获异常时返回 None
         事件：
             - 从数据库读取IndustrySector与IndividualStock
             - 计算行业总市值与行业公司数量
@@ -66,10 +66,13 @@ class IndustryScaleBreadthStrategy:
         try:
             # 缓存键
             cache_key = f"industry_scale_breadth_{','.join(sector_codes) if sector_codes else 'all'}"
-            cached = cache.get(cache_key)
-            if cached:
-                logger.info("从缓存获取行业规模宽度数据")
-                return cached
+            try:
+                cached = cache.get(cache_key)
+                if cached:
+                    logger.info("从缓存获取行业规模宽度数据")
+                    return cached
+            except Exception as e:
+                logger.warning(f"读取行业规模宽度缓存失败，将直接计算: {e}")
 
             # 获取行业板块（可筛选）
             if sector_codes:
@@ -79,44 +82,63 @@ class IndustryScaleBreadthStrategy:
 
             if not sectors:
                 logger.warning("未获取到行业板块数据")
-                return None
+                return []
 
-            # 市场总市值（来自所有行业板块）
-            # 过滤None与非正值，保证计算稳定
-            market_total_value = sum([s['total_market_value'] for s in sectors if s.get('total_market_value')])
-            # 市场总市值（来自所有行业板块，不受sector_codes筛选影响）
-            # 过滤None与非正值，保证计算稳定
+            # 市场总市值（来自所有行业板块，不受 sector_codes 筛选影响）
             all_sector_values = IndustrySector.objects.all().values('total_market_value')
-            market_total_value = sum([v['total_market_value'] for v in all_sector_values if v.get('total_market_value')])
-            if market_total_value is None:
-                market_total_value = 0
-
-            # 市场总公司数量（来自所有个股表）
-            market_total_company_count = IndividualStock.objects.count()
-            if market_total_company_count == 0:
-                logger.warning("市场总公司数量为0")
-                return None
-
-            # 预聚合：按行业名称统计公司数量（一次查询）
-            industry_counts = dict(
-                IndividualStock.objects.values('industry').annotate(cnt=Count('id')).values_list('industry', 'cnt')
+            market_total_value = sum(
+                v['total_market_value'] for v in all_sector_values if v.get('total_market_value')
             )
+
+            stock_total = IndividualStock.objects.count()
+            if stock_total > 0:
+                industry_counts: Dict[str, int] = {}
+                for row in IndividualStock.objects.values('industry').annotate(cnt=Count('id')):
+                    key = (row['industry'] or '').strip()
+                    if key:
+                        industry_counts[key] = int(row['cnt'])
+                market_total_company_count = stock_total
+                use_board_counts = False
+            else:
+                cons_rows = IndustrySector.objects.all().values('name', 'rise_count', 'fall_count')
+                sector_cons_by_name: Dict[str, int] = {}
+                for r in cons_rows:
+                    n = (r['name'] or '').strip()
+                    c = int(r['rise_count'] or 0) + int(r['fall_count'] or 0)
+                    sector_cons_by_name[n] = c
+                market_total_company_count = sum(sector_cons_by_name.values())
+                if market_total_company_count <= 0:
+                    logger.warning(
+                        "个股表无数据且板块涨跌家数合计为0，公司数量占比按0处理（建议同步个股或板块行情）"
+                    )
+                    market_total_company_count = 1
+                use_board_counts = True
 
             # 计算每行业的指标
             results: List[Dict] = []
             for sector in sectors:
-                name = sector['name']
+                name = (sector['name'] or '').strip()
                 code = sector['code']
                 industry_total_value = sector.get('total_market_value') or 0
-                industry_company_count = int(industry_counts.get(name, 0))
+                if use_board_counts:
+                    industry_company_count = sector_cons_by_name.get(
+                        name,
+                        int(sector.get('rise_count') or 0) + int(sector.get('fall_count') or 0),
+                    )
+                else:
+                    industry_company_count = int(industry_counts.get(name, 0))
 
                 market_cap_ratio = (industry_total_value / market_total_value) if market_total_value > 0 else 0
-                company_ratio = (industry_company_count / market_total_company_count) if market_total_company_count > 0 else 0
+                company_ratio = (
+                    (industry_company_count / market_total_company_count)
+                    if market_total_company_count > 0
+                    else 0
+                )
                 scale_breadth = round(market_cap_ratio * company_ratio, 6)
 
                 results.append({
                     'sector_code': code,
-                    'sector_name': name,
+                    'sector_name': name or sector.get('name') or '',
                     'industry_total_market_value': float(industry_total_value),
                     'market_total_market_value': float(market_total_value),
                     'industry_company_count': industry_company_count,
@@ -129,8 +151,10 @@ class IndustryScaleBreadthStrategy:
             # 排序：按指标降序
             results.sort(key=lambda x: x['scale_breadth'], reverse=True)
 
-            # 缓存结果
-            cache.set(cache_key, results, self.cache_timeout)
+            try:
+                cache.set(cache_key, results, self.cache_timeout)
+            except Exception as e:
+                logger.warning(f"写入行业规模宽度缓存失败: {e}")
             return results
         except Exception as e:
             logger.error(f"计算行业规模宽度失败: {str(e)}")
