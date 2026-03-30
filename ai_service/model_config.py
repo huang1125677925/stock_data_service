@@ -2,19 +2,20 @@
 AI 模型配置模块
 
 集中管理 DeepSeek、豆包 Seed 等模型的 API 配置。
-通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 deepseek）。
+通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 doubao_seed）。
 """
 
 from django.conf import settings
-from typing import TypedDict
+from typing import TypedDict, Dict, Any, Optional
 
 
-class ModelConfig(TypedDict):
+class ModelConfig(TypedDict, total=False):
     """模型配置结构"""
 
     api_key: str
     base_url: str
     model_name: str
+    model_kwargs: Optional[Dict[str, Any]]
 
 
 # DeepSeek 配置（保留原有配置）
@@ -27,6 +28,7 @@ DEEPSEEK_CONFIG: ModelConfig = {
 # 豆包 Seed 配置
 # API 文档: https://www.volcengine.com/docs/6492/2250683
 # 支持多模态输入（图片+文本），OpenAI 兼容接口
+# thinking_type="disabled" 关闭深度思考模式，避免额外延迟与 token 消耗
 DOUBAO_SEED_CONFIG: ModelConfig = {
     "api_key": getattr(
         settings,
@@ -43,6 +45,7 @@ DOUBAO_SEED_CONFIG: ModelConfig = {
         "DOUBAO_SEED_MODEL_NAME",
         "doubao-seed-2-0-mini-260215",
     ),
+    "model_kwargs": {"thinking": {"type": "disabled"}},
 }
 
 # 模型提供商映射
@@ -57,11 +60,11 @@ def get_active_model_config() -> ModelConfig:
     获取当前激活的模型配置。
 
     通过 settings.AI_MODEL_PROVIDER 指定：
-    - "deepseek": DeepSeek 模型（默认）
-    - "doubao_seed": 豆包 Seed 模型
+    - "doubao_seed": 豆包 Seed 模型（默认）
+    - "deepseek": DeepSeek 模型
 
     返回值:
-        ModelConfig: 包含 api_key、base_url、model_name
+        ModelConfig: 包含 api_key、base_url、model_name、model_kwargs
     """
-    provider = getattr(settings, "AI_MODEL_PROVIDER", "deepseek")
-    return MODEL_PROVIDERS.get(provider, DEEPSEEK_CONFIG)
+    provider = getattr(settings, "AI_MODEL_PROVIDER", "doubao_seed")
+    return MODEL_PROVIDERS.get(provider, DOUBAO_SEED_CONFIG)
