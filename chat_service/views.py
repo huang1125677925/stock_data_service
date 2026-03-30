@@ -288,12 +288,16 @@ class ConversationStreamView(View):
                 await sync_to_async(
                     chat_conversation_service.update_conversation,
                 )(conversation, title=content[:200])
-        build_messages = sync_to_async(
-            chat_conversation_service.build_chat_messages,
-        )
-        messages_data = await build_messages(conversation)
-        if not messages_data:
+        else:
+            get_latest = sync_to_async(
+                chat_conversation_service.get_latest_user_message,
+            )
+            latest = await get_latest(conversation)
+            if latest:
+                content = latest.content
+        if not content:
             return error_response('请先写入用户消息', code=400)
+        messages_data = [{'role': Message.ROLE_USER, 'content': content}]
 
         _SENTINEL = object()
         logger = logging.getLogger(__name__)

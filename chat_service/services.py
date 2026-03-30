@@ -57,6 +57,13 @@ class ChatConversationService:
         }
 
     @staticmethod
+    def get_latest_user_message(conversation):
+        return Message.objects.filter(
+            conversation=conversation,
+            role=Message.ROLE_USER,
+        ).order_by('-seq').first()
+
+    @staticmethod
     def get_message_for_conversation(conversation, message_id):
         return Message.objects.filter(
             id=message_id,
