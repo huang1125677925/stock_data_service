@@ -42,6 +42,7 @@ class AiAgentService:
         self.base_url = model_config["base_url"]
         self.model_name = model_config["model_name"]
         self.model_kwargs = model_config.get("model_kwargs") or {}
+        self.extra_body = model_config.get("extra_body")
         self.system_prompt = getattr(
             settings,
             "AI_SYSTEM_PROMPT",
@@ -101,6 +102,7 @@ class AiAgentService:
             model=self.model_name,
             temperature=0.3,
             model_kwargs=self.model_kwargs,
+            extra_body=self.extra_body,
         )
 
         # Create agent using the new create_agent function
@@ -309,6 +311,7 @@ class AiAgentService:
                 model=self.model_name,
                 temperature=0.3,
                 model_kwargs=self.model_kwargs,
+                extra_body=self.extra_body,
             )
             
             if openai_tools:
