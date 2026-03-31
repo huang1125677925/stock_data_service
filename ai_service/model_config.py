@@ -18,6 +18,8 @@ class ModelConfig(TypedDict, total=False):
     model_kwargs: Optional[Dict[str, Any]]
     # 厂商扩展字段（如豆包 thinking）；勿放入 model_kwargs，否则会作为 create() 顶层参数触发 SDK 报错
     extra_body: Optional[Dict[str, Any]]
+    # OpenAI 兼容推理强度（豆包等兼容接口可用，如 low / medium / high）
+    reasoning_effort: Optional[str]
 
 
 # DeepSeek 配置（保留原有配置）
@@ -30,7 +32,7 @@ DEEPSEEK_CONFIG: ModelConfig = {
 # 豆包 Seed 配置
 # API 文档: https://www.volcengine.com/docs/6492/2250683
 # 支持多模态输入（图片+文本），OpenAI 兼容接口
-# thinking.type=disabled 关闭深度思考模式，避免额外延迟与 token 消耗（经 extra_body 传递，兼容 OpenAI SDK）
+# thinking.type=auto 由模型按需开启思考；reasoning_effort=low 控制推理强度（经 ChatOpenAI 与方舟兼容接口传递）
 DOUBAO_SEED_CONFIG: ModelConfig = {
     "api_key": getattr(
         settings,
@@ -47,7 +49,8 @@ DOUBAO_SEED_CONFIG: ModelConfig = {
         "DOUBAO_SEED_MODEL_NAME",
         "doubao-seed-2-0-mini-260215",
     ),
-    "extra_body": {"thinking": {"type": "disabled"}},
+    "extra_body": {"thinking": {"type": "auto"}},
+    "reasoning_effort": "low",
 }
 
 # 模型提供商映射
@@ -66,7 +69,7 @@ def get_active_model_config() -> ModelConfig:
     - "deepseek": DeepSeek 模型
 
     返回值:
-        ModelConfig: 包含 api_key、base_url、model_name、model_kwargs、extra_body（可选）
+        ModelConfig: 包含 api_key、base_url、model_name、model_kwargs、extra_body、reasoning_effort（可选）
     """
     provider = getattr(settings, "AI_MODEL_PROVIDER", "doubao_seed")
     return MODEL_PROVIDERS.get(provider, DOUBAO_SEED_CONFIG)
