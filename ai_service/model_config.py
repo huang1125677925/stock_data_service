@@ -30,7 +30,7 @@ DEEPSEEK_CONFIG: ModelConfig = {
 # 豆包 Seed 配置
 # API 文档: https://www.volcengine.com/docs/6492/2250683
 # 支持多模态输入（图片+文本），OpenAI 兼容接口
-# thinking / reasoning_effort 均放在 extra_body，进入 HTTP 请求体（非 create 顶层参数）
+# thinking / reasoning_effort 均放在 extra_body。部分机型不支持 type=auto，mini 等需用 enabled/disabled。
 DOUBAO_SEED_CONFIG: ModelConfig = {
     "api_key": getattr(
         settings,
@@ -48,7 +48,7 @@ DOUBAO_SEED_CONFIG: ModelConfig = {
         "doubao-seed-2-0-mini-260215",
     ),
     "extra_body": {
-        "thinking": {"type": "auto"},
+        "thinking": {"type": "enabled"},
         "reasoning_effort": "low",
     },
 }
