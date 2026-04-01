@@ -1,5 +1,6 @@
 """
-金十快讯工具：调用金十 flash API，清洗与过滤逻辑对齐 openclaw-skill-jin10 collector.js。
+金十数据工具：快讯（get_flash_list）、财经日历（calendar/list）、数据中心情绪指数（sentiment/list）。
+快讯清洗与过滤对齐 openclaw-skill-jin10 collector.js。
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+import time
 
 import requests
 from mcp.server.fastmcp import FastMCP
@@ -15,6 +17,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp_service.tools.tushare._registry import error_payload
 
 JIN10_BASE = "https://flash-api.jin10.com/get_flash_list"
+JIN10_CALENDAR_LIST = "https://flash-api.jin10.com/calendar/list"
+JIN10_SENTIMENT_LIST = "https://datacenter-api.jin10.com/sentiment/list"
+
+# 金十 get_flash_list 常用 channel（与官网分类一致）
+JIN10_FLASH_CHANNEL_FOREX = "-8200"  # 外汇
+JIN10_FLASH_CHANNEL_A_SHARE = "-8100"  # A股
+JIN10_FLASH_CHANNEL_FUTURES = "-8300"  # 期货
+JIN10_FLASH_CHANNEL_US_HK = "-8400"  # 美港
+
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
     "x-app-id": "bVBF4FyRTn5NJF5n",
@@ -148,10 +159,27 @@ def _normalize_record(item: Dict[str, Any], skip_reason: Optional[str]) -> Dict[
     return rec
 
 
+def _jin10_request_json(url: str, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    headers = {
+        **DEFAULT_HEADERS,
+        "x-app-id": os.getenv("JIN10_X_APP_ID", DEFAULT_HEADERS["x-app-id"]).strip(),
+        "x-version": os.getenv("JIN10_X_VERSION", DEFAULT_HEADERS["x-version"]).strip(),
+    }
+    resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    body = resp.json()
+    if not isinstance(body, dict):
+        raise RuntimeError("Jin10 API returned non-object JSON")
+    status = body.get("status")
+    if status is not None and int(status) != 200:
+        raise RuntimeError(f"Jin10 API status={status}: {body.get('message', '')}")
+    return body
+
+
 def register_jin10_flash_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def get_jin10_flash(
-        channel: str = "-8200",
+        channel: str = "-8100",
         vip: int = 1,
         limit: int = 100,
         offset: int = 0,
@@ -160,12 +188,12 @@ def register_jin10_flash_tools(mcp: FastMCP) -> None:
         important_only: bool = False,
     ) -> Dict[str, Any]:
         """
-        获取金十财经快讯列表（flash-api.jin10.com）。
+        获取金十财经快讯列表（https://flash-api.jin10.com/get_flash_list）。
 
-        与 openclaw-skill-jin10 的 collector 一致：同一 API、HTML 清洗、广告/空内容/诱导点击/长文汇总等过滤。
+        与 openclaw-skill-jin10 的 collector 一致：同一接口、HTML 清洗、广告/空内容/诱导点击/长文汇总等过滤。
 
-        - channel: 频道参数，默认 -8200（与参考脚本一致）
-        - vip: 1 与参考脚本一致
+        - channel: 快讯分类（免费可用）。常用取值：`-8100` A股（默认）、`-8200` 外汇、`-8300` 期货、`-8400` 美港。
+        - vip: 与金十客户端一致，默认 1
         - max_pages: 向后翻页次数（每页约 20 条，页间用 max_time=上一页末条 id 衔接，默认 5 页约 100 条量级）
         - limit / offset: 在合并去重后的结果上分页
         - filter_noise: True 时去掉广告、空内容、HTML 列表块、诱导点击、超长汇总类
@@ -221,5 +249,75 @@ def register_jin10_flash_tools(mcp: FastMCP) -> None:
                 "next_offset": end if has_more else None,
                 "remaining": max(0, total - end),
                 "records": page,
+            },
+        }
+
+    @mcp.tool()
+    def get_jin10_calendar(
+        date: str,
+    ) -> Dict[str, Any]:
+        """
+        获取金十财经日历（https://flash-api.jin10.com/calendar/list，免费）。
+
+        - date: 日期，格式 `YYYY-MM-DD`，例如 `2026-04-01`
+        """
+        timeout = float(os.getenv("JIN10_HTTP_TIMEOUT", "15"))
+        date_s = (date or "").strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_s):
+            return error_payload("date 须为 YYYY-MM-DD 格式", code=400)
+        try:
+            body = _jin10_request_json(
+                JIN10_CALENDAR_LIST,
+                {"date": date_s},
+                timeout,
+            )
+        except requests.RequestException as e:
+            return error_payload(f"金十财经日历请求失败: {e}", code=502)
+        except (ValueError, RuntimeError, TypeError) as e:
+            return error_payload(str(e), code=502)
+
+        payload = body.get("data")
+        return {
+            "code": 200,
+            "message": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                "source": "jin10_calendar",
+                "date": date_s,
+                "items": payload,
+            },
+        }
+
+    @mcp.tool()
+    def get_jin10_sentiment(
+        cache_bust: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        获取金十数据中心情绪指数列表（https://datacenter-api.jin10.com/sentiment/list，免费）。
+
+        - cache_bust: 可选查询参数 `_`（毫秒时间戳），用于绕过缓存；不传则自动使用当前时间毫秒。
+        """
+        timeout = float(os.getenv("JIN10_HTTP_TIMEOUT", "15"))
+        ts = cache_bust if cache_bust is not None else int(time.time() * 1000)
+        try:
+            body = _jin10_request_json(
+                JIN10_SENTIMENT_LIST,
+                {"_": ts},
+                timeout,
+            )
+        except requests.RequestException as e:
+            return error_payload(f"金十情绪指数请求失败: {e}", code=502)
+        except (ValueError, RuntimeError, TypeError) as e:
+            return error_payload(str(e), code=502)
+
+        payload = body.get("data")
+        return {
+            "code": 200,
+            "message": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                "source": "jin10_sentiment",
+                "cache_bust": ts,
+                "items": payload,
             },
         }
