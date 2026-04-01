@@ -24,12 +24,14 @@ def create_server() -> FastMCP:
 
     # Register modular tools
     from mcp_service.tools.news_data_tools import register_news_data_tools
+    from mcp_service.tools.jin10_flash_tools import register_jin10_flash_tools
     from mcp_service.tools.stock_data_tools import register_stock_data_tools
     from mcp_service.tools.tushare import register_tushare_tools
     from mcp_service.tools.time_tools import register_time_tools
     from mcp_service.tools.django_strategy_tools import register_django_strategy_tools
 
     register_news_data_tools(mcp)
+    register_jin10_flash_tools(mcp)
     register_stock_data_tools(mcp)
     register_tushare_tools(mcp)
     register_django_strategy_tools(mcp)
