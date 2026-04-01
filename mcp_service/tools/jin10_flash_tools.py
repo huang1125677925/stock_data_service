@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from mcp.server.fastmcp import FastMCP
@@ -62,13 +62,17 @@ def _fetch_raw(
     channel: str,
     vip: int,
     timeout: float,
+    max_time: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     headers = {
         **DEFAULT_HEADERS,
         "x-app-id": os.getenv("JIN10_X_APP_ID", DEFAULT_HEADERS["x-app-id"]).strip(),
         "x-version": os.getenv("JIN10_X_VERSION", DEFAULT_HEADERS["x-version"]).strip(),
     }
-    params = {"channel": channel, "vip": str(vip)}
+    params: Dict[str, str] = {"channel": channel, "vip": str(vip)}
+    # 翻页：传上一页最后一条的 id（金十接口参数名为 max_time，取值与 collector 单页无关）
+    if max_time:
+        params["max_time"] = max_time
     resp = requests.get(
         JIN10_BASE,
         params=params,
@@ -83,6 +87,46 @@ def _fetch_raw(
     if not isinstance(data, list):
         raise RuntimeError("Jin10 API returned invalid data")
     return data
+
+
+def _fetch_merged_pages(
+    channel: str,
+    vip: int,
+    timeout: float,
+    max_pages: int,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    链式请求多页并去重。单页约 20 条；下一页请求带 max_time=上一页末条 id。
+    返回 (按时间新→旧合并后的条目列表, 实际发起的请求次数)。
+    """
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    cursor: Optional[str] = None
+    pages_done = 0
+
+    for _ in range(max_pages):
+        batch = _fetch_raw(channel, vip, timeout, max_time=cursor)
+        pages_done += 1
+        if not batch:
+            break
+        added = 0
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            iid = item.get("id")
+            if not iid or iid in seen:
+                continue
+            seen.add(iid)
+            merged.append(item)
+            added += 1
+        last_id = batch[-1].get("id") if isinstance(batch[-1], dict) else None
+        if not last_id:
+            break
+        cursor = str(last_id)
+        if added == 0:
+            break
+
+    return merged, pages_done
 
 
 def _normalize_record(item: Dict[str, Any], skip_reason: Optional[str]) -> Dict[str, Any]:
@@ -109,8 +153,9 @@ def register_jin10_flash_tools(mcp: FastMCP) -> None:
     def get_jin10_flash(
         channel: str = "-8200",
         vip: int = 1,
-        limit: int = 20,
+        limit: int = 100,
         offset: int = 0,
+        max_pages: int = 5,
         filter_noise: bool = True,
         important_only: bool = False,
     ) -> Dict[str, Any]:
@@ -121,16 +166,23 @@ def register_jin10_flash_tools(mcp: FastMCP) -> None:
 
         - channel: 频道参数，默认 -8200（与参考脚本一致）
         - vip: 1 与参考脚本一致
-        - limit / offset: 在「本批 API 返回结果」上分页；单次 API 条数通常约 20 条
+        - max_pages: 向后翻页次数（每页约 20 条，页间用 max_time=上一页末条 id 衔接，默认 5 页约 100 条量级）
+        - limit / offset: 在合并去重后的结果上分页
         - filter_noise: True 时去掉广告、空内容、HTML 列表块、诱导点击、超长汇总类
         - important_only: True 时仅保留 important 为真的条目（在过滤之后应用）
+
+        环境变量 JIN10_MAX_PAGES 可作为 max_pages 上限（默认 30）；单次 max_pages 入参也会被限制在该上限内。
         """
         timeout = float(os.getenv("JIN10_HTTP_TIMEOUT", "15"))
-        safe_limit = max(1, min(int(limit or 20), 100))
+        cap = max(1, min(int(os.getenv("JIN10_MAX_PAGES", "30")), 50))
+        safe_pages = max(1, min(int(max_pages or 1), cap))
+        safe_limit = max(1, min(int(limit or 100), 500))
         safe_offset = max(0, int(offset or 0))
 
         try:
-            raw_items = _fetch_raw(channel=str(channel), vip=int(vip), timeout=timeout)
+            raw_items, pages_fetched = _fetch_merged_pages(
+                channel=str(channel), vip=int(vip), timeout=timeout, max_pages=safe_pages
+            )
         except requests.RequestException as e:
             return error_payload(f"金十 API 请求失败: {e}", code=502)
         except (ValueError, RuntimeError, TypeError) as e:
@@ -159,6 +211,8 @@ def register_jin10_flash_tools(mcp: FastMCP) -> None:
             "timestamp": datetime.now().isoformat(),
             "data": {
                 "source": "jin10_flash",
+                "pages_fetched": pages_fetched,
+                "raw_merged_count": len(raw_items),
                 "total_count": total,
                 "count": len(page),
                 "limit": safe_limit,
