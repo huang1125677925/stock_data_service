@@ -89,6 +89,11 @@ class AiAgentService:
             self.chat_tool_mode = self.chat_tool_mode.strip().lower()
         else:
             self.chat_tool_mode = "native"
+        self.model_provider = getattr(settings, "AI_MODEL_PROVIDER", "qwen2api")
+        if isinstance(self.model_provider, str):
+            self.model_provider = self.model_provider.strip().lower()
+        else:
+            self.model_provider = "qwen2api"
         self.agent = self._build_agent()
 
     def _load_active_prompts(self) -> Dict[str, Any]:
@@ -418,7 +423,11 @@ class AiAgentService:
             logger.info(f"Loaded {len(local_tools)} local MCP tools")
             openai_tools, tool_route_map = self._build_tools_payload(local_tools)
 
-            use_json_protocol = self.chat_tool_mode == "json_protocol"
+            # JSON 工具协议仅用于千问（qwen2api）；DeepSeek / 豆包始终走原生 bind_tools
+            use_json_protocol = (
+                self.chat_tool_mode == "json_protocol"
+                and self.model_provider == "qwen2api"
+            )
             messages = []
             messages.append(
                 SystemMessage(

@@ -240,7 +240,7 @@ DOUBAO_SEED_MODEL_NAME = os.environ.get('DOUBAO_SEED_MODEL_NAME', 'doubao-seed-2
 
 # 当前使用的模型提供商，默认千问 Qwen2API 公开实例 (qwen2api)
 AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'qwen2api')
-# 聊天流式接口工具模式：native=OpenAI 兼容 bind_tools；json_protocol=模型仅输出 JSON 代码块，由服务端解析并执行 MCP（适用于不支持 function calling 的网关）
+# 聊天流式工具模式：native=bind_tools；json_protocol=仅当 AI_MODEL_PROVIDER=qwen2api 时生效（千问网页类网关无原生 tool 时用）；deepseek/doubao_seed 恒为 native
 AI_CHAT_TOOL_MODE = os.environ.get('AI_CHAT_TOOL_MODE', 'native').strip().lower()
 AI_SYSTEM_PROMPT = os.environ.get(
     'AI_SYSTEM_PROMPT',
