@@ -3,8 +3,9 @@ import logging
 import os
 import asyncio
 import re
+import uuid
 from datetime import datetime
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from django.conf import settings
 from langchain.agents import create_agent
@@ -79,6 +80,15 @@ class AiAgentService:
         
         self.prompts_file = os.path.join(os.path.dirname(__file__), "prompts.json")
         self.prompts_map = self._load_active_prompts()
+        self.chat_tool_mode = getattr(
+            settings,
+            "AI_CHAT_TOOL_MODE",
+            "native",
+        )
+        if isinstance(self.chat_tool_mode, str):
+            self.chat_tool_mode = self.chat_tool_mode.strip().lower()
+        else:
+            self.chat_tool_mode = "native"
         self.agent = self._build_agent()
 
     def _load_active_prompts(self) -> Dict[str, Any]:
@@ -129,6 +139,113 @@ class AiAgentService:
             无。
         """
         return f"{self.system_prompt}\n\n{self.tool_policy_prompt}"
+
+    def _build_stream_system_prompt(
+        self,
+        openai_tools: List[Dict[str, Any]],
+        json_protocol: bool,
+    ) -> str:
+        base = f"{self.system_prompt}\n\n{self.tool_policy_prompt}"
+        if not json_protocol or not openai_tools:
+            return base
+        catalog_lines: List[str] = [
+            "## 可用工具（JSON 中的 name 必须与下列工具名完全一致）",
+        ]
+        for spec in openai_tools:
+            fn = spec["function"]
+            catalog_lines.append(
+                f"### {fn['name']}\n{fn.get('description') or ''}\n参数 JSON Schema:\n"
+                f"{json.dumps(fn.get('parameters') or {}, ensure_ascii=False)}"
+            )
+        catalog = "\n".join(catalog_lines)
+        instruction = (
+            "\n\n## JSON 工具调用协议（当前模型网关不支持原生 function calling，必须使用本协议）\n"
+            "需要查询数据时，请**仅**输出一个 Markdown 代码块（语言标记为 json），内容为单个 JSON 对象；"
+            "代码块外不要输出其它文字。示例：\n"
+            "```json\n"
+            '{"tool_calls":[{"name":"工具名","arguments":{}}]}\n'
+            "```\n"
+            "可同时发起多个调用：`tool_calls` 为数组；`arguments` 须符合对应工具的 JSON Schema。\n"
+            "不需要工具、信息已足够时，**不要**输出上述代码块，直接用自然语言回答用户。\n"
+        )
+        return base + instruction + "\n" + catalog
+
+    def _extract_json_tool_payload(self, content: str) -> Optional[Any]:
+        if not content or not str(content).strip():
+            return None
+        text = str(content).strip()
+        fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+        if fence:
+            text = fence.group(1).strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start : i + 1])
+                    except json.JSONDecodeError:
+                        return None
+        return None
+
+    def _resolve_tool_route(
+        self, name: str, tool_route_map: Dict[str, ToolRoute]
+    ) -> tuple[str, ToolRoute]:
+        if name in tool_route_map:
+            return name, tool_route_map[name]
+        for safe_name, route in tool_route_map.items():
+            if route["name"] == name:
+                return safe_name, route
+        return name, {"source": "local", "name": name}
+
+    def _parse_json_protocol_tool_calls(
+        self, payload: Any, tool_route_map: Dict[str, ToolRoute]
+    ) -> Optional[List[Dict[str, Any]]]:
+        if not isinstance(payload, dict):
+            return None
+        raw_items: List[Any] = []
+        if "tool_calls" in payload:
+            tc = payload["tool_calls"]
+            if isinstance(tc, list):
+                raw_items = tc
+            else:
+                return None
+        elif "tool_call" in payload:
+            raw_items = [payload["tool_call"]]
+        elif "tool" in payload or "name" in payload:
+            raw_items = [payload]
+        else:
+            return None
+        out: List[Dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            raw_name = item.get("name") or item.get("tool")
+            if not raw_name or not isinstance(raw_name, str):
+                continue
+            args = item.get("arguments")
+            if args is None:
+                args = item.get("args")
+            if not isinstance(args, dict):
+                args = {}
+            safe_name, _route = self._resolve_tool_route(raw_name.strip(), tool_route_map)
+            out.append(
+                {
+                    "name": safe_name,
+                    "args": args,
+                    "id": f"json_{uuid.uuid4().hex[:12]}",
+                }
+            )
+        return out or None
 
     def _to_safe_tool_name(self, name: str) -> str:
         """
@@ -301,8 +418,15 @@ class AiAgentService:
             logger.info(f"Loaded {len(local_tools)} local MCP tools")
             openai_tools, tool_route_map = self._build_tools_payload(local_tools)
 
+            use_json_protocol = self.chat_tool_mode == "json_protocol"
             messages = []
-            messages.append(SystemMessage(content=self._build_chat_system_prompt()))
+            messages.append(
+                SystemMessage(
+                    content=self._build_stream_system_prompt(
+                        openai_tools, use_json_protocol
+                    )
+                )
+            )
             for m in messages_data:
                 if m["role"] == "user":
                     messages.append(HumanMessage(content=m["content"]))
@@ -320,7 +444,7 @@ class AiAgentService:
                 extra_body=self.extra_body,
             )
             
-            if openai_tools:
+            if openai_tools and not use_json_protocol:
                 llm = llm.bind_tools(openai_tools)
             
             rounds = 0
@@ -341,6 +465,35 @@ class AiAgentService:
                         
                     if not is_tool_call and chunk.content:
                         yield f"data: {json.dumps({'type': 'text', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+
+                json_parsed_calls: Optional[List[Dict[str, Any]]] = None
+                if (
+                    use_json_protocol
+                    and openai_tools
+                    and accumulated_message is not None
+                    and not is_tool_call
+                ):
+                    raw_content = accumulated_message.content or ""
+                    payload = self._extract_json_tool_payload(raw_content)
+                    if payload is not None:
+                        json_parsed_calls = self._parse_json_protocol_tool_calls(
+                            payload, tool_route_map
+                        )
+                        if json_parsed_calls:
+                            is_tool_call = True
+                            tool_calls_lc = [
+                                {
+                                    "name": x["name"],
+                                    "args": x["args"],
+                                    "id": x["id"],
+                                    "type": "tool_call",
+                                }
+                                for x in json_parsed_calls
+                            ]
+                            accumulated_message = AIMessage(
+                                content="",
+                                tool_calls=tool_calls_lc,
+                            )
 
                 if is_tool_call and accumulated_message.tool_calls:
                     for tc in accumulated_message.tool_calls:
