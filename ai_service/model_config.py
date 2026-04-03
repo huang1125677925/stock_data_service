@@ -1,8 +1,8 @@
 """
 AI 模型配置模块
 
-集中管理 DeepSeek、豆包 Seed 等模型的 API 配置。
-通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 doubao_seed）。
+集中管理 DeepSeek、豆包 Seed、Qwen2API（OpenAI 兼容）等模型的 API 配置。
+通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 qwen2api，公开实例可免 key）。
 """
 
 from django.conf import settings
@@ -18,6 +18,8 @@ class ModelConfig(TypedDict, total=False):
     model_kwargs: Optional[Dict[str, Any]]
     # 厂商扩展字段（thinking、reasoning_effort 等）；勿放入 model_kwargs，经 extra_body 进入请求体
     extra_body: Optional[Dict[str, Any]]
+    # 为 True 时允许 api_key 为空（如 smanx 公开 Qwen2API，可不传 Authorization）
+    api_key_optional: bool
 
 
 # DeepSeek 配置（保留原有配置）
@@ -53,10 +55,24 @@ DOUBAO_SEED_CONFIG: ModelConfig = {
     },
 }
 
+# Qwen2API（OpenAI 兼容），参考 https://github.com/smanx/qwen2api
+# 公开 Netlify 实例可免登录、API Key 留空；自建时可设置 QWEN2API_API_KEY
+QWEN2API_CONFIG: ModelConfig = {
+    "api_key": getattr(settings, "QWEN2API_API_KEY", None) or "",
+    "base_url": getattr(
+        settings,
+        "QWEN2API_BASE_URL",
+        "https://qwen2api-n.smanx.xx.kg/v1",
+    ),
+    "model_name": getattr(settings, "QWEN2API_MODEL_NAME", "qwen3.5-plus"),
+    "api_key_optional": True,
+}
+
 # 模型提供商映射
 MODEL_PROVIDERS = {
     "deepseek": DEEPSEEK_CONFIG,
     "doubao_seed": DOUBAO_SEED_CONFIG,
+    "qwen2api": QWEN2API_CONFIG,
 }
 
 
@@ -65,11 +81,12 @@ def get_active_model_config() -> ModelConfig:
     获取当前激活的模型配置。
 
     通过 settings.AI_MODEL_PROVIDER 指定：
-    - "doubao_seed": 豆包 Seed 模型（默认）
+    - "qwen2api": Qwen2API 千问（默认，公开服务可免 key）
+    - "doubao_seed": 豆包 Seed 模型
     - "deepseek": DeepSeek 模型
 
     返回值:
         ModelConfig: 包含 api_key、base_url、model_name、model_kwargs、extra_body（可选）
     """
-    provider = getattr(settings, "AI_MODEL_PROVIDER", "doubao_seed")
-    return MODEL_PROVIDERS.get(provider, DOUBAO_SEED_CONFIG)
+    provider = getattr(settings, "AI_MODEL_PROVIDER", "qwen2api")
+    return MODEL_PROVIDERS.get(provider, QWEN2API_CONFIG)
