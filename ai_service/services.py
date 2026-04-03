@@ -38,7 +38,13 @@ class AiAgentService:
             无，初始化异常会在后续调用阶段暴露。
         """
         model_config = get_active_model_config()
-        self.api_key = model_config["api_key"]
+        self._api_key_optional = bool(model_config.get("api_key_optional"))
+        raw_key = model_config.get("api_key")
+        if self._api_key_optional:
+            # langchain-openai 要求传入非 None 的 api_key；公开 Qwen2API 用空字符串即可
+            self.api_key = raw_key if raw_key else ""
+        else:
+            self.api_key = raw_key or None
         self.base_url = model_config["base_url"]
         self.model_name = model_config["model_name"]
         self.model_kwargs = model_config.get("model_kwargs") or {}
@@ -92,7 +98,7 @@ class AiAgentService:
             return {}
 
     def _build_agent(self):
-        if not self.api_key:
+        if not self._api_key_optional and not self.api_key:
             logger.warning("AI model API key not configured, agent will not work.")
             return None
 
