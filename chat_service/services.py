@@ -2,6 +2,8 @@ from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.utils import timezone
+
+from ai_service.model_config import get_active_model_config
 from .models import Conversation, Message
 
 
@@ -9,7 +11,7 @@ class ChatConversationService:
     @staticmethod
     def create_conversation(user, title=None, model_name=None):
         final_title = title or '新会话'
-        final_model = model_name or getattr(settings, 'DEEPSEEK_MODEL_NAME', 'deepseek-chat')
+        final_model = model_name or get_active_model_config()['model_name']
         return Conversation.objects.create(
             user=user,
             title=final_title,

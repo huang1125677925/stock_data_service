@@ -217,7 +217,16 @@ LOGGING = {
 STOCK_API_KEY = os.environ.get('STOCK_API_KEY')
 STOCK_API_BASE_URL = os.environ.get('STOCK_API_BASE_URL', 'https://api.example.com')
 
-# AI 模型配置 - 通过 AI_MODEL_PROVIDER 切换 (deepseek | doubao_seed)
+# AI 模型配置 - 通过 AI_MODEL_PROVIDER 切换 (qwen2api | deepseek | doubao_seed)
+
+# Qwen2API（OpenAI 兼容，参考 https://github.com/smanx/qwen2api）
+# 公开 Netlify 服务可免 key；BASE_URL 需含 /v1
+QWEN2API_API_KEY = os.environ.get('QWEN2API_API_KEY', '')
+QWEN2API_BASE_URL = os.environ.get(
+    'QWEN2API_BASE_URL',
+    'https://qwen2api-n.smanx.xx.kg/v1',
+)
+QWEN2API_MODEL_NAME = os.environ.get('QWEN2API_MODEL_NAME', 'qwen3.5-plus')
 
 # DeepSeek 配置
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
@@ -229,8 +238,8 @@ DOUBAO_SEED_API_KEY = os.environ.get('DOUBAO_SEED_API_KEY', '483dda0a-1fdc-4f79-
 DOUBAO_SEED_BASE_URL = os.environ.get('DOUBAO_SEED_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
 DOUBAO_SEED_MODEL_NAME = os.environ.get('DOUBAO_SEED_MODEL_NAME', 'doubao-seed-2-0-mini-260215')
 
-# 当前使用的模型提供商，默认豆包 Seed (doubao_seed)
-AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'doubao_seed')
+# 当前使用的模型提供商，默认千问 Qwen2API 公开实例 (qwen2api)
+AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'qwen2api')
 AI_SYSTEM_PROMPT = os.environ.get(
     'AI_SYSTEM_PROMPT',
     '你是一个专业的金融分析师，擅长对结构化数据进行分析并给出简洁结论。',
