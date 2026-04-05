@@ -2,7 +2,7 @@
 AI 模型配置模块
 
 集中管理 DeepSeek、豆包 Seed、Qwen2API（OpenAI 兼容）等模型的 API 配置。
-通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 qwen2api，公开实例可免 key）。
+通过 AI_MODEL_PROVIDER 切换当前使用的模型提供商（默认 deepseek，需配置 DEEPSEEK_API_KEY）。
 """
 
 from django.conf import settings
@@ -81,12 +81,12 @@ def get_active_model_config() -> ModelConfig:
     获取当前激活的模型配置。
 
     通过 settings.AI_MODEL_PROVIDER 指定：
-    - "qwen2api": Qwen2API 千问（默认，公开服务可免 key）
+    - "deepseek": DeepSeek 模型（默认）
+    - "qwen2api": Qwen2API 千问（公开服务可免 key）
     - "doubao_seed": 豆包 Seed 模型
-    - "deepseek": DeepSeek 模型
 
     返回值:
         ModelConfig: 包含 api_key、base_url、model_name、model_kwargs、extra_body（可选）
     """
-    provider = getattr(settings, "AI_MODEL_PROVIDER", "qwen2api")
-    return MODEL_PROVIDERS.get(provider, QWEN2API_CONFIG)
+    provider = getattr(settings, "AI_MODEL_PROVIDER", "deepseek")
+    return MODEL_PROVIDERS.get(provider, DEEPSEEK_CONFIG)
