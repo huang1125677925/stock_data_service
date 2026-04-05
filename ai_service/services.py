@@ -89,11 +89,11 @@ class AiAgentService:
             self.chat_tool_mode = self.chat_tool_mode.strip().lower()
         else:
             self.chat_tool_mode = "native"
-        self.model_provider = getattr(settings, "AI_MODEL_PROVIDER", "qwen2api")
+        self.model_provider = getattr(settings, "AI_MODEL_PROVIDER", "deepseek")
         if isinstance(self.model_provider, str):
             self.model_provider = self.model_provider.strip().lower()
         else:
-            self.model_provider = "qwen2api"
+            self.model_provider = "deepseek"
         self.agent = self._build_agent()
 
     def _load_active_prompts(self) -> Dict[str, Any]:

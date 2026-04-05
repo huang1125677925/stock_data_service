@@ -238,8 +238,8 @@ DOUBAO_SEED_API_KEY = os.environ.get('DOUBAO_SEED_API_KEY', '483dda0a-1fdc-4f79-
 DOUBAO_SEED_BASE_URL = os.environ.get('DOUBAO_SEED_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
 DOUBAO_SEED_MODEL_NAME = os.environ.get('DOUBAO_SEED_MODEL_NAME', 'doubao-seed-2-0-mini-260215')
 
-# 当前使用的模型提供商，默认千问 Qwen2API 公开实例 (qwen2api)
-AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'qwen2api')
+# 当前使用的模型提供商，默认 DeepSeek（需配置 DEEPSEEK_API_KEY）
+AI_MODEL_PROVIDER = os.environ.get('AI_MODEL_PROVIDER', 'deepseek')
 # 聊天流式工具模式：native=bind_tools；json_protocol=仅当 AI_MODEL_PROVIDER=qwen2api 时生效（千问网页类网关无原生 tool 时用）；deepseek/doubao_seed 恒为 native
 AI_CHAT_TOOL_MODE = os.environ.get('AI_CHAT_TOOL_MODE', 'native').strip().lower()
 AI_SYSTEM_PROMPT = os.environ.get(
