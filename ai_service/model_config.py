@@ -22,11 +22,58 @@ class ModelConfig(TypedDict, total=False):
     api_key_optional: bool
 
 
+def _normalize_deepseek_thinking_type(value: Any) -> str:
+    """
+    规范化 DeepSeek 思考模式开关。
+
+    参数:
+        value: 外部输入的开关值（例如环境变量或 settings 值）。
+    返回值:
+        str: "enabled" 或 "disabled"。
+    异常:
+        无。
+    """
+    raw = str(value or "").strip().lower()
+    return "disabled" if raw == "disabled" else "enabled"
+
+
+def _normalize_deepseek_reasoning_effort(value: Any) -> str:
+    """
+    规范化 DeepSeek 思考强度。
+
+    兼容映射:
+        - low/medium -> high
+        - xhigh -> max
+    参数:
+        value: 外部输入的强度值（例如环境变量或 settings 值）。
+    返回值:
+        str: "high" 或 "max"（以及原样通过的 "high"/"max"）。
+    异常:
+        无。
+    """
+    raw = str(value or "").strip().lower()
+    if raw in ("low", "medium", "high"):
+        return "high"
+    if raw in ("xhigh", "max"):
+        return "max"
+    return "high"
+
+
 # DeepSeek 配置（保留原有配置）
 DEEPSEEK_CONFIG: ModelConfig = {
     "api_key": getattr(settings, "DEEPSEEK_API_KEY", None) or "sk-901c17c669a241f098b25144957667ec",
     "base_url": getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
     "model_name": getattr(settings, "DEEPSEEK_MODEL_NAME", "deepseek-v4-flash"),
+    "extra_body": {
+        "thinking": {
+            "type": _normalize_deepseek_thinking_type(
+                getattr(settings, "DEEPSEEK_THINKING_TYPE", "enabled")
+            )
+        },
+        "reasoning_effort": _normalize_deepseek_reasoning_effort(
+            getattr(settings, "DEEPSEEK_REASONING_EFFORT", "high")
+        ),
+    },
 }
 
 # 豆包 Seed 配置

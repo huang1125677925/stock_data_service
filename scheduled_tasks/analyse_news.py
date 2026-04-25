@@ -28,6 +28,8 @@ class NewsAnalyzer:
         """
         self.api_key = "sk-901c17c669a241f098b25144957667ec"
         self.base_url = "https://api.deepseek.com/v1"
+        self.thinking_type = os.environ.get("DEEPSEEK_THINKING_TYPE", "enabled")
+        self.reasoning_effort = os.environ.get("DEEPSEEK_REASONING_EFFORT", "high")
         
         # 支持的模型配置
         self.models = {
@@ -57,6 +59,12 @@ class NewsAnalyzer:
         
         payload = {
             "model": self.models['model_name'],
+            "thinking": {"type": "disabled" if str(self.thinking_type).strip().lower() == "disabled" else "enabled"},
+            "reasoning_effort": (
+                "max"
+                if str(self.reasoning_effort).strip().lower() in ("xhigh", "max")
+                else "high"
+            ),
             "messages": [
                 {"role": "system", "content": '你是一个专业的财经分析师，擅长从新闻联播等官方媒体中提取经济相关信息，分析对股市的影响。请基于中国A股市场，仅从以下行业列表中选择利好行业并给出原因。行业列表：【航空机场 铁路公路 物流行业 水泥建材 工程建设 公用事业 电力行业 交运设备 农牧饲渔 纺织服装 煤炭行业 食品饮料 家用轻工 互联网服务 通信设备 航运港口 房地产开发 塑料制品 家电行业 电网设备 仪器仪表 电子元件 石油行业 化学制药 造纸印刷 化纤行业 证券 保险 银行 装修建材 酿酒行业 有色金属 钢铁行业 航天航空 汽车零部件 商业百货 贸易行业 旅游酒店 文化传媒 化学制品 综合行业 通用设备 玻璃玻纤 装修装饰 工程咨询服务 医疗服务 环保行业 船舶制造 农药兽药 化肥行业 贵金属 包装材料 珠宝首饰 计算机设备 通信服务 软件开发 多元金融 工程机械 教育 专用设备 能源金属 汽车服务 采掘行业 橡胶制品 化学原料 非金属材料 小金属 燃气 汽车整车 电机 光伏设备 风电设备 电池 电源设备 美容护理 半导体 消费电子 光学光电子 电子化学品 中药 医疗器械 医药商业 专业服务 生物制品 房地产服务 游戏】。输出要求：仅输出一个JSON对象，不要附加任何说明文字；键为行业名称（必须与列表完全一致），值为简短中文原因。例如：{"中药": "国家大力发展该行业，政策支持", "半导体": "科技导向等等"}；如未发现利好行业，返回{}。'},
                 {"role": "user", "content": self._build_prompt(news_content)}

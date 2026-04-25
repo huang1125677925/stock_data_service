@@ -232,6 +232,8 @@ QWEN2API_MODEL_NAME = os.environ.get('QWEN2API_MODEL_NAME', 'qwen3.5-plus')
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 DEEPSEEK_BASE_URL = os.environ.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com/v1')
 DEEPSEEK_MODEL_NAME = os.environ.get('DEEPSEEK_MODEL_NAME', 'deepseek-v4-flash')
+DEEPSEEK_THINKING_TYPE = os.environ.get('DEEPSEEK_THINKING_TYPE', 'enabled')
+DEEPSEEK_REASONING_EFFORT = os.environ.get('DEEPSEEK_REASONING_EFFORT', 'high')
 
 # 豆包 Seed 配置（多模态，OpenAI 兼容）
 DOUBAO_SEED_API_KEY = os.environ.get('DOUBAO_SEED_API_KEY', '483dda0a-1fdc-4f79-9827-977f90b3175a')
