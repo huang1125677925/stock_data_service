@@ -41,6 +41,15 @@ def create_server() -> FastMCP:
         enabled=os.getenv("TAVILY_MCP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
         timeout_seconds=int(os.getenv("TAVILY_MCP_TIMEOUT_SECONDS", "30")),
     )
+    
+    # Register dynamic skill tools from skills directory
+    try:
+        from ai_service.skill_manager import skill_manager
+        skill_manager.register_all_skill_tools(mcp)
+    except ImportError as e:
+        import logging
+        logging.error(f"Failed to import skill_manager for tool registration: {e}")
+        
     return mcp
 
 

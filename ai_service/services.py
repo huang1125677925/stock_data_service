@@ -143,7 +143,15 @@ class AiAgentService:
         异常:
             无。
         """
-        return f"{self.system_prompt}\n\n{self.tool_policy_prompt}"
+        prompt = f"{self.system_prompt}\n\n{self.tool_policy_prompt}"
+        
+        # Load skill prompts dynamically per request
+        from ai_service.skill_manager import skill_manager
+        skill_prompts = skill_manager.get_all_skills_prompts()
+        if skill_prompts:
+            prompt += f"\n\n{skill_prompts}"
+            
+        return prompt
 
     def _build_stream_system_prompt(
         self,
@@ -151,6 +159,12 @@ class AiAgentService:
         json_protocol: bool,
     ) -> str:
         base = f"{self.system_prompt}\n\n{self.tool_policy_prompt}"
+        
+        from ai_service.skill_manager import skill_manager
+        skill_prompts = skill_manager.get_all_skills_prompts()
+        if skill_prompts:
+            base += f"\n\n{skill_prompts}"
+            
         if not json_protocol or not openai_tools:
             return base
         catalog_lines: List[str] = [
