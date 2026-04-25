@@ -16,8 +16,11 @@ import traceback
 from mcp_service.server import create_server
 
 from ai_service.model_config import get_active_model_config
+from ai_service.deepseek_langchain_patch import apply_deepseek_reasoning_patch
 
 logger = logging.getLogger(__name__)
+
+apply_deepseek_reasoning_patch()
 
 # Initialize MCP Server globally
 mcp_server = create_server()
