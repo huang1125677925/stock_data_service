@@ -58,7 +58,7 @@
 ```json
 {
   "title": "新能源行业分析",
-  "model": "deepseek-chat"
+  "model": "deepseek-v4-flash"
 }
 ```
 

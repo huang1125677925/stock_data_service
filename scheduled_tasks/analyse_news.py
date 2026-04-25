@@ -36,7 +36,7 @@ class NewsAnalyzer:
                     'Authorization': f'Bearer {self.api_key}',
                     'Content-Type': 'application/json'
                 },
-                'model_name': 'deepseek-chat'
+                'model_name': 'deepseek-v4-flash'
         }
     
     def _build_prompt(self, news_content: str) -> str:

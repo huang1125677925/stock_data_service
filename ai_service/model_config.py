@@ -26,7 +26,7 @@ class ModelConfig(TypedDict, total=False):
 DEEPSEEK_CONFIG: ModelConfig = {
     "api_key": getattr(settings, "DEEPSEEK_API_KEY", None) or "sk-901c17c669a241f098b25144957667ec",
     "base_url": getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-    "model_name": getattr(settings, "DEEPSEEK_MODEL_NAME", "deepseek-chat"),
+    "model_name": getattr(settings, "DEEPSEEK_MODEL_NAME", "deepseek-v4-flash"),
 }
 
 # 豆包 Seed 配置
