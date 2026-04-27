@@ -5,7 +5,6 @@ import asyncio
 import re
 import uuid
 import base64
-import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -435,9 +434,12 @@ class AiAgentService:
                 question_text = prompt_text
                 answer_text = str(content or "").strip()
                 if answer_text:
-                    self._schedule_github_sync(question_text=question_text, answer_text=answer_text)
+                    self._sync_answer_to_github_blocking(
+                        question_text=question_text,
+                        answer_text=answer_text,
+                    )
             except Exception as e:
-                logger.warning(f"GitHub sync scheduling skipped: {e}")
+                logger.warning(f"GitHub sync skipped: {e}")
 
             return content, prompt_text, source
         except Exception as e:
@@ -590,9 +592,12 @@ class AiAgentService:
             try:
                 question_text = self._extract_last_user_question(messages_data)
                 if question_text and final_answer_text:
-                    self._schedule_github_sync(question_text=question_text, answer_text=final_answer_text)
+                    await self._sync_answer_to_github(
+                        question_text=question_text,
+                        answer_text=final_answer_text,
+                    )
             except Exception as e:
-                logger.warning(f"GitHub sync scheduling skipped: {e}")
+                logger.warning(f"GitHub sync skipped: {e}")
 
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
@@ -614,36 +619,6 @@ class AiAgentService:
             if isinstance(m, dict) and m.get("role") == "user":
                 return str(m.get("content") or "").strip()
         return ""
-
-    def _schedule_github_sync(self, question_text: str, answer_text: str) -> None:
-        """
-        以异步任务方式触发 GitHub 仓库内容更新，避免阻塞主流程（尤其是 SSE 流式返回）。
-        参数:
-            question_text: 用户问题文本。
-            answer_text: AI 最终回答文本。
-        返回值:
-            无。
-        异常:
-            无（内部捕获并记录日志）。
-        """
-        if not self._is_github_sync_enabled():
-            logger.info("GitHub sync skipped: feature disabled or missing required config")
-            return
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
-                self._sync_answer_to_github(
-                    question_text=question_text,
-                    answer_text=answer_text,
-                )
-            )
-        except RuntimeError:
-            t = threading.Thread(
-                target=self._sync_answer_to_github_blocking,
-                kwargs={"question_text": question_text, "answer_text": answer_text},
-                daemon=True,
-            )
-            t.start()
 
     def _is_github_sync_enabled(self) -> bool:
         """
@@ -784,6 +759,9 @@ class AiAgentService:
                 branch,
                 token,
             )
+            logger.info(
+                f"GitHub sync success: repo={repo}, branch={branch}, path={path}"
+            )
         except Exception as e:
             logger.error(f"GitHub sync failed: {e}")
 
@@ -804,9 +782,13 @@ class AiAgentService:
         path = self._get_github_path()
         block = self._format_answer_markdown(question_text=question_text, answer_text=answer_text)
         if not repo or not token or not path:
+            logger.info("GitHub sync skipped: feature disabled or missing required config")
             return
         try:
             self._github_upsert_markdown_file(repo, path, block, branch, token)
+            logger.info(
+                f"GitHub sync success: repo={repo}, branch={branch}, path={path}"
+            )
         except Exception as e:
             logger.error(f"GitHub sync failed: {e}")
 
