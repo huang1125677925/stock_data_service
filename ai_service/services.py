@@ -627,6 +627,7 @@ class AiAgentService:
             无（内部捕获并记录日志）。
         """
         if not self._is_github_sync_enabled():
+            logger.info("GitHub sync skipped: feature disabled or missing required config")
             return
         try:
             loop = asyncio.get_running_loop()
@@ -654,10 +655,17 @@ class AiAgentService:
         异常:
             无。
         """
+        token = self._get_github_token()
+        repo = self._get_github_repo()
         enabled = getattr(settings, "AI_GITHUB_SYNC_ENABLED", None)
         if enabled is None:
-            enabled = os.getenv("AI_GITHUB_SYNC_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
-        return bool(enabled) and bool(self._get_github_token()) and bool(self._get_github_repo())
+            enabled_env = os.getenv("AI_GITHUB_SYNC_ENABLED", "").strip().lower()
+            if enabled_env:
+                enabled = enabled_env in ("1", "true", "yes", "on")
+            else:
+                # 未显式配置开关时，只要存在 token 和 repo 就自动启用。
+                enabled = bool(token and repo)
+        return bool(enabled) and bool(token) and bool(repo)
 
     def _get_github_token(self) -> str:
         """
@@ -687,7 +695,10 @@ class AiAgentService:
         repo = getattr(settings, "AI_GITHUB_SYNC_REPO", "") or ""
         if repo:
             return str(repo).strip()
-        return os.getenv("AI_GITHUB_SYNC_REPO", "").strip()
+        repo = os.getenv("AI_GITHUB_SYNC_REPO", "").strip()
+        if repo:
+            return repo
+        return "huang1125677925/mybook"
 
     def _get_github_branch(self) -> str:
         """

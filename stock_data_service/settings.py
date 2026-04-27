@@ -252,6 +252,11 @@ AI_DEFAULT_PROMPT = os.environ.get(
     'AI_DEFAULT_PROMPT',
     '请根据以下数据进行分析，输出简洁的中文结果：\n{data}',
 )
+AI_GITHUB_SYNC_ENABLED = os.environ.get('AI_GITHUB_SYNC_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
+AI_GITHUB_TOKEN = os.environ.get('AI_GITHUB_TOKEN', '').strip()
+AI_GITHUB_SYNC_REPO = os.environ.get('AI_GITHUB_SYNC_REPO', 'huang1125677925/mybook').strip()
+AI_GITHUB_SYNC_BRANCH = os.environ.get('AI_GITHUB_SYNC_BRANCH', 'main').strip()
+AI_GITHUB_SYNC_PATH_TEMPLATE = os.environ.get('AI_GITHUB_SYNC_PATH_TEMPLATE', 'ai_answers/{date}.md').strip()
 
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
