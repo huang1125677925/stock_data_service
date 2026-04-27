@@ -4,6 +4,8 @@ import os
 import asyncio
 import re
 import uuid
+import base64
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
@@ -12,6 +14,7 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 import traceback
+import requests
 
 from mcp_service.server import create_server
 
@@ -397,6 +400,20 @@ class AiAgentService:
         return prompt, "configured" if config else "default"
 
     def analyze(self, interface_name: str, input_data: Any):
+        """
+        使用配置的 Agent 对输入数据进行一次性分析并返回完整文本结果。
+        参数:
+            interface_name: 业务接口名，用于选择 prompt 模板。
+            input_data: 输入数据（字符串或任意可 JSON 序列化对象）。
+        返回值:
+            (content, prompt_text, source) 三元组：
+            - content: 最终回答文本；
+            - prompt_text: 实际发送给模型的 prompt；
+            - source: prompt 来源（configured/default）。
+        异常:
+            ValueError: 当 Agent 未初始化（例如缺少 API Key）时抛出。
+            Exception: 当模型调用或解析失败时抛出原始异常。
+        """
         if not self.agent:
              raise ValueError("Agent not initialized (check API key)")
 
@@ -414,7 +431,14 @@ class AiAgentService:
             last_message = messages[-1]
             # Handle different message types if needed, but usually it's AIMessage or ToolMessage
             content = getattr(last_message, "content", str(last_message))
-            
+            try:
+                question_text = prompt_text
+                answer_text = str(content or "").strip()
+                if answer_text:
+                    self._schedule_github_sync(question_text=question_text, answer_text=answer_text)
+            except Exception as e:
+                logger.warning(f"GitHub sync scheduling skipped: {e}")
+
             return content, prompt_text, source
         except Exception as e:
             logger.error(f"Agent analysis failed: {e}")
@@ -474,6 +498,7 @@ class AiAgentService:
                 llm = llm.bind_tools(openai_tools)
             
             rounds = 0
+            final_answer_text = ""
             while rounds < 20:
                 rounds += 1
                 
@@ -558,13 +583,291 @@ class AiAgentService:
                     
                     continue
                 else:
+                    if accumulated_message is not None and not is_tool_call:
+                        final_answer_text = str(accumulated_message.content or "").strip()
                     break
-                    
+
+            try:
+                question_text = self._extract_last_user_question(messages_data)
+                if question_text and final_answer_text:
+                    self._schedule_github_sync(question_text=question_text, answer_text=final_answer_text)
+            except Exception as e:
+                logger.warning(f"GitHub sync scheduling skipped: {e}")
+
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             logger.error(f"Chat stream failed: {e}\n{traceback.format_exc()}")
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)}, ensure_ascii=False)}\n\n"
+
+    def _extract_last_user_question(self, messages_data: List[Dict[str, Any]]) -> str:
+        """
+        从对话消息列表中提取最后一条用户问题文本。
+        参数:
+            messages_data: 对话消息列表，元素包含 role 与 content 字段。
+        返回值:
+            最后一条 role=user 的 content（去除首尾空白）；若不存在则返回空字符串。
+        异常:
+            无。
+        """
+        for m in reversed(messages_data or []):
+            if isinstance(m, dict) and m.get("role") == "user":
+                return str(m.get("content") or "").strip()
+        return ""
+
+    def _schedule_github_sync(self, question_text: str, answer_text: str) -> None:
+        """
+        以异步任务方式触发 GitHub 仓库内容更新，避免阻塞主流程（尤其是 SSE 流式返回）。
+        参数:
+            question_text: 用户问题文本。
+            answer_text: AI 最终回答文本。
+        返回值:
+            无。
+        异常:
+            无（内部捕获并记录日志）。
+        """
+        if not self._is_github_sync_enabled():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._sync_answer_to_github(
+                    question_text=question_text,
+                    answer_text=answer_text,
+                )
+            )
+        except RuntimeError:
+            t = threading.Thread(
+                target=self._sync_answer_to_github_blocking,
+                kwargs={"question_text": question_text, "answer_text": answer_text},
+                daemon=True,
+            )
+            t.start()
+
+    def _is_github_sync_enabled(self) -> bool:
+        """
+        判断是否启用 GitHub 同步功能。
+        参数:
+            无。
+        返回值:
+            启用返回 True，否则返回 False。
+        异常:
+            无。
+        """
+        enabled = getattr(settings, "AI_GITHUB_SYNC_ENABLED", None)
+        if enabled is None:
+            enabled = os.getenv("AI_GITHUB_SYNC_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+        return bool(enabled) and bool(self._get_github_token()) and bool(self._get_github_repo())
+
+    def _get_github_token(self) -> str:
+        """
+        获取用于 GitHub API 的访问令牌（不允许硬编码在代码中）。
+        参数:
+            无。
+        返回值:
+            token 字符串；若未配置则返回空字符串。
+        异常:
+            无。
+        """
+        token = getattr(settings, "AI_GITHUB_TOKEN", "") or ""
+        if token:
+            return str(token).strip()
+        return os.getenv("GITHUB_TOKEN", "").strip()
+
+    def _get_github_repo(self) -> str:
+        """
+        获取目标 GitHub 仓库标识（owner/repo）。
+        参数:
+            无。
+        返回值:
+            仓库标识字符串（例如 huang1125677925/mybook）；若未配置则返回空字符串。
+        异常:
+            无。
+        """
+        repo = getattr(settings, "AI_GITHUB_SYNC_REPO", "") or ""
+        if repo:
+            return str(repo).strip()
+        return os.getenv("AI_GITHUB_SYNC_REPO", "").strip()
+
+    def _get_github_branch(self) -> str:
+        """
+        获取写入目标分支名。
+        参数:
+            无。
+        返回值:
+            分支名，默认 main。
+        异常:
+            无。
+        """
+        branch = getattr(settings, "AI_GITHUB_SYNC_BRANCH", "") or ""
+        branch = str(branch).strip() if branch else ""
+        return branch or os.getenv("AI_GITHUB_SYNC_BRANCH", "").strip() or "main"
+
+    def _get_github_path(self) -> str:
+        """
+        获取写入文件路径（仓库内相对路径）。
+        参数:
+            无。
+        返回值:
+            以日期渲染后的文件路径，默认 ai_answers/YYYY-MM-DD.md。
+        异常:
+            无。
+        """
+        template = getattr(settings, "AI_GITHUB_SYNC_PATH_TEMPLATE", "") or ""
+        template = str(template).strip() if template else ""
+        template = template or os.getenv("AI_GITHUB_SYNC_PATH_TEMPLATE", "").strip() or "ai_answers/{date}.md"
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        try:
+            return template.format(date=date_str)
+        except Exception:
+            return f"ai_answers/{date_str}.md"
+
+    def _format_answer_markdown(self, question_text: str, answer_text: str) -> str:
+        """
+        将一次问答格式化为 Markdown 段落，便于在仓库中按天累计保存。
+        参数:
+            question_text: 用户问题文本。
+            answer_text: AI 最终回答文本。
+        返回值:
+            Markdown 字符串（包含时间、唯一标识、问题与回答）。
+        异常:
+            无。
+        """
+        now = datetime.now()
+        ts = now.strftime("%H:%M:%S")
+        entry_id = uuid.uuid4().hex[:8]
+        q = (question_text or "").strip()
+        a = (answer_text or "").strip()
+        return (
+            f"\n\n## {ts} {entry_id}\n\n"
+            f"**Q:** {q}\n\n"
+            f"**A:**\n\n{a}\n"
+        )
+
+    async def _sync_answer_to_github(self, question_text: str, answer_text: str) -> None:
+        """
+        异步将问答内容写入 GitHub 仓库（通过 Contents API 创建/更新文件）。
+        参数:
+            question_text: 用户问题文本。
+            answer_text: AI 最终回答文本。
+        返回值:
+            无。
+        异常:
+            无（内部捕获并记录日志）。
+        """
+        repo = self._get_github_repo()
+        token = self._get_github_token()
+        branch = self._get_github_branch()
+        path = self._get_github_path()
+        block = self._format_answer_markdown(question_text=question_text, answer_text=answer_text)
+
+        if not repo or not token or not path:
+            return
+
+        try:
+            await asyncio.to_thread(
+                self._github_upsert_markdown_file,
+                repo,
+                path,
+                block,
+                branch,
+                token,
+            )
+        except Exception as e:
+            logger.error(f"GitHub sync failed: {e}")
+
+    def _sync_answer_to_github_blocking(self, question_text: str, answer_text: str) -> None:
+        """
+        在无事件循环的同步上下文中，将问答内容写入 GitHub 仓库（阻塞式，建议由后台线程调用）。
+        参数:
+            question_text: 用户问题文本。
+            answer_text: AI 最终回答文本。
+        返回值:
+            无。
+        异常:
+            无（内部捕获并记录日志）。
+        """
+        repo = self._get_github_repo()
+        token = self._get_github_token()
+        branch = self._get_github_branch()
+        path = self._get_github_path()
+        block = self._format_answer_markdown(question_text=question_text, answer_text=answer_text)
+        if not repo or not token or not path:
+            return
+        try:
+            self._github_upsert_markdown_file(repo, path, block, branch, token)
+        except Exception as e:
+            logger.error(f"GitHub sync failed: {e}")
+
+    def _github_upsert_markdown_file(
+        self,
+        repo: str,
+        path: str,
+        append_block: str,
+        branch: str,
+        token: str,
+    ) -> None:
+        """
+        使用 GitHub Contents API 将 Markdown 片段追加写入文件（不存在则创建）。
+        参数:
+            repo: 仓库标识 owner/repo。
+            path: 仓库内文件相对路径。
+            append_block: 需要追加的 Markdown 片段。
+            branch: 目标分支名。
+            token: GitHub 访问令牌（仅用于请求头，不做日志输出）。
+        返回值:
+            无。
+        异常:
+            requests.RequestException: 网络或 API 请求失败时抛出。
+            ValueError: 当 GitHub API 返回非预期数据时抛出。
+        """
+        owner_repo = repo.strip().strip("/")
+        if owner_repo.startswith("https://github.com/"):
+            owner_repo = owner_repo.replace("https://github.com/", "").strip("/")
+        url = f"https://api.github.com/repos/{owner_repo}/contents/{path.lstrip('/')}"
+
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        existing_text = ""
+        existing_sha = None
+        get_params = {"ref": branch}
+        r = requests.get(url, headers=headers, params=get_params, timeout=15)
+        if r.status_code == 200:
+            payload = r.json()
+            existing_sha = payload.get("sha")
+            encoded = payload.get("content") or ""
+            if isinstance(encoded, str) and encoded.strip():
+                try:
+                    existing_text = base64.b64decode(encoded.encode("utf-8")).decode("utf-8", errors="replace")
+                except Exception:
+                    existing_text = ""
+        elif r.status_code == 404:
+            existing_text = ""
+            existing_sha = None
+        else:
+            raise ValueError(f"GitHub GET content failed: {r.status_code} {r.text}")
+
+        if not (existing_text or "").strip():
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            existing_text = f"# {date_str}\n"
+
+        new_text = (existing_text or "") + (append_block or "")
+        encoded_new = base64.b64encode(new_text.encode("utf-8")).decode("utf-8")
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        body: Dict[str, Any] = {
+            "message": f"ai: sync answer {now_ts}",
+            "content": encoded_new,
+            "branch": branch,
+        }
+        if existing_sha:
+            body["sha"] = existing_sha
+
+        r2 = requests.put(url, headers=headers, json=body, timeout=20)
+        if r2.status_code not in (200, 201):
+            raise ValueError(f"GitHub PUT content failed: {r2.status_code} {r2.text}")
 
     # CRUD methods for Views
     def get_all_prompts_list(self) -> List[Dict]:
