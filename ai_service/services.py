@@ -434,6 +434,11 @@ class AiAgentService:
                 question_text = prompt_text
                 answer_text = str(content or "").strip()
                 if answer_text:
+                    logger.info(
+                        "GitHub sync trigger(analyze): question_len=%s, answer_len=%s",
+                        len(question_text),
+                        len(answer_text),
+                    )
                     self._sync_answer_to_github_blocking(
                         question_text=question_text,
                         answer_text=answer_text,
@@ -501,6 +506,7 @@ class AiAgentService:
             
             rounds = 0
             final_answer_text = ""
+            tool_records: List[Dict[str, Any]] = []
             while rounds < 20:
                 rounds += 1
                 
@@ -572,15 +578,32 @@ class AiAgentService:
                     for (tc, route), result in zip(resolved_tool_calls, tool_results):
                         real_tool_name = route["name"]
                         tool_call_id = tc["id"]
+                        tool_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
                         if isinstance(result, Exception):
                             logger.error(f"Tool {real_tool_name} execution failed: {result}")
+                            tool_error_text = f"Error executing tool {real_tool_name}: {str(result)}"
+                            tool_records.append(
+                                {
+                                    "tool_name": real_tool_name,
+                                    "args": tool_args,
+                                    "result": tool_error_text,
+                                    "is_error": True,
+                                }
+                            )
                             messages.append(ToolMessage(content=f"Error executing tool {real_tool_name}: {str(result)}", tool_call_id=tool_call_id))
                             continue
 
                         tool_result_text = self._extract_tool_result_text(result)
+                        tool_records.append(
+                            {
+                                "tool_name": real_tool_name,
+                                "args": tool_args,
+                                "result": tool_result_text,
+                                "is_error": False,
+                            }
+                        )
 
                         messages.append(ToolMessage(content=tool_result_text, tool_call_id=tool_call_id))
-                        tool_args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
                         yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'args': tool_args, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
                     
                     continue
@@ -592,9 +615,23 @@ class AiAgentService:
             try:
                 question_text = self._extract_last_user_question(messages_data)
                 if question_text and final_answer_text:
+                    logger.info(
+                        "GitHub sync trigger(stream): question_len=%s, answer_len=%s, tool_count=%s",
+                        len(question_text),
+                        len(final_answer_text),
+                        len(tool_records),
+                    )
                     await self._sync_answer_to_github(
                         question_text=question_text,
                         answer_text=final_answer_text,
+                        tool_records=tool_records,
+                    )
+                else:
+                    logger.info(
+                        "GitHub sync skipped(stream): empty question or answer, question_len=%s, answer_len=%s, tool_count=%s",
+                        len(question_text),
+                        len(final_answer_text),
+                        len(tool_records),
                     )
             except Exception as e:
                 logger.warning(f"GitHub sync skipped: {e}")
@@ -620,6 +657,23 @@ class AiAgentService:
                 return str(m.get("content") or "").strip()
         return ""
 
+    def _mask_secret(self, value: str) -> str:
+        """
+        将敏感字符串脱敏后用于日志输出。
+        参数:
+            value: 原始敏感字符串。
+        返回值:
+            脱敏后的字符串；长度不足时返回固定掩码。
+        异常:
+            无。
+        """
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if len(raw) <= 8:
+            return "****"
+        return f"{raw[:4]}...{raw[-4:]}"
+
     def _is_github_sync_enabled(self) -> bool:
         """
         判断是否启用 GitHub 同步功能。
@@ -640,7 +694,15 @@ class AiAgentService:
             else:
                 # 未显式配置开关时，只要存在 token 和 repo 就自动启用。
                 enabled = bool(token and repo)
-        return bool(enabled) and bool(token) and bool(repo)
+        final_enabled = bool(enabled) and bool(token) and bool(repo)
+        logger.info(
+            "GitHub sync config check: enabled=%s, has_token=%s, token_mask=%s, repo=%s",
+            final_enabled,
+            bool(token),
+            self._mask_secret(token),
+            repo or "<empty>",
+        )
+        return final_enabled
 
     def _get_github_token(self) -> str:
         """
@@ -689,33 +751,123 @@ class AiAgentService:
         branch = str(branch).strip() if branch else ""
         return branch or os.getenv("AI_GITHUB_SYNC_BRANCH", "").strip() or "main"
 
-    def _get_github_path(self) -> str:
+    def _slugify_question_for_path(self, question_text: str, max_length: int = 48) -> str:
+        """
+        将用户问题转换为适合文件路径的短标识，尽量保留中文与常见字符并过滤非法路径字符。
+        参数:
+            question_text: 原始用户问题文本。
+            max_length: 文件名中问题片段的最大长度。
+        返回值:
+            过滤并截断后的问题片段；若结果为空则返回 answer。
+        异常:
+            无。
+        """
+        text = str(question_text or "").strip()
+        if not text:
+            return "answer"
+        text = re.sub(r"\s+", "-", text)
+        text = re.sub(r'[\\/:*?"<>|#%&{}$!@+=`~]+', "-", text)
+        text = re.sub(r"-{2,}", "-", text).strip("-. ")
+        if not text:
+            return "answer"
+        return text[:max_length].rstrip("-. ") or "answer"
+
+    def _get_github_path(self, question_text: str = "") -> str:
         """
         获取写入文件路径（仓库内相对路径）。
         参数:
-            无。
+            question_text: 用户问题文本，用于渲染文件名中的问题片段。
         返回值:
-            以日期渲染后的文件路径，默认 ai_answers/YYYY-MM-DD.md。
+            以模板渲染后的文件路径，默认 ai_answers/YYYY-MM-DD-HH-MM-SS-问题.md。
         异常:
             无。
         """
         template = getattr(settings, "AI_GITHUB_SYNC_PATH_TEMPLATE", "") or ""
         template = str(template).strip() if template else ""
-        template = template or os.getenv("AI_GITHUB_SYNC_PATH_TEMPLATE", "").strip() or "ai_answers/{date}.md"
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        template = (
+            template
+            or os.getenv("AI_GITHUB_SYNC_PATH_TEMPLATE", "").strip()
+            or "ai_answers/{date}-{time}-{question}.md"
+        )
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H-%M-%S")
+        question_slug = self._slugify_question_for_path(question_text)
         try:
-            return template.format(date=date_str)
+            return template.format(
+                date=date_str,
+                time=time_str,
+                question=question_slug,
+            )
         except Exception:
-            return f"ai_answers/{date_str}.md"
+            return f"ai_answers/{date_str}-{time_str}-{question_slug}.md"
 
-    def _format_answer_markdown(self, question_text: str, answer_text: str) -> str:
+    def _escape_markdown_code_fence(self, text: str) -> str:
+        """
+        转义文本中的 Markdown 代码块围栏，避免工具结果破坏文档结构。
+        参数:
+            text: 原始文本。
+        返回值:
+            处理后的安全文本。
+        异常:
+            无。
+        """
+        return str(text or "").replace("```", "``\\`")
+
+    def _format_tool_records_markdown(self, tool_records: Optional[List[Dict[str, Any]]]) -> str:
+        """
+        将工具调用记录格式化为 Markdown 段落。
+        参数:
+            tool_records: 工具调用记录列表，元素包含工具名、参数、结果与是否错误。
+        返回值:
+            工具调用记录 Markdown；若无记录则返回空字符串。
+        异常:
+            无。
+        """
+        if not tool_records:
+            return ""
+        lines: List[str] = [
+            "### Tool Calls",
+        ]
+        for index, item in enumerate(tool_records, start=1):
+            tool_name = str(item.get("tool_name") or "unknown_tool")
+            tool_args = item.get("args") if isinstance(item.get("args"), dict) else {}
+            tool_result = self._escape_markdown_code_fence(str(item.get("result") or ""))
+            is_error = bool(item.get("is_error"))
+            lines.extend(
+                [
+                    "",
+                    f"#### {index}. {tool_name}{' (error)' if is_error else ''}",
+                    "",
+                    "**Args**",
+                    "",
+                    "```json",
+                    json.dumps(tool_args, ensure_ascii=False, indent=2),
+                    "```",
+                    "",
+                    "**Result**",
+                    "",
+                    "```text",
+                    tool_result,
+                    "```",
+                ]
+            )
+        return "\n".join(lines) + "\n"
+
+    def _format_answer_markdown(
+        self,
+        question_text: str,
+        answer_text: str,
+        tool_records: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         将一次问答格式化为 Markdown 段落，便于在仓库中按天累计保存。
         参数:
             question_text: 用户问题文本。
             answer_text: AI 最终回答文本。
+            tool_records: 工具调用记录列表，可为空。
         返回值:
-            Markdown 字符串（包含时间、唯一标识、问题与回答）。
+            Markdown 字符串（包含时间、唯一标识、问题、工具调用记录与回答）。
         异常:
             无。
         """
@@ -724,18 +876,27 @@ class AiAgentService:
         entry_id = uuid.uuid4().hex[:8]
         q = (question_text or "").strip()
         a = (answer_text or "").strip()
+        tools_markdown = self._format_tool_records_markdown(tool_records)
+        tools_section = f"{tools_markdown}\n" if tools_markdown else ""
         return (
             f"\n\n## {ts} {entry_id}\n\n"
             f"**Q:** {q}\n\n"
             f"**A:**\n\n{a}\n"
+            f"{tools_section}"
         )
 
-    async def _sync_answer_to_github(self, question_text: str, answer_text: str) -> None:
+    async def _sync_answer_to_github(
+        self,
+        question_text: str,
+        answer_text: str,
+        tool_records: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """
         异步将问答内容写入 GitHub 仓库（通过 Contents API 创建/更新文件）。
         参数:
             question_text: 用户问题文本。
             answer_text: AI 最终回答文本。
+            tool_records: 工具调用记录列表，可为空。
         返回值:
             无。
         异常:
@@ -744,13 +905,33 @@ class AiAgentService:
         repo = self._get_github_repo()
         token = self._get_github_token()
         branch = self._get_github_branch()
-        path = self._get_github_path()
-        block = self._format_answer_markdown(question_text=question_text, answer_text=answer_text)
+        path = self._get_github_path(question_text=question_text)
+        block = self._format_answer_markdown(
+            question_text=question_text,
+            answer_text=answer_text,
+            tool_records=tool_records,
+        )
 
         if not repo or not token or not path:
+            logger.info(
+                "GitHub sync skipped(async): repo=%s, has_token=%s, branch=%s, path=%s",
+                repo or "<empty>",
+                bool(token),
+                branch or "<empty>",
+                path or "<empty>",
+            )
             return
 
         try:
+            logger.info(
+                "GitHub sync start(async): repo=%s, branch=%s, path=%s, token_mask=%s, block_len=%s, tool_count=%s",
+                repo,
+                branch,
+                path,
+                self._mask_secret(token),
+                len(block),
+                len(tool_records or []),
+            )
             await asyncio.to_thread(
                 self._github_upsert_markdown_file,
                 repo,
@@ -765,12 +946,18 @@ class AiAgentService:
         except Exception as e:
             logger.error(f"GitHub sync failed: {e}")
 
-    def _sync_answer_to_github_blocking(self, question_text: str, answer_text: str) -> None:
+    def _sync_answer_to_github_blocking(
+        self,
+        question_text: str,
+        answer_text: str,
+        tool_records: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """
         在无事件循环的同步上下文中，将问答内容写入 GitHub 仓库（阻塞式，建议由后台线程调用）。
         参数:
             question_text: 用户问题文本。
             answer_text: AI 最终回答文本。
+            tool_records: 工具调用记录列表，可为空。
         返回值:
             无。
         异常:
@@ -779,12 +966,31 @@ class AiAgentService:
         repo = self._get_github_repo()
         token = self._get_github_token()
         branch = self._get_github_branch()
-        path = self._get_github_path()
-        block = self._format_answer_markdown(question_text=question_text, answer_text=answer_text)
+        path = self._get_github_path(question_text=question_text)
+        block = self._format_answer_markdown(
+            question_text=question_text,
+            answer_text=answer_text,
+            tool_records=tool_records,
+        )
         if not repo or not token or not path:
-            logger.info("GitHub sync skipped: feature disabled or missing required config")
+            logger.info(
+                "GitHub sync skipped(blocking): repo=%s, has_token=%s, branch=%s, path=%s",
+                repo or "<empty>",
+                bool(token),
+                branch or "<empty>",
+                path or "<empty>",
+            )
             return
         try:
+            logger.info(
+                "GitHub sync start(blocking): repo=%s, branch=%s, path=%s, token_mask=%s, block_len=%s, tool_count=%s",
+                repo,
+                branch,
+                path,
+                self._mask_secret(token),
+                len(block),
+                len(tool_records or []),
+            )
             self._github_upsert_markdown_file(repo, path, block, branch, token)
             logger.info(
                 f"GitHub sync success: repo={repo}, branch={branch}, path={path}"
@@ -818,6 +1024,13 @@ class AiAgentService:
         if owner_repo.startswith("https://github.com/"):
             owner_repo = owner_repo.replace("https://github.com/", "").strip("/")
         url = f"https://api.github.com/repos/{owner_repo}/contents/{path.lstrip('/')}"
+        logger.info(
+            "GitHub contents request: repo=%s, branch=%s, path=%s, url=%s",
+            owner_repo,
+            branch,
+            path,
+            url,
+        )
 
         headers = {
             "Authorization": f"token {token}",
@@ -828,10 +1041,16 @@ class AiAgentService:
         existing_sha = None
         get_params = {"ref": branch}
         r = requests.get(url, headers=headers, params=get_params, timeout=15)
+        logger.info("GitHub contents GET status: %s", r.status_code)
         if r.status_code == 200:
             payload = r.json()
             existing_sha = payload.get("sha")
             encoded = payload.get("content") or ""
+            logger.info(
+                "GitHub contents exists: has_sha=%s, encoded_len=%s",
+                bool(existing_sha),
+                len(encoded) if isinstance(encoded, str) else 0,
+            )
             if isinstance(encoded, str) and encoded.strip():
                 try:
                     existing_text = base64.b64decode(encoded.encode("utf-8")).decode("utf-8", errors="replace")
@@ -840,12 +1059,14 @@ class AiAgentService:
         elif r.status_code == 404:
             existing_text = ""
             existing_sha = None
+            logger.info("GitHub contents not found, will create new file")
         else:
             raise ValueError(f"GitHub GET content failed: {r.status_code} {r.text}")
 
         if not (existing_text or "").strip():
             date_str = datetime.now().strftime("%Y-%m-%d")
             existing_text = f"# {date_str}\n"
+            logger.info("GitHub contents bootstrap header created for date=%s", date_str)
 
         new_text = (existing_text or "") + (append_block or "")
         encoded_new = base64.b64encode(new_text.encode("utf-8")).decode("utf-8")
@@ -859,6 +1080,12 @@ class AiAgentService:
             body["sha"] = existing_sha
 
         r2 = requests.put(url, headers=headers, json=body, timeout=20)
+        logger.info(
+            "GitHub contents PUT status: %s, has_sha=%s, final_text_len=%s",
+            r2.status_code,
+            bool(existing_sha),
+            len(new_text),
+        )
         if r2.status_code not in (200, 201):
             raise ValueError(f"GitHub PUT content failed: {r2.status_code} {r2.text}")
 

@@ -256,7 +256,10 @@ AI_GITHUB_SYNC_ENABLED = os.environ.get('AI_GITHUB_SYNC_ENABLED', '').strip().lo
 AI_GITHUB_TOKEN = os.environ.get('AI_GITHUB_TOKEN', '').strip()
 AI_GITHUB_SYNC_REPO = os.environ.get('AI_GITHUB_SYNC_REPO', 'huang1125677925/mybook').strip()
 AI_GITHUB_SYNC_BRANCH = os.environ.get('AI_GITHUB_SYNC_BRANCH', 'main').strip()
-AI_GITHUB_SYNC_PATH_TEMPLATE = os.environ.get('AI_GITHUB_SYNC_PATH_TEMPLATE', 'ai_answers/{date}.md').strip()
+AI_GITHUB_SYNC_PATH_TEMPLATE = os.environ.get(
+    'AI_GITHUB_SYNC_PATH_TEMPLATE',
+    'ai_answers/{date}-{time}-{question}.md',
+).strip()
 
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
