@@ -101,3 +101,50 @@ def call_tushare(
 
     except Exception as e:
         return _error("调用 Tushare 接口失败", 500, error=str(e), interface=interface)
+
+
+def call_tushare_pro_bar(
+    params: Optional[Dict[str, Any]] = None,
+    token: Optional[str] = None,
+    fields: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    调用 Tushare SDK 的通用行情接口 ts.pro_bar（非 pro.xxx 属性；文档注明 HTTP 暂不支持）。
+
+    参数与官方文档一致：ts_code、asset、freq、adj、start_date、end_date、ma、factors 等。
+    """
+    params = dict(params or {})
+
+    try:
+        import tushare as ts
+    except Exception as e:
+        return _error("tushare 库未安装或导入失败", 503, error=str(e))
+
+    ts_token = token or os.environ.get("TUSHARE_TOKEN")
+    if ts_token:
+        try:
+            ts.set_token(ts_token)
+        except Exception:
+            pass
+
+    call_kwargs = {k: v for k, v in params.items() if v is not None and v != ""}
+    if fields:
+        call_kwargs["fields"] = fields
+
+    try:
+        df = ts.pro_bar(**call_kwargs)
+    except Exception as e:
+        return _error("调用 ts.pro_bar 失败", 500, error=str(e), interface="pro_bar")
+
+    try:
+        records = df.to_dict(orient="records")
+    except Exception:
+        records = []
+
+    return _success(
+        {
+            "interface": "pro_bar",
+            "count": len(records),
+            "records": records,
+        }
+    )

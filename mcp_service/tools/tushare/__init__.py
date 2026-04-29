@@ -3,6 +3,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from mcp_service.tools.tushare.bonds import register_bonds_tools
+from mcp_service.tools.tushare.corpus import register_corpus_tools
 from mcp_service.tools.tushare.etf import register_etf_tools
 from mcp_service.tools.tushare.forex import register_forex_tools
 from mcp_service.tools.tushare.futures import register_futures_tools
@@ -33,3 +34,4 @@ def register_tushare_tools(mcp: FastMCP) -> None:
     register_spot_tools(mcp)
     register_industry_economy_tools(mcp)
     register_wealth_management_tools(mcp)
+    register_corpus_tools(mcp)

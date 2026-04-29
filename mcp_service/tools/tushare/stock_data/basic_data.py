@@ -185,3 +185,16 @@ def register_stock_basic_tools(mcp: FastMCP) -> None:
     ) -> Dict[str, Any]:
         params: Dict[str, Any] = _clean(exchange=exchange, start_date=start_date, end_date=end_date, is_open=is_open)
         return _paginate(_call("trade_cal", params, fields, token), limit, offset, max_limit=1000)
+
+    @safe_tool(mcp, name="tushare.stock.basic.st", description="ST风险警示板变更记录 st")
+    def st(
+        ts_code: Optional[str] = None,
+        pub_date: Optional[str] = None,
+        imp_date: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = _clean(ts_code=ts_code, pub_date=pub_date, imp_date=imp_date)
+        return _paginate(_call("st", params, fields, token), limit, offset)

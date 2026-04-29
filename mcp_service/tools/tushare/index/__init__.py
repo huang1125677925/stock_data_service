@@ -530,6 +530,78 @@ def register_index_tools(mcp: FastMCP) -> None:
 
     @safe_tool(
         mcp,
+        name="tushare.index.idx_mins",
+        description="指数历史分钟 idx_mins",
+    )
+    def idx_mins(
+        ts_code: str,
+        freq: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 120,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not ts_code:
+            return error_payload("ts_code 为必填参数", 400, interface="idx_mins")
+        if not freq:
+            return error_payload("freq 为必填参数", 400, interface="idx_mins")
+        params: Dict[str, Any] = {"ts_code": ts_code, "freq": freq}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return _paginate(_call("idx_mins", params, fields, token), limit, offset)
+
+    @safe_tool(
+        mcp,
+        name="tushare.index.rt_idx_k",
+        description="交易所指数实时日线 rt_idx_k",
+    )
+    def rt_idx_k(
+        ts_code: str,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not ts_code:
+            return error_payload("ts_code 为必填参数", 400, interface="rt_idx_k")
+        return _call("rt_idx_k", {"ts_code": ts_code}, fields, token)
+
+    @safe_tool(
+        mcp,
+        name="tushare.index.rt_idx_min",
+        description="交易所指数实时分钟 rt_idx_min（freq 为大写 1MIN 等）",
+    )
+    def rt_idx_min(
+        ts_code: str,
+        freq: str,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not ts_code:
+            return error_payload("ts_code 为必填参数", 400, interface="rt_idx_min")
+        if not freq:
+            return error_payload("freq 为必填参数（如 1MIN、5MIN）", 400, interface="rt_idx_min")
+        return _call("rt_idx_min", {"ts_code": ts_code, "freq": freq}, fields, token)
+
+    @safe_tool(
+        mcp,
+        name="tushare.index.rt_sw_k",
+        description="申万行业指数实时行情 rt_sw_k",
+    )
+    def rt_sw_k(
+        ts_code: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        return _call("rt_sw_k", params, fields, token)
+
+    @safe_tool(
+        mcp,
         name="django.index.sw_valuation_analysis",
         description="申万行业估值分析（与 /django/api/index/sw-valuation-analysis/ 同源实现，非 HTTP）",
     )

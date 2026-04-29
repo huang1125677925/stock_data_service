@@ -48,6 +48,17 @@ def register_macro_tools(mcp: FastMCP) -> None:
         params: Dict[str, Any] = _clean(date=date, start_date=start_date, end_date=end_date)
         return _call("lpr", params, fields, token)
 
+    @safe_tool(mcp, name="tushare.macro.shibor_lpr", description="LPR贷款基础利率 shibor_lpr（与文档同名接口）")
+    def shibor_lpr(
+        date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = _clean(date=date, start_date=start_date, end_date=end_date)
+        return _call("shibor_lpr", params, fields, token)
+
     @safe_tool(mcp, name="tushare.macro.libor", description="Libor利率 libor")
     def libor(
         date: Optional[str] = None,

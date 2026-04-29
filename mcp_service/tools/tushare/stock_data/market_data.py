@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from common.tushare_proxy import call_tushare
+from common.tushare_proxy import call_tushare, call_tushare_pro_bar
 from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
 
 
@@ -299,3 +299,36 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         """周线行情 weekly。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
         return _paginate(_call("weekly", params, fields, token), limit, offset)
+
+    @safe_tool(mcp, name="tushare.stock.market.pro_bar", description="通用行情 ts.pro_bar（需本地 SDK）")
+    def pro_bar(
+        ts_code: str,
+        asset: str,
+        freq: str,
+        adj: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adjfactor: Optional[bool] = None,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not ts_code:
+            return error_payload("ts_code 为必填参数", 400, interface="pro_bar")
+        if not asset:
+            return error_payload("asset 为必填参数（E/I/C/FT/FD/O/CB）", 400, interface="pro_bar")
+        if not freq:
+            return error_payload("freq 为必填参数（如 D、1min）", 400, interface="pro_bar")
+        params: Dict[str, Any] = {
+            "ts_code": ts_code,
+            "asset": asset,
+            "freq": freq,
+        }
+        if adj is not None:
+            params["adj"] = adj
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if adjfactor is not None:
+            params["adjfactor"] = adjfactor
+        return call_tushare_pro_bar(params=params, token=token, fields=fields)
