@@ -207,3 +207,28 @@ def register_etf_tools(mcp: FastMCP) -> None:
         if end_date:
             params["end_date"] = end_date
         return _paginate(_call("stk_mins", params, fields, token), limit, offset)
+
+    @safe_tool(mcp, name="tushare.etf.etf_share_size", description="ETF份额规模 etf_share_size")
+    def etf_share_size(
+        ts_code: Optional[str] = None,
+        trade_date: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        exchange: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if exchange:
+            params["exchange"] = exchange
+        return _paginate(_call("etf_share_size", params, fields, token), limit, offset)
