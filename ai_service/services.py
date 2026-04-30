@@ -378,6 +378,54 @@ class AiAgentService:
             return str(tool_result[0][0].text)
         return str(tool_result)
 
+    def _sanitize_incoming_chat_messages(
+        self, messages_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        压缩客户端传入的多轮历史中的 tool 消息正文，避免把过大的工具透传结果再次送入模型；
+        user / assistant 的文本原样保留。
+        """
+        max_keep = getattr(
+            settings,
+            "AI_CHAT_HISTORY_TOOL_MAX_CHARS",
+            0,
+        )
+        try:
+            max_keep = int(max_keep)
+        except (TypeError, ValueError):
+            max_keep = 0
+        placeholder_template = getattr(
+            settings,
+            "AI_CHAT_HISTORY_TOOL_PLACEHOLDER",
+            "（工具返回数据已在历史中省略，原约 {chars} 字符。）",
+        )
+
+        out: List[Dict[str, Any]] = []
+        for m in messages_data or []:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            if role != "tool":
+                out.append(dict(m))
+                continue
+            raw = m.get("content")
+            text = raw if isinstance(raw, str) else (
+                json.dumps(raw, ensure_ascii=False) if raw is not None else ""
+            )
+            n = len(text)
+            if max_keep <= 0:
+                new_content = placeholder_template.replace("{chars}", str(n))
+            elif n <= max_keep:
+                new_content = text
+            else:
+                suffix = f"\n…（已截断，原共 {n} 字符）"
+                budget = max(0, max_keep - len(suffix))
+                new_content = text[:budget] + suffix
+            mm = dict(m)
+            mm["content"] = new_content
+            out.append(mm)
+        return out
+
     def _format_input_data(self, input_data: Any) -> str:
         if isinstance(input_data, str):
             return input_data
@@ -484,7 +532,8 @@ class AiAgentService:
                     )
                 )
             )
-            for m in messages_data:
+            sanitized_history = self._sanitize_incoming_chat_messages(messages_data)
+            for m in sanitized_history:
                 if m["role"] == "user":
                     messages.append(HumanMessage(content=m["content"]))
                 elif m["role"] == "assistant":
@@ -613,7 +662,7 @@ class AiAgentService:
                     break
 
             try:
-                question_text = self._extract_last_user_question(messages_data)
+                question_text = self._extract_last_user_question(sanitized_history)
                 if question_text and final_answer_text:
                     logger.info(
                         "GitHub sync trigger(stream): question_len=%s, answer_len=%s, tool_count=%s",

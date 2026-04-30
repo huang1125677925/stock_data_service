@@ -1,4 +1,5 @@
 import json
+from asgiref.sync import sync_to_async
 from django.http import StreamingHttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -8,6 +9,7 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from common.response import success_response, error_response
+from user_management.services import TokenService
 
 from .services import ai_agent_service
 from .serializers import (
@@ -21,6 +23,9 @@ from .serializers import (
 class AiAgentChatView(View):
     """
     提供给 Android App 的大模型对话接口 (支持 SSE)
+    可选 body.conversation_id：从 chat_service 数据库加载该会话历史，
+    再与本次 messages 拼接后送入模型（客户端可不传历史）。
+    传入 conversation_id 时须在 Header 携带 Bearer 令牌，且会话须属于当前用户。
     """
     async def post(self, request, *args, **kwargs):
         try:
@@ -28,6 +33,40 @@ class AiAgentChatView(View):
             messages = body.get("messages", [])
             if not messages:
                 return error_response("messages 不能为空", 400)
+
+            conversation_id = body.get("conversation_id")
+            if conversation_id is not None:
+                try:
+                    conversation_id = int(conversation_id)
+                except (TypeError, ValueError):
+                    return error_response("conversation_id 无效", 400)
+                auth_header = request.headers.get("Authorization", "")
+                if not auth_header.startswith("Bearer "):
+                    return error_response("使用 conversation_id 时必须提供 Bearer 认证", 401)
+                token_str = auth_header.split(" ", 1)[1].strip()
+
+                def _merge_with_db():
+                    from chat_service.services import chat_conversation_service
+
+                    token_service = TokenService()
+                    ok, _msg, user = token_service.validate_token(token_str)
+                    if not ok or not user:
+                        return None, error_response("未认证或令牌无效", 401)
+                    conversation = chat_conversation_service.get_conversation_for_user(
+                        user=user,
+                        conversation_id=conversation_id,
+                    )
+                    if not conversation:
+                        return None, error_response("会话不存在", 404)
+                    merged = chat_conversation_service.merge_incoming_with_db_history(
+                        conversation,
+                        messages,
+                    )
+                    return merged, None
+
+                messages, err = await sync_to_async(_merge_with_db)()
+                if err is not None:
+                    return err
             
             # 使用流式返回
             response = StreamingHttpResponse(
