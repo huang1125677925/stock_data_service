@@ -42,7 +42,8 @@ class IndexMemberAllProxyView(APIView):
     @extend_schema(
         summary="申万行业成分构成(分级)",
         description=(
-            "按分级或TS代码获取申万行业成分构成。\n"
+            "按分级或 TS 代码获取申万行业成分股（谁属于哪个行业）。\n"
+            "不含行业指数涨跌幅或 PE/PB；行业指数行情请用「申万行业日线行情」sw_daily。\n"
             "参数（Query）：l1_code, l2_code, l3_code, ts_code, is_new, fields, token。\n"
             "统一响应结构（success_response），data 为成分列表。"
         ),
@@ -98,8 +99,9 @@ class IndexClassifyProxyView(APIView):
     @extend_schema(
         summary="申万行业分类",
         description=(
-            "获取申万行业分类信息。\n"
-            "参数（Query）：index_code, level, parent_code, src。\n"
+            "仅返回申万行业的分类树与行业代码（index_classify），无行情、无涨跌、无成交量。\n"
+            "用户要「申万行业数据 / 行业表现 / 行业分析」时，应主要使用「申万行业日线行情」或估值分析接口，勿只靠本接口。\n"
+            "参数（Query）：index_code, level, parent_code, src（取值 SW2014 或 SW2021，勿使用 SW）。\n"
             "默认 src 为 SW2021。\n"
             "统一响应结构（success_response），data 为分类列表。"
         ),
@@ -157,7 +159,9 @@ class SwDailyProxyView(APIView):
     @extend_schema(
         summary="申万行业日线行情",
         description=(
-            "获取申万行业日线行情（默认是申万2021版行情）。\n"
+            "申万行业指数日线 sw_daily：行业涨跌幅、开高低收、成交量、PE/PB 等，是「申万行业数据/行业表现」类问题的首选行情源。\n"
+            "与「指数日线行情」index_daily 不同：index_daily 不包含申万行业指数；申万行业代码如 801xxx.SI 请用本接口。\n"
+            "与「申万行业分类」不同：分类接口只有代码表，没有价格。\n"
             "参数（Query）：ts_code, trade_date, start_date, end_date, fields, token。\n"
             "统一响应结构（success_response），data 为行情列表。"
         ),
@@ -209,7 +213,11 @@ class SwValuationAnalysisView(APIView):
 
     @extend_schema(
         summary="申万行业估值分析",
-        description="获取指定level、日期范围的所有行业PE/PB现值及分位数。",
+        description=(
+            "在指定日期区间内，汇总申万行业 PE/PB 现值及历史分位数（适合「行业贵不贵、估值分位」类分析）。\n"
+            "底层使用 sw_daily；需要原始逐日 K 线或单日全行业截面时直接调申万行业日线接口。\n"
+            "仅需行业代码层级结构时使用申万行业分类接口。"
+        ),
         tags=["index"],
         parameters=[
             OpenApiParameter("level", OpenApiTypes.STR, OpenApiParameter.QUERY, description="行业分级：L1/L2/L3", required=True),
@@ -277,7 +285,10 @@ class IndexBasicProxyView(APIView):
 
     @extend_schema(
         summary="指数基本信息直通代理",
-        description="Tushare index_basic 的代理接口，统一返回格式。",
+        description=(
+            "指数元数据目录 index_basic（名称、发布方、基期等），非涨跌幅行情。\n"
+            "可筛选 market=SW 查看申万指数条目；分析申万行业涨跌与估值请配合申万行业日线或估值分析接口。"
+        ),
         tags=["index"],
         parameters=[
             OpenApiParameter(name="ts_code", description="指数代码", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
@@ -357,7 +368,10 @@ class IndexDailyProxyView(APIView):
 
     @extend_schema(
         summary="指数日线行情直通代理",
-        description="Tushare index_daily 的代理接口，统一返回格式。",
+        description=(
+            "通用指数日线 index_daily（如沪深300、上证50）。\n"
+            "按 Tushare 文档，本接口不包含申万行业指数日线；申万行业代码请使用「申万行业日线行情」接口。"
+        ),
         tags=["index"],
         parameters=[
             OpenApiParameter(name="ts_code", description="指数代码（必填）", required=True, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),

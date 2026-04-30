@@ -38,7 +38,11 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.index_basic",
-        description="指数基本信息 index_basic",
+        description=(
+            "指数元数据目录 index_basic（名称/发布方/基期等）。"
+            "含 market=SW 的申万指数条目，但不含行业涨跌幅/估值/成分股明细；"
+            "分析申万行业表现请用 sw_daily / rt_sw_k / django.index.sw_valuation_analysis。"
+        ),
     )
     def index_basic(
         ts_code: Optional[str] = None,
@@ -51,7 +55,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """指数基本信息 index_basic。limit默认50，最大500；offset翻页。data 含 total_count/has_more/next_offset"""
+        """指数元数据 index_basic（非行情）。申万行业涨跌与 PE/PB 等请用 sw_daily，勿仅用本接口做行业分析。"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -68,7 +72,11 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.index_daily",
-        description="指数日线行情 index_daily",
+        description=(
+            "通用指数日线 index_daily（沪深300、上证50 等）。"
+            "Tushare 规则：本接口不含申万行业指数日线；"
+            "申万行业代码如 801010.SI 的行情必须用 sw_daily，勿用 index_daily。"
+        ),
     )
     def index_daily(
         ts_code: str,
@@ -80,7 +88,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """指数日线行情 index_daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
+        """通用指数日线 index_daily。申万行业指数请改用 sw_daily（index_daily 无申万行业数据）。"""
         if not ts_code:
             return error_payload("ts_code 为必填参数", 400, interface="index_daily")
         params: Dict[str, Any] = {"ts_code": ts_code}
@@ -306,7 +314,11 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.idx_factor_pro",
-        description="指数技术因子(专业版) idx_factor_pro",
+        description=(
+            "指数技术因子 idx_factor_pro（覆盖大盘/申万/中信等 ts_code）。"
+            "若用户要「申万行业」涨跌与估值截面，优先 sw_daily 或 django.index.sw_valuation_analysis；"
+            "本接口侧重技术面因子序列。"
+        ),
     )
     def idx_factor_pro(
         ts_code: Optional[str] = None,
@@ -318,7 +330,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """指数技术因子 idx_factor_pro。limit默认30，最大500；offset翻页。"""
+        """技术面因子序列。行业轮动/行业涨跌幅排名优先配合 sw_daily。"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -390,7 +402,11 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.index_classify",
-        description="申万行业分类 index_classify",
+        description=(
+            "仅返回申万行业「分类树/代码表」index_classify（层级与行业代码，无收盘价/成交量/PE）。"
+            "用户问申万行业数据、行业表现、涨跌、估值、分析时勿单独选本工具，应配合或改用 sw_daily；"
+            "src 须为 SW2014 或 SW2021（勿传 SW）。"
+        ),
     )
     def index_classify(
         index_code: Optional[str] = None,
@@ -402,7 +418,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """申万行业分类 index_classify。limit默认100，最大500；offset翻页。"""
+        """行业分类目录 only。分析行情用 sw_daily；src 用 SW2021/SW2014。"""
         params: Dict[str, Any] = {}
         if index_code:
             params["index_code"] = index_code
@@ -417,7 +433,10 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.index_member_all",
-        description="申万行业成分构成(分级) index_member_all",
+        description=(
+            "申万行业成分股 index_member_all（某级行业下有哪些股票，或某股所属行业）。"
+            "不含行业指数涨跌；行业指数行情用 sw_daily。"
+        ),
     )
     def index_member_all(
         l1_code: Optional[str] = None,
@@ -430,7 +449,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """申万行业成分 index_member_all。limit默认100，最大500；offset翻页。"""
+        """申万分级成分股。与 sw_daily（行业指数行情）分工：成分用本接口，涨跌/量能用 sw_daily。"""
         params: Dict[str, Any] = {}
         if l1_code:
             params["l1_code"] = l1_code
@@ -447,7 +466,11 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.sw_daily",
-        description="申万行业日线行情 sw_daily",
+        description=(
+            "申万行业指数日线 sw_daily（行业涨跌幅、开高低收、成交量、PE/PB 等）——"
+            "用户问「申万行业数据/行业表现/行业分析」时的首选行情接口；"
+            "与 index_classify（仅目录）不同，与 index_daily（不含申万行业）不同。"
+        ),
     )
     def sw_daily(
         ts_code: Optional[str] = None,
@@ -459,7 +482,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """申万行业日线行情 sw_daily。limit默认30，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
+        """申万行业指数日线（默认 2021 版行情）。可按 trade_date 拉当日全行业截面，或 ts_code+区间拉单行业走势。"""
         params: Dict[str, Any] = {}
         if ts_code:
             params["ts_code"] = ts_code
@@ -588,7 +611,10 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="tushare.index.rt_sw_k",
-        description="申万行业指数实时行情 rt_sw_k",
+        description=(
+            "申万行业指数最新截面/实时行情 rt_sw_k（当前或最新报价类数据）。"
+            "历史日线序列与估值分析仍用 sw_daily 或 django.index.sw_valuation_analysis。"
+        ),
     )
     def rt_sw_k(
         ts_code: Optional[str] = None,
@@ -603,7 +629,10 @@ def register_index_tools(mcp: FastMCP) -> None:
     @safe_tool(
         mcp,
         name="django.index.sw_valuation_analysis",
-        description="申万行业估值分析（与 /django/api/index/sw-valuation-analysis/ 同源实现，非 HTTP）",
+        description=(
+            "申万行业估值分析 sw_valuation_analysis（区间内 PE/PB 及历史分位数，适合「行业贵不贵/估值分位」类问题）。"
+            "需要原始逐日 K 线时用 sw_daily；仅需行业代码表时用 index_classify。"
+        ),
     )
     def sw_valuation_analysis(
         start_date: str,
