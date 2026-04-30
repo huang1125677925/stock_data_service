@@ -1,5 +1,5 @@
 """
-GitHub mybook 记忆库：通过 Contents API 在配置仓库中追加/读取 Markdown 记忆文件。
+GitHub mybook 记忆库：通过 Contents API 追加、整文件覆盖、读取、列目录。
 
 与 ai_service 中「问答结束自动同步到 GitHub」独立；供对话 Agent 主动存取个人记忆。
 
@@ -86,16 +86,19 @@ def _github_headers(token: str) -> Dict[str, str]:
     }
 
 
+def _contents_url(owner_repo: str, path: str) -> str:
+    parts = path.strip("/").split("/")
+    encoded_path = "/".join(quote(p, safe="") for p in parts)
+    return f"https://api.github.com/repos/{owner_repo}/contents/{encoded_path}"
+
+
 def _contents_get(
     owner_repo: str,
     path: str,
     branch: str,
     token: str,
 ) -> requests.Response:
-    # path segments must be URL-encoded per segment for GitHub API
-    parts = path.strip("/").split("/")
-    encoded = "/".join(quote(p, safe="") for p in parts)
-    url = f"https://api.github.com/repos/{owner_repo}/contents/{encoded}"
+    url = _contents_url(owner_repo, path)
     return requests.get(
         url,
         headers=_github_headers(token),
@@ -155,10 +158,7 @@ def register_github_mybook_tools(mcp: FastMCP) -> None:
         branch = _github_branch()
         prefix = _memory_prefix()
         path = _full_path(relative_path, prefix)
-        path_parts = path.strip("/").split("/")
-        url = f"https://api.github.com/repos/{repo}/contents/" + "/".join(
-            quote(p, safe="") for p in path_parts
-        )
+        url = _contents_url(repo, path)
 
         append_block = _append_entry_markdown(entry_title, body)
         headers = _github_headers(token)
@@ -209,6 +209,83 @@ def register_github_mybook_tools(mcp: FastMCP) -> None:
                 "branch": branch,
                 "path": path,
                 "bytes_written": len(append_block.encode("utf-8")),
+            },
+        }
+
+    @safe_tool(
+        mcp,
+        name="put_github_mybook_memory",
+        description=(
+            "将 GitHub mybook 记忆库中的某个文件整文件覆盖写入（新建或完整替换原内容）。"
+            "与 append_github_mybook_memory 不同：本工具不会追加时间条，而是把 content 作为文件全文保存。"
+            "适合更新持仓表、修正笔记等。若需基于旧文修改，应先 read_github_mybook_file 再拼接新全文后调用本工具。"
+            "relative_path 相对于 memories/ 等业务前缀；需要 AI_GITHUB_TOKEN。"
+        ),
+    )
+    def put_github_mybook_memory(
+        relative_path: str,
+        content: str,
+        commit_message: str = "",
+    ) -> Dict[str, Any]:
+        err = _reject_unsafe_path_fragment(relative_path)
+        if err:
+            return error_payload(err, 400)
+        token = _github_token()
+        if not token:
+            return error_payload("未配置 AI_GITHUB_TOKEN（或 GITHUB_TOKEN），无法写入 GitHub。", 503)
+        repo = _normalize_owner_repo(_github_repo())
+        branch = _github_branch()
+        prefix = _memory_prefix()
+        path = _full_path(relative_path, prefix)
+        url = _contents_url(repo, path)
+        headers = _github_headers(token)
+
+        r = requests.get(url, headers=headers, params={"ref": branch}, timeout=20)
+        existing_sha = None
+        if r.status_code == 200:
+            payload = r.json()
+            if isinstance(payload, dict) and payload.get("type") == "file":
+                existing_sha = payload.get("sha")
+            else:
+                return error_payload(f"路径已存在且不是文件: {path}", 400)
+        elif r.status_code == 404:
+            existing_sha = None
+        else:
+            return error_payload(
+                f"读取仓库文件失败: HTTP {r.status_code} {r.text[:500]}",
+                502,
+            )
+
+        full_text = content if content is not None else ""
+        encoded_new = base64.b64encode(full_text.encode("utf-8")).decode("utf-8")
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        msg = (commit_message or "").strip()
+        if not msg:
+            msg = f"memory: put {now_ts} {path}"
+        put_body: Dict[str, Any] = {
+            "message": msg[:500],
+            "content": encoded_new,
+            "branch": branch,
+        }
+        if existing_sha:
+            put_body["sha"] = existing_sha
+
+        r2 = requests.put(url, headers=headers, json=put_body, timeout=25)
+        if r2.status_code not in (200, 201):
+            return error_payload(
+                f"写入 GitHub 失败: HTTP {r2.status_code} {r2.text[:800]}",
+                502,
+            )
+        return {
+            "code": 200,
+            "message": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                "repo": repo,
+                "branch": branch,
+                "path": path,
+                "created": existing_sha is None,
+                "bytes": len(full_text.encode("utf-8")),
             },
         }
 
