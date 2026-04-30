@@ -297,7 +297,10 @@ class ConversationStreamView(View):
                 content = latest.content
         if not content:
             return error_response('请先写入用户消息', code=400)
-        messages_data = [{'role': Message.ROLE_USER, 'content': content}]
+        build_messages = sync_to_async(
+            chat_conversation_service.build_chat_messages,
+        )
+        messages_data = await build_messages(conversation)
 
         _SENTINEL = object()
         logger = logging.getLogger(__name__)

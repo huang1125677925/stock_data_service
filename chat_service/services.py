@@ -102,6 +102,17 @@ class ChatConversationService:
         return locked_message
 
     @staticmethod
+    def merge_incoming_with_db_history(conversation, incoming_messages):
+        """
+        将数据库中该会话已存消息与客户端本次传入的 messages 拼接。
+        典型用法：客户端不传历史，仅传本轮 user（及可选 assistant/tool），
+        由服务端先附加 build_chat_messages(conversation) 再交给模型。
+        """
+        base = ChatConversationService.build_chat_messages(conversation)
+        incoming = incoming_messages or []
+        return list(base) + list(incoming)
+
+    @staticmethod
     def build_chat_messages(conversation):
         messages = []
         queryset = Message.objects.filter(conversation=conversation).order_by('seq')
