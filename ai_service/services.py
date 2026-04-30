@@ -75,10 +75,10 @@ class AiAgentService:
                 "total_count 与当前返回条数不一致等分页信息），必须在其余查询条件不变的前提下，"
                 "使用 next_offset 或递增 offset 等方式再次调用同一工具，重复直至已取全或 has_more 为 false，"
                 "再基于完整数据作答；不得在未翻页取全的情况下声称已覆盖全部数据。\n"
-                "6) 个人 GitHub 记忆库（mybook）：可使用 append_github_mybook_memory 将想法追加到"
-                " Markdown 记忆文件，使用 read_github_mybook_file 读取、list_github_mybook_directory 浏览；"
-                "文件路径为相对路径（实际位于配置的 memories/ 等前缀下）。写入前可先列出目录确认文件名；"
-                "敏感信息勿写入仓库。"
+                "6) 个人 GitHub 记忆库（mybook）：append_github_mybook_memory 向 Markdown 文件追加一条带时间的记录；"
+                "put_github_mybook_memory 整文件覆盖写入（更新/替换全文，如修订持仓表）；"
+                "read_github_mybook_file 读取、list_github_mybook_directory 浏览；路径为相对路径（位于 memories/ 等前缀下）。"
+                "写入前可先列出目录确认文件名；敏感信息勿写入仓库。"
             ),
         )
         self.default_prompt = getattr(
