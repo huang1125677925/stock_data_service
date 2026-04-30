@@ -74,7 +74,11 @@ class AiAgentService:
                 "5) 若单次工具返回表明仍有更多数据（例如结果中出现 has_more 为 true、next_offset、remaining、"
                 "total_count 与当前返回条数不一致等分页信息），必须在其余查询条件不变的前提下，"
                 "使用 next_offset 或递增 offset 等方式再次调用同一工具，重复直至已取全或 has_more 为 false，"
-                "再基于完整数据作答；不得在未翻页取全的情况下声称已覆盖全部数据。"
+                "再基于完整数据作答；不得在未翻页取全的情况下声称已覆盖全部数据。\n"
+                "6) 个人 GitHub 记忆库（mybook）：可使用 append_github_mybook_memory 将想法追加到"
+                " Markdown 记忆文件，使用 read_github_mybook_file 读取、list_github_mybook_directory 浏览；"
+                "文件路径为相对路径（实际位于配置的 memories/ 等前缀下）。写入前可先列出目录确认文件名；"
+                "敏感信息勿写入仓库。"
             ),
         )
         self.default_prompt = getattr(

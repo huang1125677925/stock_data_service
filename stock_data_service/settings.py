@@ -268,6 +268,8 @@ AI_GITHUB_SYNC_PATH_TEMPLATE = os.environ.get(
     'AI_GITHUB_SYNC_PATH_TEMPLATE',
     'ai_answers/{date}-{time}-{question}.md',
 ).strip()
+# GitHub mybook 记忆文件目录（相对仓库根目录，供 MCP 工具 append/read/list 使用）
+AI_GITHUB_MEMORY_PREFIX = os.environ.get('AI_GITHUB_MEMORY_PREFIX', 'memories').strip().strip('/')
 
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
