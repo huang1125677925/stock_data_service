@@ -252,6 +252,14 @@ AI_DEFAULT_PROMPT = os.environ.get(
     'AI_DEFAULT_PROMPT',
     '请根据以下数据进行分析，输出简洁的中文结果：\n{data}',
 )
+# 多轮聊天：客户端传入的历史里，工具原始返回（往往很大）是否压缩后再送入模型。
+# max_chars=0 表示整段工具结果一律用占位说明替换，仅保留 user/assistant 自然语言与 tool_call_id 链。
+# max_chars>0 时保留内容前 max_chars 个字符，超出部分省略并标注原长度。
+AI_CHAT_HISTORY_TOOL_MAX_CHARS = int(os.environ.get('AI_CHAT_HISTORY_TOOL_MAX_CHARS', '0'))
+AI_CHAT_HISTORY_TOOL_PLACEHOLDER = os.environ.get(
+    'AI_CHAT_HISTORY_TOOL_PLACEHOLDER',
+    '（本段为工具返回的原始数据，已在会话历史中省略以避免超长上下文；原数据约 {chars} 字符。如需基于该数据继续分析，请说明意图以便重新调用工具查询。）',
+)
 AI_GITHUB_SYNC_ENABLED = os.environ.get('AI_GITHUB_SYNC_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
 AI_GITHUB_TOKEN = os.environ.get('AI_GITHUB_TOKEN', '').strip()
 AI_GITHUB_SYNC_REPO = os.environ.get('AI_GITHUB_SYNC_REPO', 'huang1125677925/mybook').strip()
