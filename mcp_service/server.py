@@ -30,6 +30,7 @@ def create_server() -> FastMCP:
     from mcp_service.tools.time_tools import register_time_tools
     from mcp_service.tools.django_strategy_tools import register_django_strategy_tools
     from mcp_service.tools.github_mybook_tools import register_github_mybook_tools
+    from mcp_service.tools.shell_tools import register_shell_tools
 
     register_news_data_tools(mcp)
     register_jin10_flash_tools(mcp)
@@ -38,6 +39,7 @@ def create_server() -> FastMCP:
     register_django_strategy_tools(mcp)
     register_time_tools(mcp)
     register_github_mybook_tools(mcp)
+    register_shell_tools(mcp)
     register_tavily_mcp_client(
         url=os.getenv("TAVILY_MCP_URL", ""),
         enabled=os.getenv("TAVILY_MCP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
