@@ -5,12 +5,55 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
 from mcp_service.tools.tushare._registry import apply_pagination, error_payload
+
+_MAX_STOCK_BASIC_BATCH_CODES = 50
+
+
+def _split_csv_pieces(raw: Optional[str]) -> List[str]:
+    if raw is None or not str(raw).strip():
+        return []
+    return [p.strip() for p in str(raw).split(",") if p.strip()]
+
+
+def _name_keywords_from_contains(name_contains: Optional[str]) -> List[str]:
+    parts = _split_csv_pieces(name_contains)
+    return [p for p in parts if p]
+
+
+def _filter_records_by_name_keywords(
+    records: List[Dict[str, Any]], keywords: List[str]
+) -> List[Dict[str, Any]]:
+    if not keywords:
+        return list(records)
+    out: List[Dict[str, Any]] = []
+    for row in records:
+        n = str(row.get("name") or "")
+        fn = str(row.get("fullname") or "")
+        sym = str(row.get("symbol") or "")
+        text = f"{n}{fn}{sym}"
+        if all(k in text for k in keywords):
+            out.append(row)
+    return out
+
+
+def _merge_stock_basic_by_ts_code(
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    merged: List[Dict[str, Any]] = []
+    for row in rows:
+        key = str(row.get("ts_code") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
 
 
 def register_stock_data_tools(mcp: FastMCP) -> None:
@@ -35,7 +78,9 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         list_status: str = "L",
         exchange: Optional[str] = None,
         ts_code: Optional[str] = None,
+        ts_codes: Optional[str] = None,
         name: Optional[str] = None,
+        name_contains: Optional[str] = None,
         market: Optional[str] = None,
         is_hs: Optional[str] = None,
         limit: int = 50,
@@ -44,18 +89,24 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        获取股票基础信息列表
+        获取股票基础信息列表（个股列表 / stock_basic）
 
         Args:
             list_status (str): 上市状态 L上市 D退市 P暂停上市，默认是L
             exchange (str, optional): 交易所 SSE上交所 SZSE深交所 BSE北交所
-            ts_code (str, optional): TS股票代码
-            name (str, optional): 名称
+            ts_code (str, optional): 单个 TS 股票代码（如 000001.SZ）
+            ts_codes (str, optional): 批量 TS 代码，逗号分隔，最多 50 个；与 ts_code 二选一，不可同时传。
+                返回合并去重后的列表（顺序与请求顺序一致，去重保留首次出现）。
+            name (str, optional): 名称（与 Tushare 一致，通常为精确匹配）
+            name_contains (str, optional): 名称模糊子串匹配。单段为「包含该子串」；
+                多段用英文逗号分隔表示 AND（名称、fullname、symbol 拼接文本需同时包含各段）。
+                与 name 二选一，不可同时传。实现为先拉全量再在服务端过滤，数据量大时请配合
+                exchange / list_status 等缩小范围并用 limit/offset 翻页。
             market (str, optional): 市场类别 主板/创业板/科创板/CDR/北交所
             is_hs (str, optional): 是否沪深港通标的，N否 H沪股通 S深股通
             limit (int): 本页条数上限，默认 50，最大 500（不截断字段；全量请用 offset 翻页至 has_more 为 false）
             offset (int): 本页偏移，默认 0；下一页使用返回 data.next_offset
-            fields (str, optional): 逗号分隔列名，缩小列集合可降低单次 token
+            fields (str, optional): 逗号分隔列名；name_contains 建议含 name、fullname、symbol 以便过滤
             token (str, optional): Tushare API token（覆盖环境变量）
 
         Returns:
@@ -76,21 +127,31 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             - delist_date: 退市日期
             - is_hs: 是否沪深港通标的
 
-            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining / next_offset / remaining
+            额外元信息：total_count / count / limit / offset / has_more / next_offset / remaining
         """
-        params: Dict[str, Any] = {}
-        if ts_code:
-            params["ts_code"] = ts_code
-        if name:
-            params["name"] = name
-        if market:
-            params["market"] = market
-        if list_status:
-            params["list_status"] = list_status
-        if exchange:
-            params["exchange"] = exchange
-        if is_hs:
-            params["is_hs"] = is_hs
+        ts_code_s = str(ts_code).strip() if ts_code else ""
+        ts_codes_list = _split_csv_pieces(ts_codes)
+        name_s = str(name).strip() if name else ""
+        name_kw = _name_keywords_from_contains(name_contains)
+
+        if ts_code_s and ts_codes_list:
+            return error_payload(
+                "ts_code 与 ts_codes 不能同时传入，请只使用其一",
+                400,
+                interface="stock_basic",
+            )
+        if name_s and name_kw:
+            return error_payload(
+                "name 与 name_contains 不能同时传入，请只使用其一",
+                400,
+                interface="stock_basic",
+            )
+        if len(ts_codes_list) > _MAX_STOCK_BASIC_BATCH_CODES:
+            return error_payload(
+                f"ts_codes 最多支持 {_MAX_STOCK_BASIC_BATCH_CODES} 个代码，当前 {len(ts_codes_list)} 个",
+                400,
+                interface="stock_basic",
+            )
 
         try:
             safe_offset = int(offset or 0)
@@ -110,7 +171,77 @@ def register_stock_data_tools(mcp: FastMCP) -> None:
             "ts_code,symbol,name,area,industry,market,exchange,"
             "list_status,list_date,is_hs"
         )
-        resp = _call("stock_basic", params, fields or default_fields, token)
+        effective_fields = fields or default_fields
+        if name_kw and "fullname" not in effective_fields:
+            effective_fields = f"{effective_fields},fullname"
+
+        base_params: Dict[str, Any] = {}
+        if market:
+            base_params["market"] = market
+        if list_status:
+            base_params["list_status"] = list_status
+        if exchange:
+            base_params["exchange"] = exchange
+        if is_hs:
+            base_params["is_hs"] = is_hs
+
+        def _one_stock_basic(extra: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
+            params = {**base_params, **extra}
+            resp = _call("stock_basic", params, effective_fields, token)
+            if resp.get("code") != 200:
+                return -1, []
+            data = resp.get("data") or {}
+            recs = data.get("records") or []
+            if not isinstance(recs, list):
+                return 0, []
+            return int(data.get("count", len(recs))), list(recs)
+
+        # 批量：逐代码请求后合并去重
+        if ts_codes_list:
+            merged: List[Dict[str, Any]] = []
+            for code in ts_codes_list:
+                cnt, recs = _one_stock_basic({"ts_code": code})
+                if cnt < 0:
+                    return _call("stock_basic", {**base_params, "ts_code": code}, effective_fields, token)
+                merged.extend(recs)
+            merged = _merge_stock_basic_by_ts_code(merged)
+            resp = {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "interface": "stock_basic",
+                    "count": len(merged),
+                    "records": merged,
+                    "ts_codes_requested": ts_codes_list,
+                },
+            }
+            return apply_pagination(resp, safe_limit, safe_offset)
+
+        params = dict(base_params)
+        if ts_code_s:
+            params["ts_code"] = ts_code_s
+        if name_s:
+            params["name"] = name_s
+
+        if name_kw:
+            fetch_extra: Dict[str, Any] = {"ts_code": ts_code_s} if ts_code_s else {}
+            cnt, all_recs = _one_stock_basic(fetch_extra)
+            if cnt < 0:
+                return _call("stock_basic", {**params, **fetch_extra}, effective_fields, token)
+            filtered = _filter_records_by_name_keywords(all_recs, name_kw)
+            resp = {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "interface": "stock_basic",
+                    "count": len(filtered),
+                    "records": filtered,
+                    "name_contains_applied": name_kw,
+                },
+            }
+            return apply_pagination(resp, safe_limit, safe_offset)
+
+        resp = _call("stock_basic", params, effective_fields, token)
         return apply_pagination(resp, safe_limit, safe_offset)
 
     @mcp.tool()
