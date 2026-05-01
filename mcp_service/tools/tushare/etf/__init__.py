@@ -5,7 +5,25 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from common.tushare_proxy import call_tushare
+from index_data.utils import replace_nan
 from mcp_service.tools.tushare._registry import apply_pagination, error_payload, safe_tool
+
+_ETF_BASIC_NAME_FIELDS = (
+    "ts_code,csname,extname,cname,index_code,index_name,setup_date,list_date,"
+    "delist_date,list_status,exchange,mgr_name,custod_name,mgt_fee,etf_type"
+)
+
+
+def _etf_basic_record_matches_name(record: dict, needle_lower: str) -> bool:
+    """子串匹配（不区分大小写）：中文简称、扩位简称、全称、ts_code。"""
+    for key in ("csname", "extname", "cname"):
+        val = record.get(key)
+        if isinstance(val, str) and needle_lower in val.lower():
+            return True
+    ts_code = record.get("ts_code")
+    if isinstance(ts_code, str) and needle_lower in ts_code.lower():
+        return True
+    return False
 
 
 def register_etf_tools(mcp: FastMCP) -> None:
@@ -61,6 +79,59 @@ def register_etf_tools(mcp: FastMCP) -> None:
         if mgr:
             params["mgr"] = mgr
         return _paginate(_call("etf_basic", params, fields, token), limit, offset)
+
+    @safe_tool(
+        mcp,
+        name="tushare.etf.etf_basic_search_by_name",
+        description=(
+            "按名称/代码子串模糊查询 ETF：拉取 etf_basic 后在本地匹配 csname、extname、cname、ts_code；"
+            "可选 exchange、list_status、mgr 先收窄上游数据。"
+        ),
+    )
+    def etf_basic_search_by_name(
+        name_query: str,
+        exchange: Optional[str] = None,
+        list_status: str = "L",
+        mgr: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        q = (name_query or "").strip()
+        if not q:
+            return error_payload("name_query 不能为空", 400, interface="etf_basic_search_by_name")
+
+        params: Dict[str, Any] = {}
+        if exchange:
+            params["exchange"] = exchange
+        if list_status:
+            params["list_status"] = list_status
+        if mgr:
+            params["mgr"] = mgr
+
+        use_fields = fields or _ETF_BASIC_NAME_FIELDS
+        resp = _call("etf_basic", params, use_fields, token)
+        if resp.get("code") != 200:
+            return resp
+
+        data = resp.get("data") or {}
+        records = data.get("records") or []
+        needle = q.lower()
+        matched = [replace_nan(r) for r in records if _etf_basic_record_matches_name(r, needle)]
+
+        wrapped = {
+            "code": 200,
+            "message": resp.get("message", "success"),
+            "timestamp": resp.get("timestamp"),
+            "data": {
+                "interface": "etf_basic_search_by_name",
+                "count": len(matched),
+                "records": matched,
+                "name_query": q,
+            },
+        }
+        return _paginate(wrapped, limit, offset)
 
     @safe_tool(
         mcp,
