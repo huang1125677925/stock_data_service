@@ -27,6 +27,31 @@ apply_deepseek_reasoning_patch()
 # Initialize MCP Server globally
 mcp_server = create_server()
 
+# GitHub mybook 记忆写入工具（与 mcp_service.tools.github_mybook_tools 注册名一致）
+_GITHUB_MYBOOK_WRITE_TOOL_NAMES = frozenset(
+    {"append_github_mybook_memory", "put_github_mybook_memory"}
+)
+
+# 用户希望写入/更新个人记忆库时的常见表述（用于检测是否必须走工具）
+_MEMORY_WRITE_INTENT_RE = re.compile(
+    r"(?:写入|保存|存入|记录到|记入|添加|新增|追加|覆盖|重新写入|同步到|写到|更新).{0,12}记忆"
+    r"|记忆.{0,12}(?:写入|保存|存入|追加|覆盖|更新)"
+    r"|memories?[/\\]"
+    r"|(?:覆盖|整文件|全文)(?:写入|替换|更新)",
+    re.IGNORECASE,
+)
+
+# 模型在未调用写入工具时易出现的「已完成写入」表述（用于触发一轮强制纠正）
+_MEMORY_FALSE_SUCCESS_RE = re.compile(
+    r"(?:已|已经)(?:覆盖|完整)?(?:写入|保存|追加|更新|同步)|"
+    r"(?:写入|保存|覆盖)(?:成功|完成)|"
+    r"✅.{0,20}(?:写入|保存|覆盖|完成)|"
+    r"记忆(?:文件|库)?.{0,8}(?:已|已经)(?:包含|更新|写入)|"
+    r"(?:文件|md|markdown).{0,12}(?:已|已经)(?:包含|更新|写入)",
+    re.IGNORECASE,
+)
+
+
 class ToolRoute(TypedDict):
     source: str
     name: str
@@ -78,7 +103,12 @@ class AiAgentService:
                 "6) 个人 GitHub 记忆库（mybook）：append_github_mybook_memory 向 Markdown 文件追加一条带时间的记录；"
                 "put_github_mybook_memory 整文件覆盖写入（更新/替换全文，如修订持仓表）；"
                 "read_github_mybook_file 读取、list_github_mybook_directory 浏览；路径为相对路径（位于 memories/ 等前缀下）。"
-                "写入前可先列出目录确认文件名；敏感信息勿写入仓库。"
+                "写入前可先列出目录确认文件名；敏感信息勿写入仓库。\n"
+                "7) 当用户明确要求将内容写入、追加、覆盖或更新到个人记忆库（含「记忆」「memories/」等表述）时，"
+                "必须先实际调用 append_github_mybook_memory 或 put_github_mybook_memory，且仅在工具返回成功后再向用户确认；"
+                "禁止在未调用上述写入工具的情况下声称已写入、已覆盖、已保存或已同步到记忆文件。\n"
+                "8) 需替换某记忆文件全文时用 put_github_mybook_memory；仅追加一条用 append_github_mybook_memory。"
+                "确认写入时请简要依据工具返回，避免仅凭口头断言。"
             ),
         )
         self.default_prompt = getattr(
@@ -195,6 +225,8 @@ class AiAgentService:
             "```\n"
             "可同时发起多个调用：`tool_calls` 为数组；`arguments` 须符合对应工具的 JSON Schema。\n"
             "不需要工具、信息已足够时，**不要**输出上述代码块，直接用自然语言回答用户。\n"
+            "若用户要求写入/追加/覆盖/更新个人记忆库（含 memories/、记忆等），必须先输出上述 JSON 代码块并调用 "
+            "append_github_mybook_memory 或 put_github_mybook_memory；不得在未输出该工具调用的情况下声称已完成写入。\n"
         )
         return base + instruction + "\n" + catalog
 
@@ -560,6 +592,7 @@ class AiAgentService:
             rounds = 0
             final_answer_text = ""
             tool_records: List[Dict[str, Any]] = []
+            memory_write_enforcement_injected = False
             while rounds < 20:
                 rounds += 1
                 
@@ -663,6 +696,25 @@ class AiAgentService:
                 else:
                     if accumulated_message is not None and not is_tool_call:
                         final_answer_text = str(accumulated_message.content or "").strip()
+                    if (
+                        self._user_requests_github_memory_write(sanitized_history)
+                        and openai_tools
+                        and accumulated_message is not None
+                        and not is_tool_call
+                        and final_answer_text
+                        and _MEMORY_FALSE_SUCCESS_RE.search(final_answer_text)
+                        and not self._tool_records_include_mybook_write(tool_records)
+                        and not memory_write_enforcement_injected
+                    ):
+                        memory_write_enforcement_injected = True
+                        logger.warning(
+                            "Memory write claimed without GitHub mybook write tool; "
+                            "injecting one enforcement user turn."
+                        )
+                        messages.append(
+                            HumanMessage(content=self._memory_write_enforcement_message())
+                        )
+                        continue
                     break
 
             try:
@@ -709,6 +761,30 @@ class AiAgentService:
             if isinstance(m, dict) and m.get("role") == "user":
                 return str(m.get("content") or "").strip()
         return ""
+
+    def _user_requests_github_memory_write(self, messages_data: List[Dict[str, Any]]) -> bool:
+        q = self._extract_last_user_question(messages_data)
+        if not q:
+            return False
+        return bool(_MEMORY_WRITE_INTENT_RE.search(q))
+
+    def _tool_records_include_mybook_write(
+        self, tool_records: List[Dict[str, Any]]
+    ) -> bool:
+        for item in tool_records or []:
+            name = str(item.get("tool_name") or "")
+            if name in _GITHUB_MYBOOK_WRITE_TOOL_NAMES and not item.get("is_error"):
+                return True
+        return False
+
+    def _memory_write_enforcement_message(self) -> str:
+        return (
+            "【系统纠正】上一轮中用户明确要求写入个人 GitHub 记忆库，但你未调用 "
+            "append_github_mybook_memory 或 put_github_mybook_memory，却声称已完成写入/覆盖/保存。"
+            "请在本轮**仅**通过工具完成写入：整文件替换用 put_github_mybook_memory，"
+            "单条追加用 append_github_mybook_memory；必要时先用 list_github_mybook_directory / "
+            "read_github_mybook_file。在工具返回成功前，不要用自然语言声称已写入。"
+        )
 
     def _mask_secret(self, value: str) -> str:
         """
