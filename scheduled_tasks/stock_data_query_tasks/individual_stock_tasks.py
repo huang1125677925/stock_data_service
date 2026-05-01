@@ -224,8 +224,9 @@ def update_individual_stock_realtime():
 def update_individual_stock_daily_data():
     """
     更新所有个股的日频数据
-    每天收盘后执行一次
-    只获取最近30天的数据
+
+    定时：工作日（周一至五）每 8 小时执行一次（与 settings.CRONJOBS 一致）。
+    只获取最近 30 天的数据。
     """
     logger.info("开始执行个股日频数据更新任务")
     
