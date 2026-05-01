@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -35,6 +35,30 @@ def register_index_tools(mcp: FastMCP) -> None:
         safe_offset = max(0, int(offset or 0))
         return apply_pagination(resp, safe_limit, safe_offset)
 
+    def _merge_index_basic_records(responses: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """合并多次 index_basic 调用的 records，按 ts_code 去重；遇非 200 则返回首个错误响应。"""
+        merged: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for resp in responses:
+            if resp.get("code") != 200:
+                return resp
+            for rec in (resp.get("data") or {}).get("records") or []:
+                code = rec.get("ts_code")
+                key = str(code) if code is not None else ""
+                if key and key not in seen:
+                    seen.add(key)
+                    merged.append(rec)
+        return {
+            "code": 200,
+            "message": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": {
+                "interface": "index_basic",
+                "count": len(merged),
+                "records": merged,
+            },
+        }
+
     @safe_tool(
         mcp,
         name="tushare.index.index_basic",
@@ -42,11 +66,15 @@ def register_index_tools(mcp: FastMCP) -> None:
             "指数元数据目录 index_basic（名称/发布方/基期等）。"
             "含 market=SW 的申万指数条目，但不含行业涨跌幅/估值/成分股明细；"
             "分析申万行业表现请用 sw_daily / rt_sw_k / django.index.sw_valuation_analysis。"
+            "支持 name_contains 按简称/全称子串本地筛选；"
+            "支持 ts_codes 逗号分隔批量查询多个 ts_code。"
         ),
     )
     def index_basic(
         ts_code: Optional[str] = None,
+        ts_codes: Optional[str] = None,
         name: Optional[str] = None,
+        name_contains: Optional[str] = None,
         market: Optional[str] = None,
         publisher: Optional[str] = None,
         category: Optional[str] = None,
@@ -56,18 +84,64 @@ def register_index_tools(mcp: FastMCP) -> None:
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """指数元数据 index_basic（非行情）。申万行业涨跌与 PE/PB 等请用 sw_daily，勿仅用本接口做行业分析。"""
-        params: Dict[str, Any] = {}
-        if ts_code:
-            params["ts_code"] = ts_code
+        max_batch_codes = 50
+        code_list: List[str] = []
+        if ts_code and str(ts_code).strip():
+            code_list.append(str(ts_code).strip())
+        if ts_codes:
+            for part in str(ts_codes).split(","):
+                c = part.strip()
+                if c and c not in code_list:
+                    code_list.append(c)
+        if len(code_list) > max_batch_codes:
+            return error_payload(
+                f"ts_code/ts_codes 合计最多 {max_batch_codes} 个",
+                400,
+                interface="index_basic",
+            )
+
+        base_params: Dict[str, Any] = {}
         if name:
-            params["name"] = name
+            base_params["name"] = name
         if market:
-            params["market"] = market
+            base_params["market"] = market
         if publisher:
-            params["publisher"] = publisher
+            base_params["publisher"] = publisher
         if category:
-            params["category"] = category
-        return _paginate(_call("index_basic", params, fields, token), limit, offset)
+            base_params["category"] = category
+
+        if len(code_list) > 1:
+            responses = [
+                _call("index_basic", {**base_params, "ts_code": c}, fields, token)
+                for c in code_list
+            ]
+            resp = _merge_index_basic_records(responses)
+        elif len(code_list) == 1:
+            params = {**base_params, "ts_code": code_list[0]}
+            resp = _call("index_basic", params, fields, token)
+        else:
+            params = dict(base_params)
+            resp = _call("index_basic", params, fields, token)
+
+        if resp.get("code") != 200:
+            return resp
+
+        needle = (name_contains or "").strip()
+        if needle:
+            data = resp.get("data") or {}
+            recs = data.get("records") or []
+            nlow = needle.casefold()
+            filtered = [
+                r
+                for r in recs
+                if nlow in str(r.get("name") or "").casefold()
+                or nlow in str(r.get("fullname") or "").casefold()
+            ]
+            data["count"] = len(filtered)
+            data["records"] = filtered
+            resp["data"] = data
+
+        return _paginate(resp, limit, offset)
 
     @safe_tool(
         mcp,
