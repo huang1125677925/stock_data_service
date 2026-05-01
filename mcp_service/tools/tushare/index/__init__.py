@@ -66,11 +66,44 @@ def register_index_tools(mcp: FastMCP) -> None:
             "指数元数据目录 index_basic（名称/发布方/基期等）。"
             "含 market=SW 的申万指数条目，但不含行业涨跌幅/估值/成分股明细；"
             "分析申万行业表现请用 sw_daily / rt_sw_k / django.index.sw_valuation_analysis。"
-            "支持 name_contains 按简称/全称子串本地筛选；"
-            "支持 ts_codes 逗号分隔批量查询多个 ts_code。"
         ),
     )
     def index_basic(
+        ts_code: Optional[str] = None,
+        name: Optional[str] = None,
+        market: Optional[str] = None,
+        publisher: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        fields: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """指数元数据 index_basic（非行情）。申万行业涨跌与 PE/PB 等请用 sw_daily，勿仅用本接口做行业分析。"""
+        params: Dict[str, Any] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if name:
+            params["name"] = name
+        if market:
+            params["market"] = market
+        if publisher:
+            params["publisher"] = publisher
+        if category:
+            params["category"] = category
+        return _paginate(_call("index_basic", params, fields, token), limit, offset)
+
+    @safe_tool(
+        mcp,
+        name="tushare.index.index_basic_search",
+        description=(
+            "指数元数据检索：在 index_basic 之上提供「简称/全称子串」本地模糊筛选（name_contains），"
+            "以及 ts_codes 逗号分隔批量按代码查询（合并去重）。"
+            "须至少提供 name_contains 或 ts_code/ts_codes 之一；"
+            "精确简称查询仍用 tushare.index.index_basic。"
+        ),
+    )
+    def index_basic_search(
         ts_code: Optional[str] = None,
         ts_codes: Optional[str] = None,
         name: Optional[str] = None,
@@ -83,7 +116,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         fields: Optional[str] = None,
         token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """指数元数据 index_basic（非行情）。申万行业涨跌与 PE/PB 等请用 sw_daily，勿仅用本接口做行业分析。"""
+        """指数元数据：名称子串筛选与多代码批量查询。底层仍调用 index_basic。"""
         max_batch_codes = 50
         code_list: List[str] = []
         if ts_code and str(ts_code).strip():
@@ -97,7 +130,15 @@ def register_index_tools(mcp: FastMCP) -> None:
             return error_payload(
                 f"ts_code/ts_codes 合计最多 {max_batch_codes} 个",
                 400,
-                interface="index_basic",
+                interface="index_basic_search",
+            )
+
+        needle = (name_contains or "").strip()
+        if not needle and not code_list:
+            return error_payload(
+                "请至少提供 name_contains，或 ts_code/ts_codes 之一",
+                400,
+                interface="index_basic_search",
             )
 
         base_params: Dict[str, Any] = {}
@@ -126,7 +167,6 @@ def register_index_tools(mcp: FastMCP) -> None:
         if resp.get("code") != 200:
             return resp
 
-        needle = (name_contains or "").strip()
         if needle:
             data = resp.get("data") or {}
             recs = data.get("records") or []
