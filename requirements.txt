@@ -11,6 +11,7 @@ aiohttp
 pandas
 numpy
 akshare
+baostock
 pywencai
 
 # 缓存和数据库
