@@ -230,17 +230,16 @@ def update_individual_stock_daily_data():
     logger.info("开始执行个股日频数据更新任务")
     
     try:
-        # 获取所有个股
-        stocks = IndividualStock.objects.filter()
+        # 仅 A 股个股（排除指数类 index_type 非空）
+        stocks = IndividualStock.objects.filter(index_type__isnull=True)
         
         if not stocks.exists():
             # 如果数据库中没有个股数据，先获取个股列表
             logger.info("数据库中没有个股数据，先获取个股列表")
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
-        stock_code_list = [stock for stock in stocks if stock.index_type is None]
-        print(len(stock_code_list))
-        # 更新所有个股的历史数据（最近30天）
-        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=10)
+        stock_code_list = list(stocks)
+        # 与文档一致：回溯约 30 个自然日，覆盖节假日与补数需求
+        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=30)
         
         logger.info(f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
         return {
@@ -350,17 +349,20 @@ def update_stock_history(
                 ).values_list('date', flat=True))
                 time.sleep(0.2)  # 避免请求过于频繁
 
-                print(f"股票 {stock.code} 已存在的历史数据日期数量: {len(existing_dates)}")
-                if len(existing_dates) > 1000:
-                    logger.info(f"股票 {stock.code} 已存在所有历史数据，无需更新")
-                    print(f"股票 {stock.code} 已存在所有历史数据，无需更新")
-                    continue
-
+                logger.debug(
+                    "股票 %s 在窗口内已有日线 %s 条",
+                    stock.code,
+                    len(existing_dates),
+                )
 
                 stock_code = judge_stock_type(stock.code)
                 daily_data_list = fetch_stock_daily_data(stock_code, start_date, end_date)
                 
-                print(f"股票 {stock.code} 从akshare获取到的历史数据数量: {len(daily_data_list)}")
+                logger.debug(
+                    "股票 %s 从数据源获取到 %s 条日线",
+                    stock.code,
+                    len(daily_data_list),
+                )
                 if not daily_data_list:
                     logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
                     continue
@@ -453,7 +455,17 @@ def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: st
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         start_date = start_date or thirty_days_ago
         end_date = end_date or today
-    
+
+    try:
+        return _fetch_stock_daily_data_after_login(stock_code, start_date, end_date)
+    finally:
+        try:
+            bs.logout()
+        except Exception:
+            logger.exception("baostock logout 失败（已忽略）")
+
+
+def _fetch_stock_daily_data_after_login(stock_code: str, start_date: str, end_date: str) -> List[StockDailyData]:
     #### 获取沪深A股历史K线数据 ####
     # 详细指标参数，参见"历史行情指标参数"章节；"分钟线"参数与"日线"参数不同。"分钟线"不包含指数。
     # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
@@ -536,10 +548,7 @@ def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: st
         except Exception as e:
             print(f"处理数据行时出错: {e}")
             print(f"错误数据行: {row_data}")
-    
-    #### 登出系统 ####
-    bs.logout()
-    
+
     return data_list
 
 def judge_stock_type(stock_code: str) -> str:
