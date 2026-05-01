@@ -238,9 +238,8 @@ def update_individual_stock_daily_data():
             logger.info("数据库中没有个股数据，先获取个股列表")
             return {"status": "error", "message": "数据库中没有个股数据，先获取个股列表"}
         stock_code_list = [stock for stock in stocks if stock.index_type is None]
-        print(len(stock_code_list))
-        # 更新所有个股的历史数据（最近30天）
-        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=10)
+        # 更新所有个股的历史数据（最近30天，baostock）
+        updated_stocks, updated_history = update_stock_history(stock_code_list=stock_code_list, days=30)
         
         logger.info(f"个股日频数据更新任务完成，更新: {updated_stocks}只个股，{updated_history}条历史数据")
         return {
@@ -292,9 +291,10 @@ def update_stock_history(
     更新股票历史数据（支持小批量分事务提交以降低数据库压力）
     
     功能:
-        - 从 akshare 拉取指定股票近 N 天的日线数据
+        - 从 baostock 拉取指定股票近 N 天的日线数据（query_history_k_data_plus，前复权）
         - 仅对不存在的记录进行批量插入（遵循 unique_together(stock, date)）
         - 采用“每个小批次一个事务”的方式提交，降低长事务带来的锁与日志压力
+        - 整次任务只登录 baostock 一次，避免每只股票重复 login 导致失败或限流
         - 可选忽略唯一冲突（ignore_conflicts），增强并发场景的健壮性
         - 可选按日期升序插入（order_by_date），优化索引写入的顺序性
         - 可选在批次之间短暂休眠（sleep_seconds），进行轻微节流
@@ -333,96 +333,100 @@ def update_stock_history(
         if not stock_code_list:
             logger.warning("需要更新的股票")
             return 0, 0
-        
-        # 遍历股票列表更新历史数据
-        for stock in stock_code_list:
-            # if stock.id in stock_code_list:
-            #     print(f"股票 {stock.code} 已存在历史数据，无需更新")
-            #     continue
 
-            logger.info(f"开始更新股票 {stock.code} 的历史数据")
-            try:
-                # 获取指定日期范围内已有的历史数据日期（用于去重）
-                existing_dates = set(IndividualStockDaily.objects.filter(
-                    stock=stock,
-                    date__gte=start_date_obj,
-                    date__lte=end_date_obj
-                ).values_list('date', flat=True))
-                time.sleep(0.2)  # 避免请求过于频繁
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.error(f"baostock 登录失败: {lg.error_msg}")
+            return 0, 0
+        try:
+            # 遍历股票列表更新历史数据（单次 baostock 会话）
+            for stock in stock_code_list:
+                logger.info(f"开始更新股票 {stock.code} 的历史数据")
+                try:
+                    # 获取指定日期范围内已有的历史数据日期（用于去重）
+                    existing_dates = set(IndividualStockDaily.objects.filter(
+                        stock=stock,
+                        date__gte=start_date_obj,
+                        date__lte=end_date_obj
+                    ).values_list('date', flat=True))
+                    time.sleep(0.2)  # 避免请求过于频繁
 
-                print(f"股票 {stock.code} 已存在的历史数据日期数量: {len(existing_dates)}")
-                if len(existing_dates) > 1000:
-                    logger.info(f"股票 {stock.code} 已存在所有历史数据，无需更新")
-                    print(f"股票 {stock.code} 已存在所有历史数据，无需更新")
-                    continue
+                    logger.debug(
+                        f"股票 {stock.code} 在 {start_date}~{end_date} 窗口内已有 {len(existing_dates)} 个交易日记录"
+                    )
 
+                    bs_code = judge_stock_type(stock.code)
+                    daily_data_list = fetch_stock_daily_data(
+                        bs_code, start_date, end_date, skip_login=True
+                    )
 
-                stock_code = judge_stock_type(stock.code)
-                daily_data_list = fetch_stock_daily_data(stock_code, start_date, end_date)
-                
-                print(f"股票 {stock.code} 从akshare获取到的历史数据数量: {len(daily_data_list)}")
-                if not daily_data_list:
-                    logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
-                    continue
-                
-                # 准备批量创建的数据
-                records_to_create = []
-                # 注：现有记录的“批量更新”逻辑在原实现中已注释，这里维持不变以避免额外写压力
-                
-                for row in daily_data_list:
-                    # 使用近似比较而不是精确比较，避免浮点数精度问题
-                    # 如果开盘价、收盘价、最高价和最低价非常接近（差异小于0.000001），则认为它们相等
-                    if abs(row.open - row.close) < 0.000001 and abs(row.open - row.high) < 0.000001 and abs(row.open - row.low) < 0.000001:
+                    logger.info(
+                        f"股票 {stock.code} 从 baostock 获取到的历史数据数量: {len(daily_data_list)}"
+                    )
+                    if not daily_data_list:
+                        logger.warning(f"获取股票 {stock.code} 历史行情数据为空")
                         continue
-                    # 将日期统一为 date 对象
-                    date_obj = datetime.strptime(str(row.date), '%Y-%m-%d').date()
-                    
-                    stock_daily_data = row.to_model_dict()
-                    
-                    # 仅为不存在的 (stock, date) 组合创建记录
-                    if date_obj not in existing_dates:
-                        stock_daily_data['stock'] = stock
-                        stock_daily_data['date'] = date_obj
-                        records_to_create.append(IndividualStockDaily(**stock_daily_data))
-                
-                # 可选：按日期升序插入，降低随机写入带来的索引抖动
-                if order_by_date and records_to_create:
-                    try:
-                        records_to_create.sort(key=lambda obj: obj.date)
-                    except Exception:
-                        pass
-                
-                # 分批提交，每个批次单独事务，降低锁与日志压力
-                created_total_for_stock = 0
-                if records_to_create:
-                    total = len(records_to_create)
-                    batches = (total + batch_size - 1) // batch_size
-                    for i in range(0, total, batch_size):
-                        chunk = records_to_create[i:i + batch_size]
+
+                    # 准备批量创建的数据
+                    records_to_create = []
+                    # 注：现有记录的“批量更新”逻辑在原实现中已注释，这里维持不变以避免额外写压力
+
+                    for row in daily_data_list:
+                        # 使用近似比较而不是精确比较，避免浮点数精度问题
+                        # 如果开盘价、收盘价、最高价和最低价非常接近（差异小于0.000001），则认为它们相等
+                        if abs(row.open - row.close) < 0.000001 and abs(row.open - row.high) < 0.000001 and abs(row.open - row.low) < 0.000001:
+                            continue
+                        # 将日期统一为 date 对象
+                        date_obj = datetime.strptime(str(row.date), '%Y-%m-%d').date()
+
+                        stock_daily_data = row.to_model_dict()
+
+                        # 仅为不存在的 (stock, date) 组合创建记录
+                        if date_obj not in existing_dates:
+                            stock_daily_data['stock'] = stock
+                            stock_daily_data['date'] = date_obj
+                            records_to_create.append(IndividualStockDaily(**stock_daily_data))
+
+                    # 可选：按日期升序插入，降低随机写入带来的索引抖动
+                    if order_by_date and records_to_create:
                         try:
-                            with transaction.atomic():
-                                inserted = IndividualStockDaily.objects.bulk_create(
-                                    chunk,
-                                    batch_size=batch_size,
-                                    ignore_conflicts=ignore_conflicts
-                                )
-                            created_total_for_stock += len(inserted)
-                        except Exception as be:
-                            # 单批失败不影响后续批次，记录错误并继续
-                            logger.error(f"股票 {stock.code} 第 {i//batch_size + 1}/{batches} 个批次插入失败: {be}")
-                        
-                        # 轻微节流，避免连续重写放大压力
-                        if sleep_seconds > 0:
-                            time.sleep(sleep_seconds)
-                    logger.info(f"股票 {stock.code} 新增 {created_total_for_stock} 条历史数据，共 {batches} 个批次（目标批量 {batch_size}）。")
-                
-                if created_total_for_stock > 0:
-                    updated_stocks += 1
-                    updated_history += created_total_for_stock
-                    logger.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} 完成股票 {stock.code} 的历史数据写入: 新增 {created_total_for_stock} 条")
-            except Exception as e:
-                logger.error(f"更新股票 {stock.code} 历史数据失败: {str(e)}")
-        
+                            records_to_create.sort(key=lambda obj: obj.date)
+                        except Exception:
+                            pass
+
+                    # 分批提交，每个批次单独事务，降低锁与日志压力
+                    created_total_for_stock = 0
+                    if records_to_create:
+                        total = len(records_to_create)
+                        batches = (total + batch_size - 1) // batch_size
+                        for i in range(0, total, batch_size):
+                            chunk = records_to_create[i:i + batch_size]
+                            try:
+                                with transaction.atomic():
+                                    inserted = IndividualStockDaily.objects.bulk_create(
+                                        chunk,
+                                        batch_size=batch_size,
+                                        ignore_conflicts=ignore_conflicts
+                                    )
+                                created_total_for_stock += len(inserted)
+                            except Exception as be:
+                                # 单批失败不影响后续批次，记录错误并继续
+                                logger.error(f"股票 {stock.code} 第 {i//batch_size + 1}/{batches} 个批次插入失败: {be}")
+
+                            # 轻微节流，避免连续重写放大压力
+                            if sleep_seconds > 0:
+                                time.sleep(sleep_seconds)
+                        logger.info(f"股票 {stock.code} 新增 {created_total_for_stock} 条历史数据，共 {batches} 个批次（目标批量 {batch_size}）。")
+
+                    if created_total_for_stock > 0:
+                        updated_stocks += 1
+                        updated_history += created_total_for_stock
+                        logger.info(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} 完成股票 {stock.code} 的历史数据写入: 新增 {created_total_for_stock} 条")
+                except Exception as e:
+                    logger.error(f"更新股票 {stock.code} 历史数据失败: {str(e)}")
+        finally:
+            bs.logout()
+
         logger.info(f"更新股票历史数据完成: 更新 {updated_stocks} 只股票，新增 {updated_history} 条历史数据")
         return updated_stocks, updated_history
         
@@ -431,115 +435,109 @@ def update_stock_history(
         return 0, 0
 
 
-def fetch_stock_daily_data(stock_code: str, start_date: str = None, end_date: str = None) -> List[StockDailyData]:
+def fetch_stock_daily_data(
+    stock_code: str,
+    start_date: str = None,
+    end_date: str = None,
+    *,
+    skip_login: bool = False,
+) -> List[StockDailyData]:
     """
-    获取指定股票在指定日期范围的日频数据。
+    获取指定股票在指定日期范围的日频数据（baostock）。
 
     :param stock_code: 股票代码，例如：sh.600000
     :param start_date: 开始日期，格式：YYYY-MM-DD，默认为当前日期前30天
     :param end_date: 结束日期，格式：YYYY-MM-DD，默认为当前日期
+    :param skip_login: 为 True 时不执行 login/logout（由调用方已建立 baostock 会话时使用）
     :return: StockDailyData对象列表
     """
-    #### 登陆系统 ####
-    lg = bs.login()
-    # 显示登陆返回信息
-    print('login respond error_code:'+lg.error_code)
-    print('login respond  error_msg:'+lg.error_msg)
+    own_session = not skip_login
+    if own_session:
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.error(f"baostock 登录失败: {lg.error_msg}")
+            return []
 
     # 如果未指定日期范围，默认查询最近30天数据
     if not start_date or not end_date:
-        from datetime import datetime, timedelta
         today = datetime.now().strftime('%Y-%m-%d')
         thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         start_date = start_date or thirty_days_ago
         end_date = end_date or today
-    
-    #### 获取沪深A股历史K线数据 ####
-    # 详细指标参数，参见"历史行情指标参数"章节；"分钟线"参数与"日线"参数不同。"分钟线"不包含指数。
-    # 分钟线指标：date,time,code,open,high,low,close,volume,amount,adjustflag
-    # 周月线指标：date,code,open,high,low,close,volume,amount,adjustflag,turn,pctChg
-    # 添加超时处理
+
     max_retries = 3
     retry_count = 0
     timeout_seconds = 10
-    
+    rs = None
+
     while retry_count < max_retries:
         try:
             import signal
             from contextlib import contextmanager
-            
+
             @contextmanager
             def timeout_handler(seconds):
                 def handle_timeout(signum, frame):
                     raise TimeoutError(f"查询超时，已经等待{seconds}秒")
-                
-                # 设置信号处理器
+
                 original_handler = signal.getsignal(signal.SIGALRM)
                 signal.signal(signal.SIGALRM, handle_timeout)
-                
-                # 设置闹钟
                 signal.alarm(seconds)
                 try:
                     yield
                 finally:
-                    # 取消闹钟并恢复原始处理器
                     signal.alarm(0)
                     signal.signal(signal.SIGALRM, original_handler)
-            
-            # 使用超时处理器执行查询
+
             with timeout_handler(timeout_seconds):
-                rs = bs.query_history_k_data_plus(stock_code,
+                rs = bs.query_history_k_data_plus(
+                    stock_code,
                     "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
-                    start_date=start_date, end_date=end_date,
-                    frequency="d", adjustflag="2")
-                
-                print('query_history_k_data_plus respond error_code:'+rs.error_code)
-                print('query_history_k_data_plus respond  error_msg:'+rs.error_msg)
-                
-                # 如果查询成功，跳出循环
-                if rs.error_code == '0':
-                    break
-                else:
-                    # 如果查询失败但不是超时问题，也跳出循环
-                    print(f"查询失败，错误码: {rs.error_code}, 错误信息: {rs.error_msg}")
-                    break
-                    
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency="d",
+                    adjustflag="2",
+                )
+
+            if rs.error_code == '0':
+                break
+            logger.warning(
+                f"baostock 日线查询失败 code={stock_code}: {rs.error_code} {rs.error_msg}"
+            )
+            break
+
         except TimeoutError as e:
             retry_count += 1
-            print(f"尝试 {retry_count}/{max_retries}: {str(e)}")
+            logger.warning(f"baostock 日线查询超时 {retry_count}/{max_retries}: {e}")
             if retry_count >= max_retries:
-                print(f"达到最大重试次数 {max_retries}，查询失败")
-                # 创建一个空的结果集
                 from baostock.data.resultset import ResultSet
+
                 rs = ResultSet()
                 rs.error_code = '1'
                 rs.error_msg = f'查询超时，已重试 {max_retries} 次'
         except Exception as e:
             retry_count += 1
-            print(f"尝试 {retry_count}/{max_retries}: 发生异常 - {str(e)}")
+            logger.warning(f"baostock 日线查询异常 {retry_count}/{max_retries}: {e}")
             if retry_count >= max_retries:
-                print(f"达到最大重试次数 {max_retries}，查询失败")
-                # 创建一个空的结果集
                 from baostock.data.resultset import ResultSet
+
                 rs = ResultSet()
                 rs.error_code = '1'
                 rs.error_msg = f'查询发生异常: {str(e)}'
 
-    #### 处理结果集 ####
-    data_list = []
-    while (rs.error_code == '0') & rs.next():
-        # 获取一条记录，将记录转换为StockDailyData对象
-        row_data = rs.get_row_data()
-        try:
-            stock_data = StockDailyData.from_baostock_row(row_data)
-            data_list.append(stock_data)
-        except Exception as e:
-            print(f"处理数据行时出错: {e}")
-            print(f"错误数据行: {row_data}")
-    
-    #### 登出系统 ####
-    bs.logout()
-    
+    data_list: List[StockDailyData] = []
+    if rs is not None and rs.error_code == '0':
+        while rs.next():
+            row_data = rs.get_row_data()
+            try:
+                stock_data = StockDailyData.from_baostock_row(row_data)
+                data_list.append(stock_data)
+            except Exception as e:
+                logger.warning(f"处理 baostock 日线行失败: {e} row={row_data}")
+
+    if own_session:
+        bs.logout()
+
     return data_list
 
 def judge_stock_type(stock_code: str) -> str:
