@@ -1,0 +1,512 @@
+from django.shortcuts import render
+from django.db import models
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.core.paginator import Paginator
+from .services import get_sse_daily_overview, get_rise_fall_ratio_data
+from .models import IndexBasicData, StockMarketFundFlow
+import logging
+from common.response import success_response, error_response
+
+logger = logging.getLogger(__name__)
+
+class SSEDailyOverviewView(APIView):
+    """
+    获取上海证券交易所每日概况数据的API视图
+    """
+    def get(self, request):
+        """
+        获取上证每日概况数据
+        
+        参数:
+            date (str, optional): 日期，格式为YYYYMMDD，默认为最近一个交易日
+        """
+        try:
+            date = request.query_params.get('date')
+            result = get_sse_daily_overview(date)
+            return success_response(result)
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"获取上证每日概况数据失败: {str(e)}")
+            return error_response(f'获取上证每日概况数据失败: {str(e)}', 500)
+
+
+class IndexBasicDataView(APIView):
+    """
+    指数基础数据查询接口
+    
+    功能：提供指数基础数据的增删改查操作
+    支持的操作：
+        - GET: 查询指数列表（支持分页、搜索）
+        - POST: 创建新的指数记录
+        - PUT: 更新指数信息
+        - DELETE: 删除指数记录
+    """
+    
+    def get(self, request):
+        """
+        查询指数基础数据列表
+        
+        参数:
+            page (int, optional): 页码，默认为1
+            page_size (int, optional): 每页数量，默认为20，最大100
+            search (str, optional): 搜索关键词，支持按代码或名称搜索
+            code (str, optional): 精确匹配指数代码
+        
+        返回:
+            包含指数列表和分页信息的响应
+        """
+        try:
+            # 获取查询参数
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            search = request.query_params.get('search', '').strip()
+            code = request.query_params.get('code', '').strip()
+            
+            # 构建查询集
+            queryset = IndexBasicData.objects.all()
+            
+            # 精确匹配代码
+            if code:
+                queryset = queryset.filter(code=code)
+            # 模糊搜索
+            elif search:
+                queryset = queryset.filter(
+                    models.Q(code__icontains=search) | 
+                    models.Q(name__icontains=search)
+                )
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # 序列化数据
+            data = []
+            for item in page_obj:
+                data.append({
+                    'id': item.id,
+                    'code': item.code,
+                    'name': item.name,
+                    'created_at': item.created_at.isoformat(),
+                    'updated_at': item.updated_at.isoformat()
+                })
+            
+            # 构建响应数据
+            result = {
+                'list': data,
+                'pagination': {
+                    'current_page': page_obj.number,
+                    'total_pages': paginator.num_pages,
+                    'total_count': paginator.count,
+                    'page_size': page_size,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous()
+                }
+            }
+            
+            return success_response(result, '查询成功')
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询指数基础数据失败: {str(e)}")
+            return error_response(f'查询指数基础数据失败: {str(e)}', 500)
+    
+    def post(self, request):
+        """
+        创建新的指数记录
+        
+        参数:
+            code (str): 指数代码，必填
+            name (str): 指数名称，必填
+        
+        返回:
+            创建成功的指数信息
+        """
+        try:
+            data = request.data
+            code = data.get('code', '').strip()
+            name = data.get('name', '').strip()
+            
+            # 参数验证
+            if not code:
+                return error_response('指数代码不能为空', 400)
+            if not name:
+                return error_response('指数名称不能为空', 400)
+            
+            # 检查代码是否已存在
+            if IndexBasicData.objects.filter(code=code).exists():
+                return error_response(f'指数代码 {code} 已存在', 400)
+            
+            # 创建记录
+            index_data = IndexBasicData.objects.create(
+                code=code,
+                name=name
+            )
+            
+            result = {
+                'id': index_data.id,
+                'code': index_data.code,
+                'name': index_data.name,
+                'created_at': index_data.created_at.isoformat(),
+                'updated_at': index_data.updated_at.isoformat()
+            }
+            
+            return success_response(result, '创建成功')
+            
+        except Exception as e:
+            logger.error(f"创建指数基础数据失败: {str(e)}")
+            return error_response(f'创建指数基础数据失败: {str(e)}', 500)
+    
+    def put(self, request):
+        """
+        更新指数信息
+        
+        参数:
+            id (int): 指数ID，必填
+            code (str, optional): 新的指数代码
+            name (str, optional): 新的指数名称
+        
+        返回:
+            更新后的指数信息
+        """
+        try:
+            data = request.data
+            index_id = data.get('id')
+            
+            if not index_id:
+                return error_response('指数ID不能为空', 400)
+            
+            # 查找记录
+            try:
+                index_data = IndexBasicData.objects.get(id=index_id)
+            except IndexBasicData.DoesNotExist:
+                return error_response('指数记录不存在', 404)
+            
+            # 更新字段
+            code = data.get('code', '').strip()
+            name = data.get('name', '').strip()
+            
+            if code and code != index_data.code:
+                # 检查新代码是否已存在
+                if IndexBasicData.objects.filter(code=code).exclude(id=index_id).exists():
+                    return error_response(f'指数代码 {code} 已存在', 400)
+                index_data.code = code
+            
+            if name:
+                index_data.name = name
+            
+            index_data.save()
+            
+            result = {
+                'id': index_data.id,
+                'code': index_data.code,
+                'name': index_data.name,
+                'created_at': index_data.created_at.isoformat(),
+                'updated_at': index_data.updated_at.isoformat()
+            }
+            
+            return success_response(result, '更新成功')
+            
+        except Exception as e:
+            logger.error(f"更新指数基础数据失败: {str(e)}")
+            return error_response(f'更新指数基础数据失败: {str(e)}', 500)
+    
+    def delete(self, request):
+        """
+        删除指数记录
+        
+        参数:
+            id (int): 指数ID，必填
+        
+        返回:
+            删除结果
+        """
+        try:
+            data = request.data
+            index_id = data.get('id')
+            
+            if not index_id:
+                return error_response('指数ID不能为空', 400)
+            
+            # 查找并删除记录
+            try:
+                index_data = IndexBasicData.objects.get(id=index_id)
+                index_data.delete()
+                return success_response(None, '删除成功')
+            except IndexBasicData.DoesNotExist:
+                return error_response('指数记录不存在', 404)
+            
+        except Exception as e:
+            logger.error(f"删除指数基础数据失败: {str(e)}")
+            return error_response(f'删除指数基础数据失败: {str(e)}', 500)
+
+
+class IndexHighLowStatisticsView(APIView):
+    """
+    指数涨跌统计数据API视图
+    
+    功能：提供指数涨跌统计数据的查询接口（仅从数据库查询）
+    支持的操作：
+        - GET: 查询指数涨跌统计数据
+    参数：
+        - index_code: 指数代码（all/sz50/hs300/zz500）
+        - start_date: 开始日期
+        - end_date: 结束日期
+        - limit: 返回记录数量限制
+    返回值：包含涨跌统计数据的JSON响应
+    事件：数据查询操作
+    """
+    
+    def get(self, request):
+        """
+        查询指数涨跌统计数据（仅从数据库查询）
+        
+        参数:
+            index_code (str, optional): 指数代码，可选值：'all', 'sz50', 'hs300', 'zz500'
+            start_date (str, optional): 开始日期，格式：YYYY-MM-DD
+            end_date (str, optional): 结束日期，格式：YYYY-MM-DD
+            limit (int, optional): 返回记录数量限制，默认30
+        """
+        try:
+            index_code = request.query_params.get('index_code')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            limit = int(request.query_params.get('limit', 30))
+            
+            # 从数据库查询数据
+            result = get_rise_fall_ratio_data(
+                index_code=index_code,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
+            return success_response(result, '查询指数涨跌统计数据成功')
+                
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询涨跌统计数据失败: {str(e)}")
+            return error_response(f'查询涨跌统计数据失败: {str(e)}', 500)
+
+
+class RiseFallRatioView(APIView):
+    """
+    涨跌比数据查询API视图
+    
+    功能：查询指数的涨跌比历史数据
+    参数：
+        - index_code: 指数代码（可选）
+        - start_date: 开始日期（可选）
+        - end_date: 结束日期（可选）
+        - limit: 返回记录数限制
+    返回值：涨跌比数据列表
+    事件：数据库查询操作
+    """
+    
+    def get(self, request):
+        """
+        查询涨跌比数据
+        
+        参数:
+            index_code (str, optional): 指数代码，不指定则查询所有
+            start_date (str, optional): 开始日期，格式YYYY-MM-DD
+            end_date (str, optional): 结束日期，格式YYYY-MM-DD
+            limit (int, optional): 返回记录数限制，默认30条
+        """
+        try:
+            index_code = request.query_params.get('index_code')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            limit = int(request.query_params.get('limit', 500))
+            
+            # 验证limit参数
+            if limit <= 0 or limit > 1000:
+                return error_response('limit参数必须在1-1000之间', 400)
+            
+            result = get_rise_fall_ratio_data(
+                index_code=index_code,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
+            
+            return success_response({
+                'count': len(result),
+                'results': result
+            }, '查询涨跌比数据成功')
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询涨跌比数据失败: {str(e)}")
+            return error_response(f'查询涨跌比数据失败: {str(e)}', 500)
+
+
+class StockMarketFundFlowView(APIView):
+    """
+    大盘资金流数据查询接口
+    
+    功能：提供大盘资金流数据的查询操作（仅从数据库查询）
+    支持的操作：
+        - GET: 查询大盘资金流数据（支持分页、日期范围查询）
+    参数：
+        - start_date: 开始日期，格式：YYYY-MM-DD
+        - end_date: 结束日期，格式：YYYY-MM-DD
+        - page: 页码，默认为1
+        - page_size: 每页数量，默认为20，最大100
+        - order_by: 排序字段，默认按日期倒序
+    返回值：包含资金流数据和分页信息的JSON响应
+    事件：数据库查询操作
+    """
+    
+    def get(self, request):
+        """
+        查询大盘资金流数据
+        
+        参数:
+            start_date (str, optional): 开始日期，格式：YYYY-MM-DD
+            end_date (str, optional): 结束日期，格式：YYYY-MM-DD
+            page (int, optional): 页码，默认为1
+            page_size (int, optional): 每页数量，默认为20，最大100
+            order_by (str, optional): 排序字段，可选值：date, -date（默认）
+        
+        返回:
+            包含资金流数据列表和分页信息的响应
+        """
+        try:
+            # 获取查询参数
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            order_by = request.query_params.get('order_by', '-date')
+            
+            # 验证参数
+            if page <= 0:
+                return error_response('页码必须大于0', 400)
+            if page_size <= 0:
+                return error_response('每页数量必须大于0', 400)
+            
+            # 构建查询集
+            queryset = StockMarketFundFlow.objects.all()
+            
+            # 日期范围过滤
+            if start_date:
+                try:
+                    queryset = queryset.filter(date__gte=start_date)
+                except ValueError:
+                    return error_response('开始日期格式错误，请使用YYYY-MM-DD格式', 400)
+            
+            if end_date:
+                try:
+                    queryset = queryset.filter(date__lte=end_date)
+                except ValueError:
+                    return error_response('结束日期格式错误，请使用YYYY-MM-DD格式', 400)
+            
+            # 排序
+            if order_by in ['date', 'created_at', '-created_at']:
+                queryset = queryset.order_by(order_by)
+            else:
+                queryset = queryset.order_by('date')  # 默认按日期倒序
+            
+            # 分页处理
+            paginator = Paginator(queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # 序列化数据
+            data = []
+            for item in page_obj:
+                data.append({
+                    'id': item.id,
+                    'date': item.date.isoformat(),
+                    'main_net_inflow_amount': float(item.main_net_inflow_amount) if item.main_net_inflow_amount else None,
+                    'small_net_inflow_amount': float(item.small_net_inflow_amount) if item.small_net_inflow_amount else None,
+                    'medium_net_inflow_amount': float(item.medium_net_inflow_amount) if item.medium_net_inflow_amount else None,
+                    'large_net_inflow_amount': float(item.large_net_inflow_amount) if item.large_net_inflow_amount else None,
+                    'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount) if item.super_large_net_inflow_amount else None,
+                    'main_net_inflow_ratio': float(item.main_net_inflow_ratio) if item.main_net_inflow_ratio else None,
+                    'small_net_inflow_ratio': float(item.small_net_inflow_ratio) if item.small_net_inflow_ratio else None,
+                    'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio) if item.medium_net_inflow_ratio else None,
+                    'large_net_inflow_ratio': float(item.large_net_inflow_ratio) if item.large_net_inflow_ratio else None,
+                    'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio) if item.super_large_net_inflow_ratio else None,
+                    'shanghai_close_price': float(item.shanghai_close_price) if item.shanghai_close_price else None,
+                    'shanghai_change_rate': float(item.shanghai_change_rate) if item.shanghai_change_rate else None,
+                    'shenzhen_close_price': float(item.shenzhen_close_price) if item.shenzhen_close_price else None,
+                    'shenzhen_change_rate': float(item.shenzhen_change_rate) if item.shenzhen_change_rate else None,
+                    'created_at': item.created_at.isoformat(),
+                    'updated_at': item.updated_at.isoformat()
+                })
+            
+            # 构建响应数据
+            result = {
+                'list': data,
+                'pagination': {
+                    'current_page': page_obj.number,
+                    'total_pages': paginator.num_pages,
+                    'total_count': paginator.count,
+                    'page_size': page_size,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous()
+                }
+            }
+            
+            return success_response(result, '查询大盘资金流数据成功')
+            
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询大盘资金流数据失败: {str(e)}")
+            return error_response(f'查询大盘资金流数据失败: {str(e)}', 500)
+
+
+class IndexInfoView(APIView):
+    """
+    指数信息查询接口（仅从数据库读取）
+
+    功能：提供指数基础信息的查询（code/name），支持按代码精确匹配或关键词搜索。
+    参数：
+        - code: 指数代码（精确匹配）
+        - search: 关键词，模糊匹配代码或名称
+        - limit: 返回数量上限，默认100，最大1000
+    返回：
+        - list: 指数记录列表（id, code, name）
+        - count: 返回记录数量
+    """
+
+    def get(self, request):
+        try:
+            code = request.query_params.get('code', '').strip()
+            search = request.query_params.get('search', '').strip()
+            limit = int(request.query_params.get('limit', 100))
+            limit = max(1, min(limit, 1000))
+
+            qs = IndexBasicData.objects.all()
+            if code:
+                qs = qs.filter(code=code)
+            elif search:
+                qs = qs.filter(models.Q(code__icontains=search) | models.Q(name__icontains=search))
+
+            records = []
+            for item in qs[:limit]:
+                records.append({
+                    'id': item.id,
+                    'code': item.code,
+                    'name': item.name,
+                })
+
+            return success_response({'count': len(records), 'list': records}, '查询指数信息成功')
+
+        except ValueError as e:
+            logger.error(f"参数格式错误: {str(e)}")
+            return error_response(f'参数格式错误: {str(e)}', 400)
+        except Exception as e:
+            logger.error(f"查询指数信息失败: {str(e)}")
+            return error_response(f'查询指数信息失败: {str(e)}', 500)

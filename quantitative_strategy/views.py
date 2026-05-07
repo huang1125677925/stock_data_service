@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+"""
+量化策略API视图
+提供策略回测相关的API接口
+"""
+
+import os
+from django.http import JsonResponse, HttpResponse, Http404
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.decorators import login_required
+import json
+import logging
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from django.conf import settings
+
+from common.response import success_response, error_response
+from common.validators import validate_pagination_params
+from .services import backtest_service
+from .models import BacktestTask, BacktestResult
+from user_management.decorators import jwt_login_required
+
+logger = logging.getLogger(__name__)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_strategies(request):
+    """
+    获取可用策略列表
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "strategies": {
+                    "ma_cross": {
+                        "name": "ma_cross",
+                        "description": "移动平均线交叉策略",
+                        "params": {...}
+                    },
+                    ...
+                }
+            }
+        }
+    """
+    try:
+        strategies = backtest_service.get_available_strategies()
+        
+        return success_response({
+            'strategies': strategies,
+            'total': len(strategies)
+        })
+        
+    except Exception as e:
+        logger.error(f"获取策略列表失败: {str(e)}")
+        return error_response(f"获取策略列表失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@jwt_login_required
+@require_http_methods(["POST"])
+def create_backtest(request):
+    """
+    创建回测任务
+    
+    Request Body:
+        {
+            "strategy_name": "ma_cross",
+            "stock_code": "000001" 或 ETF ts_code （当 data_source=etf 时，如 "510300.SH"）, 
+            "start_date": "2023-01-01",
+            "end_date": "2023-12-31",
+            "initial_cash": 100000,
+            "commission": 0.001,
+            "frequency": "daily",  # 可选：daily（默认）或 weekly（周频）
+            "data_source": "stock" 或 "etf"，默认 "stock",
+            "strategy_params": {
+                "short_period": 5,
+                "long_period": 20
+            }
+        }
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_id": "uuid-string"
+            }
+        }
+    """
+    try:
+        # 解析请求数据
+        data = json.loads(request.body)
+        
+        # 验证必需参数
+        required_fields = ['strategy_name', 'stock_code', 'stock_name', 'start_date', 'end_date']
+        for field in required_fields:
+            if field not in data:
+                return error_response(f"缺少必需参数: {field}", 400)
+        
+        strategy_name = data['strategy_name']
+        stock_code = data['stock_code']
+        stock_name = data['stock_name']
+        start_date = data['start_date']
+        end_date = data['end_date']
+        frequency = str(data.get('frequency', 'daily')).lower()
+        data_source = str(data.get('data_source', 'stock')).lower()
+
+        # 校验频率参数
+        if frequency not in ('daily', 'weekly'):
+            return error_response("frequency 参数仅支持 'daily' 或 'weekly'", 400)
+
+        # 校验数据来源
+        if data_source not in ('stock', 'etf'):
+            return error_response("data_source 参数仅支持 'stock' 或 'etf'", 400)
+        
+        # 验证日期格式
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            
+            if start_dt >= end_dt:
+                return error_response("开始日期必须早于结束日期", 400)
+            
+            if end_dt > datetime.now():
+                return error_response("结束日期不能超过当前日期", 400)
+                
+        except ValueError:
+            return error_response("日期格式错误，请使用YYYY-MM-DD格式", 400)
+        
+        # 验证标的代码格式：根据数据来源不同校验规则不同
+        if data_source == 'stock':
+            if not stock_code or len(stock_code) != 6 or not stock_code.isdigit():
+                return error_response("股票代码格式错误，请输入6位数字代码", 400)
+        else:
+            # ETF 使用 ts_code 形如 510300.SH / 159915.SZ / 430047.BJ
+            import re
+            if not re.match(r"^\d{6}\.(SH|SZ|BJ)$", stock_code):
+                return error_response("ETF代码格式错误，请使用如 510300.SH 的 ts_code 格式", 400)
+        
+        # 获取可选参数
+        initial_cash = float(data.get('initial_cash', 100000))
+        commission = float(data.get('commission', 0.001))
+        strategy_params = data.get('strategy_params', {})
+        
+        # 验证参数范围
+        if initial_cash <= 0:
+            return error_response("初始资金必须大于0", 400)
+        
+        if commission < 0 or commission > 0.1:
+            return error_response("手续费率必须在0-0.1之间", 400)
+        
+        # 验证策略是否存在
+        available_strategies = backtest_service.get_available_strategies()
+        strategy_names = [strategy['name'] for strategy in available_strategies]
+        if strategy_name not in strategy_names:
+            return error_response(f"策略 {strategy_name} 不存在", 400)
+        
+        # 创建回测任务
+        task_id = backtest_service.create_backtest_task(
+            strategy_name=strategy_name,
+            stock_code=stock_code,
+            stock_name=stock_name,
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            commission=commission,
+            strategy_params=strategy_params,
+            frequency=frequency,
+            data_source=data_source,
+            user=request.user
+        )
+        
+        return success_response({
+            'task_id': task_id
+        })
+        
+    except json.JSONDecodeError:
+        return error_response("请求数据格式错误", 400)
+    except Exception as e:
+        logger.error(f"创建回测任务失败: {str(e)}")
+        return error_response(f"创建回测任务失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def run_backtest(request, task_id):
+    """
+    执行回测任务
+    
+    Args:
+        task_id: 任务ID
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_id": "uuid-string",
+                "status": "completed",
+                "result": {
+                    "total_return": 15.25,
+                    "annual_return": 12.8,
+                    "sharpe_ratio": 1.25,
+                    "max_drawdown": -8.5,
+                    "total_trades": 25,
+                    "win_rate": 60.0
+                }
+            }
+        }
+    """
+    try:
+        # 验证任务是否存在
+        try:
+            task = BacktestTask.objects.get(task_id=task_id)
+        except BacktestTask.DoesNotExist:
+            return error_response("任务不存在", 404)
+        
+        # 检查任务状态
+        if task.status == 'completed':
+            return error_response("任务已完成，无需重复执行", 400)
+        
+        if task.status == 'running':
+            return error_response("任务正在运行中", 400)
+        
+        # 执行回测
+        result = backtest_service.run_backtest(task_id)
+        
+        return success_response(result)
+        
+    except Exception as e:
+        logger.error(f"执行回测任务失败: {str(e)}")
+        return error_response(f"执行回测任务失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_task_status(request, task_id):
+    """
+    获取任务状态
+    
+    Args:
+        task_id: 任务ID
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_id": "uuid-string",
+                "status": "completed",
+                "strategy_name": "ma_cross",
+                "stock_code": "000001",
+                "result": {...}
+            }
+        }
+    """
+    try:
+        result = backtest_service.get_task_status(task_id)
+        
+        if result['status'] == 'not_found':
+            return error_response("任务不存在", 404)
+        
+        return success_response(result)
+        
+    except Exception as e:
+        logger.error(f"获取任务状态失败: {str(e)}")
+        return error_response(f"获取任务状态失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+@jwt_login_required
+def get_backtest_history(request):
+    """
+    获取回测历史记录
+    
+    Query Parameters:
+        limit (int): 返回记录数量限制，默认20
+        offset (int): 偏移量，默认0
+        strategy_name (str): 策略名称过滤
+        stock_code (str): 股票代码过滤
+        status (str): 状态过滤
+        data_source (str): 数据来源过滤，支持 stock/etf
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "total": 100,
+                "tasks": [...]
+            }
+        }
+    """
+    try:
+        # 获取查询参数
+        limit = int(request.GET.get('limit', 20))
+        offset = int(request.GET.get('offset', 0))
+        strategy_name = request.GET.get('strategy_name')
+        stock_code = request.GET.get('stock_code')
+        status = request.GET.get('status')
+        data_source = request.GET.get('data_source')
+
+        # 验证分页参数
+        limit, offset = validate_pagination_params(limit, offset)
+
+        # 基础查询：按用户过滤，按创建时间倒序，且仅提取必要字段以减少IO
+        fields = [
+            'id', 'task_id', 'strategy_name', 'stock_code', 'stock_name',
+            'start_date', 'end_date', 'initial_cash', 'commission', 'frequency',
+            'strategy_params', 'status', 'created_at', 'updated_at', 'completed_at',
+            'error_message', 'data_source'
+        ]
+        queryset = (
+            BacktestTask.objects
+            .filter(user=request.user)
+            .order_by('-created_at')
+            .only(*fields)
+        )
+
+        # 应用过滤条件（使用精确匹配确保索引命中）
+        if strategy_name:
+            queryset = queryset.filter(strategy_name=strategy_name)
+        if stock_code:
+            queryset = queryset.filter(stock_code=stock_code)
+        if status:
+            queryset = queryset.filter(status=status)
+        if data_source:
+            queryset = queryset.filter(data_source=data_source)
+
+        # 获取总数（与分页分离，避免COUNT与大范围切片一起触发慢查询）
+        total = queryset.count()
+
+        # 分页查询（先切片再转为列表，避免后续多次数据库访问）
+        tasks = list(queryset[offset:offset + limit])
+
+        # 批量预取回测结果，避免循环中 N+1 查询
+        results_qs = (
+            BacktestResult.objects
+            .filter(task__in=tasks)
+            .only('task_id', 'total_return', 'annual_return', 'sharpe_ratio', 'max_drawdown', 'total_trades', 'win_rate')
+        )
+        # 使用字典映射：key 为任务主键（FK列 task_id），value 为结果对象
+        results_map = {r.task_id: r for r in results_qs}
+
+        # 构建响应数据
+        task_list = []
+        for task in tasks:
+            task_data = {
+                'task_id': task.task_id,
+                'strategy_name': task.strategy_name,
+                'stock_code': task.stock_code,
+                'stock_name': task.stock_name,
+                'start_date': task.start_date.strftime('%Y-%m-%d'),
+                'end_date': task.end_date.strftime('%Y-%m-%d'),
+                'initial_cash': float(task.initial_cash),
+                'commission': float(task.commission),
+                'frequency': task.frequency,
+                'strategy_params': task.strategy_params,
+                'data_source': getattr(task, 'data_source', 'stock'),
+                'status': task.status,
+                'created_at': task.created_at.isoformat(),
+                'updated_at': task.updated_at.isoformat()
+            }
+
+            # 如果任务完成，添加结果摘要（使用预取的映射）
+            if task.status == 'completed':
+                res = results_map.get(task.pk)
+                if res:
+                    task_data['result_summary'] = {
+                        'total_return': float(res.total_return),
+                        'annual_return': float(res.annual_return),
+                        'sharpe_ratio': float(res.sharpe_ratio) if res.sharpe_ratio is not None else None,
+                        'max_drawdown': float(res.max_drawdown) if res.max_drawdown is not None else None,
+                        'total_trades': res.total_trades,
+                        'win_rate': float(res.win_rate) if res.win_rate is not None else None
+                    }
+                task_data['completed_at'] = task.completed_at.isoformat() if task.completed_at else None
+            elif task.status == 'failed':
+                task_data['error'] = task.error_message
+                task_data['completed_at'] = task.completed_at.isoformat() if task.completed_at else None
+
+            task_list.append(task_data)
+
+        return success_response({
+            'total': total,
+            'tasks': task_list,
+            'limit': limit,
+            'offset': offset
+        })
+    except Exception as e:
+        # 统一错误响应（符合接口规范）
+        return error_response(f'获取回测历史失败: {str(e)}')
+        
+    except Exception as e:
+        logger.error(f"获取回测历史失败: {str(e)}")
+        return error_response(f"获取回测历史失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_backtest_result(request, task_id):
+    """
+    获取详细回测结果
+    
+    Args:
+        task_id: 任务ID
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_info": {...},
+                "performance": {...},
+                "trades": [...]
+            }
+        }
+    """
+    try:
+        # 获取任务
+        try:
+            task = BacktestTask.objects.get(task_id=task_id)
+        except BacktestTask.DoesNotExist:
+            return error_response("任务不存在", 404)
+        
+        # 检查任务状态
+        if task.status != 'completed':
+            return error_response("任务未完成", 400)
+        
+        # 获取结果
+        try:
+            result = BacktestResult.objects.get(task=task)
+        except BacktestResult.DoesNotExist:
+            return error_response("回测结果不存在", 404)
+        
+        # 构建响应数据
+        response_data = {
+            'task_info': {
+                'task_id': task.task_id,
+                'strategy_name': task.strategy_name,
+                'stock_code': task.stock_code,
+                'stock_name': task.stock_name,
+                'data_source': getattr(task, 'data_source', 'stock'),
+                'start_date': task.start_date.strftime('%Y-%m-%d'),
+                'end_date': task.end_date.strftime('%Y-%m-%d'),
+                'initial_cash': float(task.initial_cash),
+                'commission': float(task.commission),
+                'strategy_params': task.strategy_params,
+                'created_at': task.created_at.isoformat(),
+                'completed_at': task.completed_at.isoformat() if task.completed_at else None
+            },
+            'performance': {
+                'initial_value': float(result.initial_value),
+                'final_value': float(result.final_value),
+                'total_return': float(result.total_return),
+                'annual_return': float(result.annual_return),
+                'sharpe_ratio': float(result.sharpe_ratio) if result.sharpe_ratio else None,
+                'max_drawdown': float(result.max_drawdown) if result.max_drawdown else None,
+                'volatility': float(result.volatility) if result.volatility else None,
+                'total_trades': result.total_trades,
+                'winning_trades': result.winning_trades,
+                'losing_trades': result.losing_trades,
+                'win_rate': float(result.win_rate) if result.win_rate else None
+            },
+            'detailed_data': {
+                'daily_returns': result.daily_returns,
+                'portfolio_values': result.portfolio_values,
+                'trade_records': result.trade_records
+            },
+            'observer_data': result.observer_data,
+            'raw_data': result.raw_data,  # 添加原始数据
+            'indicator_data': result.indicator_data  # 添加指标数据
+        }
+        
+        return success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"获取回测结果失败: {str(e)}")
+        return error_response(f"获取回测结果失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_backtest_chart(request, task_id):
+    """
+    获取回测图表
+    
+    参数:
+        task_id: 回测任务ID
+        
+    返回:
+        图表文件或错误信息
+        
+    事件:
+        - 返回PNG格式的回测图表文件
+        - 如果图表不存在返回404错误
+    """
+    try:
+        # 获取回测结果
+        result = BacktestResult.objects.filter(task_id=task_id).first()
+        if not result:
+            return error_response("回测结果不存在", 404)
+        
+        # 检查图表文件是否存在
+        if not result.chart_image:
+            return error_response("图表文件不存在", 404)
+        
+        # 构建完整的文件路径
+        chart_path = os.path.join(settings.BASE_DIR, result.chart_image)
+        
+        # 检查文件是否存在
+        if not os.path.exists(chart_path):
+            return error_response("图表文件不存在", 404)
+        
+        # 读取并返回图表文件
+        with open(chart_path, 'rb') as f:
+            response = HttpResponse(f.read(), content_type='image/png')
+            response['Content-Disposition'] = f'inline; filename="backtest_chart_{task_id}.png"'
+            return response
+            
+    except Exception as e:
+        logger.error(f"获取回测图表失败: {str(e)}")
+        return error_response(f"获取回测图表失败: {str(e)}", 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_observer_data(request, task_id):
+    """
+    获取观测器数据，专门用于前端可视化
+    
+    Args:
+        task_id: 任务ID
+        observer_type: 可选，指定观测器类型 (broker, trades, buysell, timereturn, drawdown, benchmark)
+    
+    Returns:
+        {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "task_info": {
+                    "task_id": "xxx",
+                    "strategy_name": "xxx",
+                    "stock_code": "xxx",
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-12-31"
+                },
+                "observer_data": {
+                    "broker": [...],
+                    "trades": [...],
+                    "buysell": [...],
+                    "timereturn": [...],
+                    "drawdown": [...],
+                    "benchmark": [...]
+                },
+                "statistics": {
+                    "total_trades": 10,
+                    "broker_records": 100,
+                    "buysell_signals": 20,
+                    "timereturn_records": 100,
+                    "drawdown_records": 100,
+                    "benchmark_records": 100
+                }
+            }
+        }
+    """
+    try:
+        # 获取任务
+        try:
+            task = BacktestTask.objects.get(task_id=task_id)
+        except BacktestTask.DoesNotExist:
+            return error_response("任务不存在", 404)
+        
+        # 检查任务状态
+        if task.status != 'completed':
+            return error_response("任务未完成", 400)
+        
+        # 获取结果
+        try:
+            result = BacktestResult.objects.get(task=task)
+        except BacktestResult.DoesNotExist:
+            return error_response("回测结果不存在", 404)
+        
+        # 获取观测器数据
+        observer_data = result.observer_data or {}
+        
+        # 获取可选的观测器类型过滤参数
+        observer_type = request.GET.get('observer_type')
+        
+        # 如果指定了观测器类型，只返回该类型的数据
+        if observer_type and observer_type in observer_data:
+            filtered_data = {observer_type: observer_data[observer_type]}
+        else:
+            filtered_data = observer_data
+        
+        # 计算统计信息
+        statistics = {}
+        for obs_type, obs_data in observer_data.items():
+            if isinstance(obs_data, list):
+                statistics[f"{obs_type}_records"] = len(obs_data)
+            else:
+                statistics[f"{obs_type}_records"] = 0
+        
+        # 构建响应数据
+        response_data = {
+            'task_info': {
+                'task_id': task.task_id,
+                'strategy_name': task.strategy_name,
+                'stock_code': task.stock_code,
+                'stock_name': task.stock_name,
+                'data_source': getattr(task, 'data_source', 'stock'),
+                'start_date': task.start_date.strftime('%Y-%m-%d'),
+                'end_date': task.end_date.strftime('%Y-%m-%d'),
+                'initial_cash': float(task.initial_cash),
+                'commission': float(task.commission)
+            },
+            'observer_data': filtered_data,
+            'statistics': statistics,
+            'visualization_hints': {
+                'broker': '资金曲线图 - 显示现金和总价值变化',
+                'trades': '交易统计表 - 显示每笔交易的盈亏情况',
+                'buysell': '买卖信号图 - 在价格图上标记买卖点',
+                'timereturn': '收益率曲线 - 显示策略收益率变化',
+                'drawdown': '回撤曲线 - 显示最大回撤情况',
+                'benchmark': '基准对比图 - 与基准收益率对比'
+            }
+        }
+        
+        return success_response(response_data)
+        
+    except Exception as e:
+        logger.error(f"获取观测器数据失败: {str(e)}")
+        return error_response(f"获取观测器数据失败: {str(e)}", 500)

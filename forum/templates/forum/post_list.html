@@ -1,0 +1,89 @@
+{% extends 'forum/base.html' %}
+
+{% block title %}帖子列表 - 论坛{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>最新帖子</h2>
+            <a href="{% url 'forum:post_create' %}" class="btn btn-primary">发布新帖子</a>
+        </div>
+
+        {% if posts %}
+            {% for post in posts %}
+                <div class="card post-card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <a href="{% url 'forum:post_detail' post.id %}" class="text-decoration-none">{{ post.title }}</a>
+                        </h5>
+                        <h6 class="card-subtitle mb-2 text-muted">{{ post.author }} 发布于 {{ post.created_at|date:"Y-m-d H:i" }}</h6>
+                        <div class="d-flex justify-content-between align-items-center mt-3">
+                            <span class="badge bg-secondary">{{ post.comment_count }} 条评论</span>
+                            <a href="{% url 'forum:post_detail' post.id %}" class="btn btn-sm btn-outline-primary">查看详情</a>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+
+            <!-- 分页 -->
+            {% if page.has_other_pages %}
+                <nav aria-label="Page navigation" class="mt-4">
+                    <ul class="pagination justify-content-center">
+                        {% if page.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page.previous_page_number }}">&laquo; 上一页</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link">&laquo; 上一页</span>
+                            </li>
+                        {% endif %}
+
+                        {% for i in page.paginator.page_range %}
+                            {% if page.number == i %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ i }}</span>
+                                </li>
+                            {% else %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ i }}">{{ i }}</a>
+                                </li>
+                            {% endif %}
+                        {% endfor %}
+
+                        {% if page.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page.next_page_number }}">下一页 &raquo;</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link">下一页 &raquo;</span>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        {% else %}
+            <div class="alert alert-info">
+                目前还没有帖子。成为第一个发帖的人吧！
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0">论坛信息</h5>
+            </div>
+            <div class="card-body">
+                <p>欢迎来到股票数据服务论坛！</p>
+                <p>这里是讨论股票数据、分析策略和投资心得的地方。</p>
+                <hr>
+                <p><strong>总帖子数:</strong> {{ posts.count }}</p>
+                <p><strong>最新帖子:</strong> {% if posts %}{{ posts.0.title }}{% else %}暂无{% endif %}</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

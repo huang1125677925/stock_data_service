@@ -103,6 +103,7 @@ Thumbs.db
 
 # 项目特定
 logs/
-data/*
+*.log
 __pycache__/
 .trae/
+*/data/

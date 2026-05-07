@@ -21,7 +21,7 @@ class Config:
     DATABASE_URL = os.environ.get('DATABASE_URL') or 'sqlite:///stock_data.db'
     
     # Redis配置（预留）
-    REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
+    # REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
     
     # 缓存配置
     CACHE_TYPE = os.environ.get('CACHE_TYPE') or 'simple'
