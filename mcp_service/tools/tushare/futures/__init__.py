@@ -83,51 +83,6 @@ def register_futures_tools(mcp: FastMCP) -> None:
         )
         return _call("fut_weekly_monthly", params, fields, token)
 
-    @safe_tool(mcp, name="tushare.futures.ft_mins", description="期货历史分钟行情 ft_mins")
-    def ft_mins(
-        ts_code: str,
-        freq: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="ft_mins")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="ft_mins")
-        params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq, start_date=start_date, end_date=end_date)
-        return _call("ft_mins", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.futures.rt_fut_min", description="期货实时分钟行情 rt_fut_min")
-    def rt_fut_min(
-        ts_code: str,
-        freq: str,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_fut_min")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="rt_fut_min")
-        params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq)
-        return _call("rt_fut_min", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.futures.rt_fut_min_daily", description="期货分钟快照回放 rt_fut_min_daily")
-    def rt_fut_min_daily(
-        ts_code: str,
-        freq: str,
-        date_str: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_fut_min_daily")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="rt_fut_min_daily")
-        params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq, date_str=date_str)
-        return _call("rt_fut_min_daily", params, fields, token)
-
     @safe_tool(mcp, name="tushare.futures.fut_mapping", description="期货主力与连续合约映射 fut_mapping")
     def fut_mapping(
         ts_code: Optional[str] = None,

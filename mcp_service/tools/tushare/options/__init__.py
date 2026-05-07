@@ -47,19 +47,3 @@ def register_options_tools(mcp: FastMCP) -> None:
             exchange=exchange,
         )
         return _call("opt_daily", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.options.opt_mins", description="期权分钟行情 opt_mins")
-    def opt_mins(
-        ts_code: str,
-        freq: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="opt_mins")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="opt_mins")
-        params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq, start_date=start_date, end_date=end_date)
-        return _call("opt_mins", params, fields, token)

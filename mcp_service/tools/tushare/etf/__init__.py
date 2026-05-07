@@ -253,32 +253,6 @@ def register_etf_tools(mcp: FastMCP) -> None:
             )
         return _paginate(_call("fund_adj", params, fields, token), limit, offset)
 
-    @safe_tool(
-        mcp,
-        name="tushare.etf.stk_mins",
-        description="ETF历史分钟行情 stk_mins",
-    )
-    def stk_mins(
-        ts_code: str,
-        freq: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        limit: int = 60,
-        offset: int = 0,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="stk_mins")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="stk_mins")
-        params: Dict[str, Any] = {"ts_code": ts_code, "freq": freq}
-        if start_date:
-            params["start_date"] = start_date
-        if end_date:
-            params["end_date"] = end_date
-        return _paginate(_call("stk_mins", params, fields, token), limit, offset)
-
     @safe_tool(mcp, name="tushare.etf.etf_share_size", description="ETF份额规模 etf_share_size")
     def etf_share_size(
         ts_code: Optional[str] = None,

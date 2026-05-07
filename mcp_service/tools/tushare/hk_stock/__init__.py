@@ -73,30 +73,6 @@ def register_hk_stock_tools(mcp: FastMCP) -> None:
 
     @safe_tool(
         mcp,
-        name="tushare.hk_stock.hk_mins",
-        description="港股分钟行情 hk_mins",
-    )
-    def hk_mins(
-        ts_code: str,
-        freq: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="hk_mins")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="hk_mins")
-        params: Dict[str, Any] = {"ts_code": ts_code, "freq": freq}
-        if start_date:
-            params["start_date"] = start_date
-        if end_date:
-            params["end_date"] = end_date
-        return _call("hk_mins", params, fields, token)
-
-    @safe_tool(
-        mcp,
         name="tushare.hk_stock.hk_daily_adj",
         description="港股复权行情 hk_daily_adj",
     )
