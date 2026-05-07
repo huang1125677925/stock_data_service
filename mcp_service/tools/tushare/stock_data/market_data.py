@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -188,20 +189,6 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         params: Dict[str, Any] = _clean(ts_code=ts_code)
         return _call("rt_k", params, fields, token)
 
-    @safe_tool(mcp, name="tushare.stock.market.rt_min", description="实时分钟 rt_min")
-    def rt_min(
-        freq: str,
-        ts_code: str,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="rt_min")
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_min")
-        params: Dict[str, Any] = _clean(freq=freq, ts_code=ts_code)
-        return _call("rt_min", params, fields, token)
-
     @safe_tool(mcp, name="tushare.stock.market.stk_limit", description="每日涨跌停价格 stk_limit")
     def stk_limit(
         ts_code: Optional[str] = None,
@@ -216,25 +203,6 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         """每日涨跌停价格 stk_limit。limit默认50，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
         return _paginate(_call("stk_limit", params, fields, token), limit, offset)
-
-    @safe_tool(mcp, name="tushare.stock.market.stk_mins", description="历史分钟 stk_mins")
-    def stk_mins(
-        ts_code: str,
-        freq: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        limit: int = 60,
-        offset: int = 0,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """历史分钟行情 stk_mins。分钟数据量大，limit默认60，最大500；offset用于翻页。额外元信息：total_count/count/limit/offset/has_more"""
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="stk_mins")
-        if not freq:
-            return error_payload("freq 为必填参数", 400, interface="stk_mins")
-        params: Dict[str, Any] = _clean(ts_code=ts_code, freq=freq, start_date=start_date, end_date=end_date)
-        return _paginate(_call("stk_mins", params, fields, token), limit, offset)
 
     @safe_tool(mcp, name="tushare.stock.market.stk_week_month_adj", description="周_月线复权行情_每日更新 stk_week_month_adj")
     def stk_week_month_adj(
@@ -317,7 +285,9 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         if not asset:
             return error_payload("asset 为必填参数（E/I/C/FT/FD/O/CB）", 400, interface="pro_bar")
         if not freq:
-            return error_payload("freq 为必填参数（如 D、1min）", 400, interface="pro_bar")
+            return error_payload("freq 为必填参数（如 D、W、M）", 400, interface="pro_bar")
+        if re.fullmatch(r"\d+\s*min", freq.strip(), flags=re.IGNORECASE):
+            return error_payload("MCP 已禁用分钟级行情，pro_bar 的 freq 不可为分钟周期", 400, interface="pro_bar")
         params: Dict[str, Any] = {
             "ts_code": ts_code,
             "asset": asset,
