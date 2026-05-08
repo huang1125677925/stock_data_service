@@ -80,3 +80,12 @@ class ToolCardResultTruncationTests(SimpleTestCase):
     def test_short_text_unchanged(self):
         text = "short"
         self.assertEqual(self.svc._truncate_tool_result_for_client(text), text)
+
+    @override_settings(AI_TOOL_CARD_RESULT_MAX_CHARS=80)
+    def test_github_tool_records_markdown_truncates_result(self):
+        long = "c" * 500
+        md = self.svc._format_tool_records_markdown(
+            [{"tool_name": "probe", "args": {}, "result": long, "is_error": False}]
+        )
+        self.assertIn("已截断", md)
+        self.assertNotIn(long, md)
