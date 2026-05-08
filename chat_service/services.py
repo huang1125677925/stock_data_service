@@ -1,10 +1,27 @@
-from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.utils import timezone
 
 from ai_service.model_config import get_active_model_config
 from .models import Conversation, Message
+
+# 自动标题展示上限（字符数，按 Unicode 标量值计）；须不超过 Conversation.title 的 max_length
+_DEFAULT_AUTO_TITLE_MAX_CHARS = 40
+
+
+def derive_auto_conversation_title(user_content, max_chars=_DEFAULT_AUTO_TITLE_MAX_CHARS):
+    """
+    从首条用户消息生成会话列表用标题：压成单行、去掉多余空白，再截断并加省略号。
+    """
+    if not user_content or not isinstance(user_content, str):
+        return '新会话'
+    one_line = ' '.join(user_content.strip().split())
+    if not one_line:
+        return '新会话'
+    if len(one_line) <= max_chars:
+        return one_line
+    trimmed = one_line[:max_chars].rstrip()
+    return f'{trimmed}…'
 
 
 class ChatConversationService:
