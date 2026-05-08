@@ -263,7 +263,7 @@ AI_CHAT_HISTORY_TOOL_PLACEHOLDER = os.environ.get(
 # 流式接口里 tool_card 事件的 result 字段最大字符数（减轻端上解析与渲染负担）。
 # 0 表示不截断。模型与 GitHub 同步仍使用完整工具结果，仅 SSE 下发给客户端的 result 被截断。
 AI_TOOL_CARD_RESULT_MAX_CHARS = int(
-    os.environ.get('AI_TOOL_CARD_RESULT_MAX_CHARS', '16384')
+    os.environ.get('AI_TOOL_CARD_RESULT_MAX_CHARS', '4096')
 )
 AI_GITHUB_SYNC_ENABLED = os.environ.get('AI_GITHUB_SYNC_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
 AI_GITHUB_TOKEN = os.environ.get('AI_GITHUB_TOKEN', '').strip()

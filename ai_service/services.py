@@ -434,11 +434,11 @@ class AiAgentService:
         异常:
             无。
         """
-        max_chars = getattr(settings, "AI_TOOL_CARD_RESULT_MAX_CHARS", 16384)
+        max_chars = getattr(settings, "AI_TOOL_CARD_RESULT_MAX_CHARS", 4096)
         try:
             max_chars = int(max_chars)
         except (TypeError, ValueError):
-            max_chars = 16384
+            max_chars = 4096
         if max_chars <= 0:
             return str(text or "")
         s = str(text or "")
