@@ -190,33 +190,6 @@ def register_etf_tools(mcp: FastMCP) -> None:
 
     @safe_tool(
         mcp,
-        name="tushare.etf.rt_etf_k",
-        description="ETF实时日线 rt_etf_k",
-    )
-    def rt_etf_k(
-        ts_code: str,
-        topic: Optional[str] = None,
-        limit: int = 200,
-        offset: int = 0,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_etf_k")
-        ts_code_upper = ts_code.upper()
-        if ".SH" in ts_code_upper and not topic:
-            return error_payload(
-                "沪市ETF需提供 topic 参数（如 HQ_FND_TICK）",
-                400,
-                interface="rt_etf_k",
-            )
-        params: Dict[str, Any] = {"ts_code": ts_code}
-        if topic:
-            params["topic"] = topic
-        return _paginate(_call("rt_etf_k", params, fields, token), limit, offset)
-
-    @safe_tool(
-        mcp,
         name="tushare.etf.fund_adj",
         description="基金复权因子 fund_adj",
     )
