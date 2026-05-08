@@ -148,46 +148,6 @@ def register_stock_market_tools(mcp: FastMCP) -> None:
         params: Dict[str, Any] = _clean(ts_code=ts_code, trade_date=trade_date, start_date=start_date, end_date=end_date)
         return _paginate(_call("monthly", params, fields, token), limit, offset)
 
-    @safe_tool(mcp, name="tushare.stock.market.realtime_list", description="实时排名_爬虫 realtime_list")
-    def realtime_list(
-        src: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = _clean(src=src)
-        return _call("realtime_list", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.stock.market.realtime_quote", description="实时Tick_爬虫 realtime_quote")
-    def realtime_quote(
-        ts_code: Optional[str] = None,
-        src: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = _clean(ts_code=ts_code, src=src)
-        return _call("realtime_quote", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.stock.market.realtime_tick", description="实时成交_爬虫 realtime_tick")
-    def realtime_tick(
-        ts_code: Optional[str] = None,
-        src: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = _clean(ts_code=ts_code, src=src)
-        return _call("realtime_tick", params, fields, token)
-
-    @safe_tool(mcp, name="tushare.stock.market.rt_k", description="实时日线 rt_k")
-    def rt_k(
-        ts_code: str,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_k")
-        params: Dict[str, Any] = _clean(ts_code=ts_code)
-        return _call("rt_k", params, fields, token)
-
     @safe_tool(mcp, name="tushare.stock.market.stk_limit", description="每日涨跌停价格 stk_limit")
     def stk_limit(
         ts_code: Optional[str] = None,

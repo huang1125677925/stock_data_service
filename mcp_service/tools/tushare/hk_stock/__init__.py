@@ -124,20 +124,6 @@ def register_hk_stock_tools(mcp: FastMCP) -> None:
 
     @safe_tool(
         mcp,
-        name="tushare.hk_stock.rt_hk_k",
-        description="港股实时日线 rt_hk_k",
-    )
-    def rt_hk_k(
-        ts_code: str,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_hk_k")
-        return _call("rt_hk_k", {"ts_code": ts_code}, fields, token)
-
-    @safe_tool(
-        mcp,
         name="tushare.hk_stock.hk_income",
         description="港股利润表 hk_income",
     )

@@ -65,7 +65,7 @@ def register_index_tools(mcp: FastMCP) -> None:
         description=(
             "指数元数据目录 index_basic（名称/发布方/基期等）。"
             "含 market=SW 的申万指数条目，但不含行业涨跌幅/估值/成分股明细；"
-            "分析申万行业表现请用 sw_daily / rt_sw_k / django.index.sw_valuation_analysis。"
+            "分析申万行业表现请用 sw_daily / django.index.sw_valuation_analysis。"
         ),
     )
     def index_basic(
@@ -664,38 +664,6 @@ def register_index_tools(mcp: FastMCP) -> None:
         if end_date:
             params["end_date"] = end_date
         return _paginate(_call("ci_daily", params, fields, token), limit, offset)
-
-    @safe_tool(
-        mcp,
-        name="tushare.index.rt_idx_k",
-        description="交易所指数实时日线 rt_idx_k",
-    )
-    def rt_idx_k(
-        ts_code: str,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not ts_code:
-            return error_payload("ts_code 为必填参数", 400, interface="rt_idx_k")
-        return _call("rt_idx_k", {"ts_code": ts_code}, fields, token)
-
-    @safe_tool(
-        mcp,
-        name="tushare.index.rt_sw_k",
-        description=(
-            "申万行业指数最新截面/实时行情 rt_sw_k（当前或最新报价类数据）。"
-            "历史日线序列与估值分析仍用 sw_daily 或 django.index.sw_valuation_analysis。"
-        ),
-    )
-    def rt_sw_k(
-        ts_code: Optional[str] = None,
-        fields: Optional[str] = None,
-        token: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {}
-        if ts_code:
-            params["ts_code"] = ts_code
-        return _call("rt_sw_k", params, fields, token)
 
     @safe_tool(
         mcp,
