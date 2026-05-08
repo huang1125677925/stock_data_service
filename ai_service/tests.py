@@ -1,6 +1,6 @@
 """ai_service 单元测试。"""
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from ai_service.services import (
     AiAgentService,
@@ -57,3 +57,26 @@ class MemoryWriteEnforcementTests(SimpleTestCase):
         self.assertIsNotNone(_MEMORY_FALSE_SUCCESS_RE.search("✅ **已覆盖写入！**"))
         self.assertIsNotNone(_MEMORY_FALSE_SUCCESS_RE.search("已经写入到记忆文件"))
         self.assertIsNone(_MEMORY_FALSE_SUCCESS_RE.search("请先说明你的持仓"))
+
+
+class ToolCardResultTruncationTests(SimpleTestCase):
+    def setUp(self):
+        self.svc = AiAgentService()
+
+    @override_settings(AI_TOOL_CARD_RESULT_MAX_CHARS=0)
+    def test_zero_means_no_truncation(self):
+        long_text = "x" * 100_000
+        self.assertEqual(self.svc._truncate_tool_result_for_client(long_text), long_text)
+
+    @override_settings(AI_TOOL_CARD_RESULT_MAX_CHARS=50)
+    def test_truncates_when_over_limit(self):
+        text = "a" * 100
+        out = self.svc._truncate_tool_result_for_client(text)
+        self.assertLess(len(out), len(text))
+        self.assertIn("已截断", out)
+        self.assertIn("100", out)
+
+    @override_settings(AI_TOOL_CARD_RESULT_MAX_CHARS=10_000)
+    def test_short_text_unchanged(self):
+        text = "short"
+        self.assertEqual(self.svc._truncate_tool_result_for_client(text), text)
