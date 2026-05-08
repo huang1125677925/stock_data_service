@@ -12,7 +12,7 @@ from common.response import success_response, error_response
 from ai_service.services import ai_agent_service, truncate_tool_card_result_text
 from .models import Message
 from .serializers import ConversationSerializer, MessageSerializer
-from .services import chat_conversation_service
+from .services import chat_conversation_service, derive_auto_conversation_title
 
 
 def _truncate_tool_data_list_results(tool_data):
@@ -309,7 +309,10 @@ class ConversationStreamView(View):
             if conversation.title == '新会话':
                 await sync_to_async(
                     chat_conversation_service.update_conversation,
-                )(conversation, title=content[:200])
+                )(
+                    conversation,
+                    title=derive_auto_conversation_title(content),
+                )
         else:
             get_latest = sync_to_async(
                 chat_conversation_service.get_latest_user_message,
