@@ -424,6 +424,31 @@ class AiAgentService:
             return str(tool_result[0][0].text)
         return str(tool_result)
 
+    def _truncate_tool_result_for_client(self, text: str) -> str:
+        """
+        将工具结果截断为适合通过 SSE tool_card 下发给客户端的长度。
+        参数:
+            text: 完整工具结果文本。
+        返回值:
+            未超过配置上限时原样返回；超出时截断并附加原长度说明。
+        异常:
+            无。
+        """
+        max_chars = getattr(settings, "AI_TOOL_CARD_RESULT_MAX_CHARS", 16384)
+        try:
+            max_chars = int(max_chars)
+        except (TypeError, ValueError):
+            max_chars = 16384
+        if max_chars <= 0:
+            return str(text or "")
+        s = str(text or "")
+        n = len(s)
+        if n <= max_chars:
+            return s
+        suffix = f"\n…（已截断，原共 {n} 字符）"
+        budget = max(0, max_chars - len(suffix))
+        return s[:budget] + suffix
+
     def _sanitize_incoming_chat_messages(
         self, messages_data: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -700,7 +725,10 @@ class AiAgentService:
                         )
 
                         messages.append(ToolMessage(content=tool_result_text, tool_call_id=tool_call_id))
-                        yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'args': tool_args, 'result': tool_result_text}, ensure_ascii=False)}\n\n"
+                        result_for_client = self._truncate_tool_result_for_client(
+                            tool_result_text
+                        )
+                        yield f"data: {json.dumps({'type': 'tool_card', 'tool_name': real_tool_name, 'args': tool_args, 'result': result_for_client}, ensure_ascii=False)}\n\n"
                     
                     continue
                 else:
