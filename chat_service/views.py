@@ -6,9 +6,9 @@ from django.http import StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.authentication import BaseAuthentication
 from rest_framework.views import APIView
 from common.response import success_response, error_response
+from user_management.services import UserService
 from ai_service.services import ai_agent_service, truncate_tool_card_result_text
 from .models import Message
 from .serializers import ConversationSerializer, MessageSerializer
@@ -77,34 +77,17 @@ def _parse_bool(raw_value):
     return None
 
 
-class MiddlewareUserAuthentication(BaseAuthentication):
-    def authenticate(self, request):
-        raw_request = getattr(request, '_request', None)
-        raw_user = getattr(raw_request, 'user', None)
-        if getattr(raw_user, 'id', None):
-            return raw_user, None
-        return None
-
-
-def _get_authenticated_user(request):
-    user = getattr(request, 'user', None)
-    if getattr(user, 'id', None):
-        return user
-    raw_request = getattr(request, '_request', None)
-    raw_user = getattr(raw_request, 'user', None)
-    if getattr(raw_user, 'id', None):
-        return raw_user
-    return None
+def _get_api_user(request):
+    """可选 Bearer；无有效令牌时使用系统访客用户。"""
+    return UserService.resolve_request_user(request)
 
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationCollectionView(APIView):
-    authentication_classes = [MiddlewareUserAuthentication]
+    authentication_classes = []
 
     def post(self, request):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         title = request.data.get('title')
         model_name = request.data.get('model')
         conversation = chat_conversation_service.create_conversation(
@@ -116,9 +99,7 @@ class ConversationCollectionView(APIView):
         return success_response(data, '创建成功')
 
     def get(self, request):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         page = _parse_positive_int(
             request.GET.get('page'),
             1,
@@ -150,12 +131,10 @@ class ConversationCollectionView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationMessagesView(APIView):
-    authentication_classes = [MiddlewareUserAuthentication]
+    authentication_classes = []
 
     def get(self, request, conversation_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         conversation = chat_conversation_service.get_conversation_for_user(
             user=user,
             conversation_id=conversation_id,
@@ -189,9 +168,7 @@ class ConversationMessagesView(APIView):
         )
 
     def post(self, request, conversation_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         conversation = chat_conversation_service.get_conversation_for_user(
             user=user,
             conversation_id=conversation_id,
@@ -213,12 +190,10 @@ class ConversationMessagesView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationMessageDetailView(APIView):
-    authentication_classes = [MiddlewareUserAuthentication]
+    authentication_classes = []
 
     def patch(self, request, conversation_id, message_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         conversation = chat_conversation_service.get_conversation_for_user(
             user=user,
             conversation_id=conversation_id,
@@ -239,12 +214,10 @@ class ConversationMessageDetailView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationDetailView(APIView):
-    authentication_classes = [MiddlewareUserAuthentication]
+    authentication_classes = []
 
     def patch(self, request, conversation_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         conversation = chat_conversation_service.get_conversation_for_user(
             user=user,
             conversation_id=conversation_id,
@@ -269,9 +242,7 @@ class ConversationDetailView(APIView):
         return success_response(ConversationSerializer(updated).data, '更新成功')
 
     def delete(self, request, conversation_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = _get_api_user(request)
         conversation = chat_conversation_service.get_conversation_for_user(
             user=user,
             conversation_id=conversation_id,
@@ -285,9 +256,7 @@ class ConversationDetailView(APIView):
 @method_decorator(csrf_exempt, name='dispatch')
 class ConversationStreamView(View):
     async def post(self, request, conversation_id):
-        user = _get_authenticated_user(request)
-        if not user:
-            return error_response('未认证', code=401)
+        user = UserService.resolve_request_user(request)
         get_conversation = sync_to_async(
             chat_conversation_service.get_conversation_for_user,
         )

@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime, timedelta
+from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from django.db import transaction
 from django.core.exceptions import ValidationError
@@ -159,7 +160,44 @@ class InvitationCodeService:
 
 class UserService:
     """用户服务类"""
-    
+
+    API_GUEST_USERNAME = '__api_guest__'
+    API_GUEST_EMAIL = '__api_guest__@system.internal'
+
+    @staticmethod
+    def get_or_create_api_guest_user():
+        """未携带有效令牌时用于绑定数据的系统访客账号。"""
+        user, _ = User.objects.get_or_create(
+            username=UserService.API_GUEST_USERNAME,
+            defaults={
+                'email': UserService.API_GUEST_EMAIL,
+                'is_active': True,
+                'password_hash': make_password(uuid.uuid4().hex),
+            },
+        )
+        return user
+
+    @staticmethod
+    def resolve_request_user(request):
+        """
+        解析 API 请求对应的业务用户：优先使用有效 Bearer，否则使用系统访客。
+        不强制要求令牌（项目已关闭接口鉴权）。
+        """
+        auth_header = ''
+        if hasattr(request, 'headers'):
+            auth_header = request.headers.get('Authorization') or ''
+        else:
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '') or ''
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:].strip()
+            if token:
+                token_service = TokenService()
+                is_valid, _, user = token_service.validate_token(token)
+                if is_valid and user:
+                    setattr(request, 'token', token)
+                    return user
+        return UserService.get_or_create_api_guest_user()
+
     @staticmethod
     def validate_username(username):
         """验证用户名是否合法"""

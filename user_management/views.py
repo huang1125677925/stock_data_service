@@ -113,19 +113,15 @@ class LogoutView(APIView):
     
     def post(self, request):
         """处理用户登出请求"""
-        # 获取请求头中的令牌
         token = request.headers.get('Authorization')
-        
         if not token:
-            return error_response("未提供令牌", code=400)
-        
-        # 去除Bearer前缀（如果有）
+            return success_response(message='未提供令牌，跳过登出')
+
         if token.startswith('Bearer '):
             token = token[7:]
-        
-        # 调用服务层进行登出
+
         success, message = UserService.logout(token)
-        
+
         if success:
             return success_response(message=message)
         else:
@@ -138,34 +134,18 @@ class UserInfoView(APIView):
     authentication_classes = []
     
     def get(self, request):
-        """获取当前用户信息"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if success:
-            # 返回用户信息
-            user_data = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'phone': user.phone,
-                'is_admin': user.is_admin,
-                'last_login': user.last_login,
-                'created_at': user.created_at
-            }
-            return success_response(user_data)
-        else:
-            return error_response(message, code=401)
+        """获取当前用户信息（无令牌时返回系统访客对应资料）。"""
+        user = UserService.resolve_request_user(request)
+        user_data = {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'phone': user.phone,
+            'is_admin': user.is_admin,
+            'last_login': user.last_login,
+            'created_at': user.created_at
+        }
+        return success_response(user_data)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class InvitationCodeView(APIView):
@@ -174,28 +154,11 @@ class InvitationCodeView(APIView):
     
     def post(self, request):
         """生成邀请码"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if not success:
-            return error_response(message, code=401)
-        
-        # 生成邀请码
+        user = UserService.resolve_request_user(request)
         invitation_service = InvitationCodeService()
         success, message, invitation = invitation_service.generate_invitation_code(user)
-        
+
         if success:
-            # 返回邀请码信息
             invitation_data = {
                 'code': invitation.code,
                 'expires_at': invitation.expires_at,
@@ -204,29 +167,12 @@ class InvitationCodeView(APIView):
             return success_response(invitation_data, message)
         else:
             return error_response(message, code=400)
-    
+
     def get(self, request):
         """获取用户的邀请码列表"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if not success:
-            return error_response(message, code=401)
-        
-        # 获取用户的邀请码列表
+        user = UserService.resolve_request_user(request)
         invitations = InvitationCodeService.get_user_invitations(user)
-        
-        # 构建响应数据
+
         invitation_list = [{
             'id': inv.id,
             'code': inv.code,
@@ -235,7 +181,7 @@ class InvitationCodeView(APIView):
             'expires_at': inv.expires_at,
             'created_at': inv.created_at
         } for inv in invitations]
-        
+
         return success_response(invitation_list)
 
 
