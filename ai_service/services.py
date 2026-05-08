@@ -52,6 +52,28 @@ _MEMORY_FALSE_SUCCESS_RE = re.compile(
 )
 
 
+def truncate_tool_card_result_text(text: str) -> str:
+    """
+    将工具结果截断为与 SSE tool_card 一致的长度上限（AI_TOOL_CARD_RESULT_MAX_CHARS）。
+    用于流式下发、会话库 tool_data 持久化、GitHub 同步 Markdown，减轻端上加载历史时的体积。
+    max_chars=0 表示不截断。
+    """
+    max_chars = getattr(settings, "AI_TOOL_CARD_RESULT_MAX_CHARS", 4096)
+    try:
+        max_chars = int(max_chars)
+    except (TypeError, ValueError):
+        max_chars = 4096
+    if max_chars <= 0:
+        return str(text or "")
+    s = str(text or "")
+    n = len(s)
+    if n <= max_chars:
+        return s
+    suffix = f"\n…（已截断，原共 {n} 字符）"
+    budget = max(0, max_chars - len(suffix))
+    return s[:budget] + suffix
+
+
 class ToolRoute(TypedDict):
     source: str
     name: str
@@ -434,20 +456,7 @@ class AiAgentService:
         异常:
             无。
         """
-        max_chars = getattr(settings, "AI_TOOL_CARD_RESULT_MAX_CHARS", 4096)
-        try:
-            max_chars = int(max_chars)
-        except (TypeError, ValueError):
-            max_chars = 4096
-        if max_chars <= 0:
-            return str(text or "")
-        s = str(text or "")
-        n = len(s)
-        if n <= max_chars:
-            return s
-        suffix = f"\n…（已截断，原共 {n} 字符）"
-        budget = max(0, max_chars - len(suffix))
-        return s[:budget] + suffix
+        return truncate_tool_card_result_text(text)
 
     def _sanitize_incoming_chat_messages(
         self, messages_data: List[Dict[str, Any]]
@@ -999,7 +1008,9 @@ class AiAgentService:
         for index, item in enumerate(tool_records, start=1):
             tool_name = str(item.get("tool_name") or "unknown_tool")
             tool_args = item.get("args") if isinstance(item.get("args"), dict) else {}
-            tool_result = self._escape_markdown_code_fence(str(item.get("result") or ""))
+            tool_result = self._escape_markdown_code_fence(
+                truncate_tool_card_result_text(str(item.get("result") or ""))
+            )
             is_error = bool(item.get("is_error"))
             lines.extend(
                 [

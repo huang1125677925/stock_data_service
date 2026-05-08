@@ -9,10 +9,32 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.views import APIView
 from common.response import success_response, error_response
-from ai_service.services import ai_agent_service
+from ai_service.services import ai_agent_service, truncate_tool_card_result_text
 from .models import Message
 from .serializers import ConversationSerializer, MessageSerializer
 from .services import chat_conversation_service
+
+
+def _truncate_tool_data_list_results(tool_data):
+    """
+    对 tool_data 中为列表且元素含 result 的结构做与 SSE 一致的截断，避免会话库体积过大。
+    """
+    if not isinstance(tool_data, list):
+        return tool_data
+    out = []
+    for item in tool_data:
+        if not isinstance(item, dict) or 'result' not in item:
+            out.append(item)
+            continue
+        r = item.get('result')
+        if isinstance(r, str):
+            s = r
+        else:
+            s = json.dumps(r, ensure_ascii=False, indent=2)
+        new_item = dict(item)
+        new_item['result'] = truncate_tool_card_result_text(s)
+        out.append(new_item)
+    return out
 
 
 def _parse_positive_int(raw_value, default_value, min_value=1, max_value=200):
@@ -179,7 +201,7 @@ class ConversationMessagesView(APIView):
         content = request.data.get('content')
         if not content:
             return error_response('content 不能为空', code=400)
-        tool_data = request.data.get('tool_data')
+        tool_data = _truncate_tool_data_list_results(request.data.get('tool_data'))
         message = chat_conversation_service.create_message(
             conversation=conversation,
             role=Message.ROLE_USER,
@@ -208,7 +230,7 @@ class ConversationMessageDetailView(APIView):
         updated = chat_conversation_service.update_message_tool_data(
             conversation=conversation,
             message_id=message_id,
-            tool_data=request.data.get('tool_data'),
+            tool_data=_truncate_tool_data_list_results(request.data.get('tool_data')),
         )
         if not updated:
             return error_response('消息不存在', code=404)
@@ -282,7 +304,7 @@ class ConversationStreamView(View):
                 conversation=conversation,
                 role=Message.ROLE_USER,
                 content=content,
-                tool_data=body.get('tool_data'),
+                tool_data=_truncate_tool_data_list_results(body.get('tool_data')),
             )
             if conversation.title == '新会话':
                 await sync_to_async(
@@ -328,6 +350,7 @@ class ConversationStreamView(View):
                                     ensure_ascii=False,
                                     indent=2,
                                 )
+                            raw_result = truncate_tool_card_result_text(raw_result)
                             tool_args = payload.get('args')
                             if not isinstance(tool_args, dict):
                                 tool_args = {}

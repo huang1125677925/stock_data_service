@@ -260,8 +260,8 @@ AI_CHAT_HISTORY_TOOL_PLACEHOLDER = os.environ.get(
     'AI_CHAT_HISTORY_TOOL_PLACEHOLDER',
     '（本段为工具返回的原始数据，已在会话历史中省略以避免超长上下文；原数据约 {chars} 字符。如需基于该数据继续分析，请说明意图以便重新调用工具查询。）',
 )
-# 流式接口里 tool_card 事件的 result 字段最大字符数（减轻端上解析与渲染负担）。
-# 0 表示不截断。模型与 GitHub 同步仍使用完整工具结果，仅 SSE 下发给客户端的 result 被截断。
+# 工具结果与 SSE tool_card、会话库 tool_data、GitHub 同步 Markdown 共用同一上限（减轻端上加载历史与会仓库体积）。
+# 0 表示不截断。模型推理仍使用完整工具返回（ToolMessage）；仅对外持久化与展示路径按此字段截断。
 AI_TOOL_CARD_RESULT_MAX_CHARS = int(
     os.environ.get('AI_TOOL_CARD_RESULT_MAX_CHARS', '4096')
 )
