@@ -1,17 +1,25 @@
 #!/bin/bash
 
 # 股票数据服务启动脚本
-cd /root/django/stock_data_service || exit 1
+PROJECT_DIR=/root/django/stock_data_service
+cd "$PROJECT_DIR" || exit 1
 
 # 仅杀死当前用户的 uvicorn 进程（避免误杀）
 pkill -f "uvicorn stock_data_service.asgi:application" || true
 
 # 使用虚拟环境的 Python 直接启动（无需 nohup）
 . venv/bin/activate
-export TUSHARE_TOKEN=119db86ff3fd948e85905f8c506e1012d33fe18bf4b726e99f33ab09
-export GITHUB_TOKEN=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
-# 启用 MCP server.shell.run（在 MCP 所在进程继承此环境变量）
-export SERVER_SHELL_TOOL_ENABLED=true
+
+# 加载项目根目录下的 .env，并自动导出其中的环境变量
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a
+    . "$PROJECT_DIR/.env"
+    set +a
+else
+    echo "Error: $PROJECT_DIR/.env not found"
+    exit 1
+fi
+
 exec uvicorn stock_data_service.asgi:application \
     --host 0.0.0.0 \
     --port 8001 \
