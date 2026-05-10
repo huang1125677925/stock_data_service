@@ -12,8 +12,11 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
@@ -90,12 +93,16 @@ ASGI_APPLICATION = 'stock_data_service.asgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+DB_PASSWORD = os.environ.get('DB_PASSWORD')
+if not DB_PASSWORD:
+    raise ValueError('DB_PASSWORD environment variable is required')
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': os.environ.get('DB_NAME', 'stock_db'),
         'USER': os.environ.get('DB_USER', 'hc'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', '1125677925'),
+        'PASSWORD': DB_PASSWORD,
         'HOST': os.environ.get('DB_HOST', '47.120.53.64'),
         'PORT': os.environ.get('DB_PORT', '3306'),
         'OPTIONS': {

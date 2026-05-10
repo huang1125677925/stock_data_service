@@ -1529,26 +1529,27 @@ def send_macd_xgboost_results_email(
         if user_object is None:
             print(f"用户 {uname} 不存在")
             continue
-        print(f"用户 {uname} 的邮箱是 xxx{user_object.email[3:]}" )
+        print(f"用户 {uname} 的邮箱 {user_object.email}" )
         user_email_list.append(user_object.email)
 
     scan_hits = scan_all_indices_recent_growth()
+    print(user_email_list)
 
-    send_result = send_qq_email(
-        subject=f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} XGBoost 指数增长预测结果",
-        body=scan_hits["email_content"],
-        to_emails=user_email_list,
-        sender_email=sender_email,
-        auth_code=auth_code,
-        use_html=True,
-    )
+    # send_result = send_qq_email(
+    #     subject=f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} XGBoost 指数增长预测结果",
+    #     body=scan_hits["email_content"],
+    #     to_emails=user_email_list,
+    #     sender_email=sender_email,
+    #     auth_code=auth_code,
+    #     use_html=True,
+    # )
 
-    return {
-        "emails": user_email_list,
-        "scanned_count": scan_hits.get("scanned_count", 0),
-        "hit_count": scan_hits.get("hit_count", 0),
-        "send_result": send_result,
-    }
+    # return {
+    #     "emails": user_email_list,
+    #     "scanned_count": scan_hits.get("scanned_count", 0),
+    #     "hit_count": scan_hits.get("hit_count", 0),
+    #     "send_result": send_result,
+    # }
 
 if __name__ == "__main__":
     # 运行批量测试并打印结果
@@ -1557,7 +1558,7 @@ if __name__ == "__main__":
     # print(df_results.to_string(index=False))
     # main_predict()
     # 使用封装好的函数发送结果邮件
-    # send_macd_xgboost_results_email()
+    send_macd_xgboost_results_email()
     # StockSelectionRecord.objects.create(
     #     market = 'SSE',
     #     code = '000692.SH',
@@ -1571,18 +1572,18 @@ if __name__ == "__main__":
     # if exists:
     #     print("记录已存在")
 
-    text = """
-    命中: 市场 SSE 指数 000692.SH-科创新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 77.18%，置信度 77.18%
-    命中: 市场 SSE 指数 000813.SH-细分化工(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.65%，置信度 51.65%
-    命中: 市场 SSE 指数 000827.SH-中证环保 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 64.63%，置信度 64.63%
-    命中: 市场 SSE 指数 000941.SH-新能源(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 53.24%，置信度 53.24%
-    命中: 市场 SZSE 指数 399249.SZ-综企指数 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 92.71%，置信度 92.71%
-    命中: 市场 SZSE 指数 399259.SZ-创业低碳 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 54.21%，置信度 54.21%
-    命中: 市场 SZSE 指数 399614.SZ-深证材料 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 50.89%，置信度 50.89%
-    命中: 市场 SZSE 指数 399639.SZ-深证大宗 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.66%，置信度 51.66%
-    命中: 市场 SZSE 指数 399695.SZ-深证节能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 79.94%，置信度 79.94%
-    命中: 市场 SZSE 指数 399808.SZ-中证新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 85.20%，置信度 85.20%
-    """
+    # text = """
+    # 命中: 市场 SSE 指数 000692.SH-科创新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 77.18%，置信度 77.18%
+    # 命中: 市场 SSE 指数 000813.SH-细分化工(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.65%，置信度 51.65%
+    # 命中: 市场 SSE 指数 000827.SH-中证环保 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 64.63%，置信度 64.63%
+    # 命中: 市场 SSE 指数 000941.SH-新能源(SH) 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 53.24%，置信度 53.24%
+    # 命中: 市场 SZSE 指数 399249.SZ-综企指数 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 92.71%，置信度 92.71%
+    # 命中: 市场 SZSE 指数 399259.SZ-创业低碳 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 54.21%，置信度 54.21%
+    # 命中: 市场 SZSE 指数 399614.SZ-深证材料 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 50.89%，置信度 50.89%
+    # 命中: 市场 SZSE 指数 399639.SZ-深证大宗 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 51.66%，置信度 51.66%
+    # 命中: 市场 SZSE 指数 399695.SZ-深证节能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 79.94%，置信度 79.94%
+    # 命中: 市场 SZSE 指数 399808.SZ-中证新能 在 20251124 存在未来5天上涨≥5% 的可能，预测概率为 85.20%，置信度 85.20%
+    # """
 
-    saved = save_selection_records_from_text(text, prediction_type="MACD_XGBoost_for_5")
-    print(f"成功写入 {saved} 条记录")
+    # saved = save_selection_records_from_text(text, prediction_type="MACD_XGBoost_for_5")
+    # print(f"成功写入 {saved} 条记录")

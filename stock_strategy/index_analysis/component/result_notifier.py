@@ -76,6 +76,7 @@ def send_macd_xgboost_results_email(
 
     names = (usernames or default_user_list)
     user_email_list: list[str] = ['1605895800@qq.com', 'mymailbox_2003@163.com']
+    
     for uname in names:
         if not uname or not str(uname).strip():
             continue
@@ -83,9 +84,9 @@ def send_macd_xgboost_results_email(
         if user_object is None:
             print(f"用户 {uname} 不存在")
             continue
-        print(f"用户 {uname} 的邮箱是 xxx{user_object.email[3:]}" )
+        print(f"用户 {uname} 的邮箱 {user_object.email}" )
         user_email_list.append(user_object.email)
-
+    print(user_email_list)
     send_result = send_qq_email(
         subject=f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 增长预测结果",
         body=email_html_content,
