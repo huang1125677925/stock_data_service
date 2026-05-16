@@ -4,7 +4,7 @@
 
 功能：
 - 计算指定日期范围内，每个行业内“收盘价高于其N日移动平均线(MA)”的股票占比（市场宽度）
-- 仅从数据库获取数据，遵循工作空间API规范
+- 行情数据仅通过 Tushare `daily` 获取
 - 面向扩展设计，支持窗口大小、行业板块筛选等参数化
 
 参数：
@@ -18,7 +18,7 @@
 
 事件：
 - 参数校验与默认化
-- 从数据库读取行业与个股日频数据
+- 从 Tushare 读取个股日频数据
 - 计算个股MA并聚合到行业维度
 - 缓存结果以提升性能
 """
@@ -30,12 +30,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 from django.core.cache import cache
 from django.conf import settings
-from django.db.models.functions import Trim
-
-from industry_stock_data.models import IndustrySector
-from indival_stock_data.models import IndividualStock, IndividualStockDaily
-from industry_stock_data.services import industry_sector_service
 from common.tushare_proxy import call_tushare
+from common.tushare_industry import get_open_trade_dates, get_sw_l1_members, get_sw_l1_sectors
 
 logger = logging.getLogger(__name__)
 
@@ -78,56 +74,46 @@ class IndustryMABreadthStrategy:
             板块字典列表 [{'code','name',...}]
         """
         try:
+            all_sectors = get_sw_l1_sectors()
+            sectors = [
+                {"code": item["sector_code"], "name": item["sector_name"]}
+                for item in all_sectors
+                if item.get("sector_code") and item.get("sector_name")
+            ]
             if sector_codes:
-                # 直接从数据库过滤指定板块
-                sectors = list(IndustrySector.objects.filter(code__in=sector_codes).values('code', 'name'))
-            else:
-                # 复用服务层获取所有板块（服务内部已用数据库数据）
-                sectors = industry_sector_service.get_industry_sectors()
-                if sectors is None:
-                    sectors = []
-                else:
-                    sectors = [{'code': s['code'], 'name': s['name']} for s in sectors]
+                sector_keys = {str(item).strip() for item in sector_codes if str(item).strip()}
+                sectors = [
+                    item for item in sectors
+                    if item["code"] in sector_keys or item["name"] in sector_keys
+                ]
             return sectors
         except Exception as e:
             logger.error(f"获取行业板块列表失败: {str(e)}")
             return []
 
-    def _daily_rows_from_db(
-        self,
-        stock_ids: List[int],
-        extended_start_dt,
-        end_dt,
-    ) -> List[Dict]:
-        if not stock_ids:
-            return []
-        rows = list(
-            IndividualStockDaily.objects.filter(
-                stock_id__in=stock_ids,
-                date__gte=extended_start_dt,
-                date__lte=end_dt,
-            ).values("stock_id", "date", "close_price")
-        )
-        return rows
-
     def _daily_rows_from_tushare(self, extended_start_dt, end_dt) -> List[Dict]:
         tus_records: List[Dict] = []
-        cur_dt = extended_start_dt
-        while cur_dt <= end_dt:
-            trade_date = cur_dt.strftime("%Y%m%d")
-            resp = call_tushare("daily", params={"trade_date": trade_date})
+        trade_dates = get_open_trade_dates(
+            extended_start_dt.strftime("%Y%m%d"),
+            end_dt.strftime("%Y%m%d"),
+        )
+        for trade_date in trade_dates:
+            resp = call_tushare(
+                "daily",
+                params={"trade_date": trade_date},
+                fields="ts_code,trade_date,close",
+            )
             if isinstance(resp, dict) and resp.get("code") == 200:
                 data = resp.get("data", {})
                 recs = data.get("records", []) if isinstance(data, dict) else []
                 if recs:
-                    tus_records.extend(recs)
+                    tus_records.extend(item for item in recs if isinstance(item, dict))
             else:
                 logger.warning(
                     "Tushare daily 调用失败或为空: date=%s, message=%s",
                     trade_date,
                     resp.get("message") if isinstance(resp, dict) else resp,
                 )
-            cur_dt += timedelta(days=1)
         return tus_records
 
     def get_industry_ma_breadth(
@@ -149,7 +135,7 @@ class IndustryMABreadthStrategy:
             每日每行业的宽度结果列表；失败返回None
         事件：
             - 参数默认化与校验
-            - 从数据库读取个股日频数据
+            - 从 Tushare 读取个股日频数据
             - 逐个股票计算滚动均线并比较收盘价
             - 聚合到行业维度并缓存
         """
@@ -174,83 +160,60 @@ class IndustryMABreadthStrategy:
             end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
             extended_start_dt = start_dt - timedelta(days=ma_window * 2)
 
-            # 获取目标板块及映射
+            # 获取目标板块及成分映射
             sectors = self._get_target_sectors(sector_codes)
             if not sectors:
                 logger.warning("未获取到行业板块数据")
                 return []
-            sector_name_set = {
-                (s["name"] or "").strip()
-                for s in sectors
-                if (s.get("name") or "").strip()
-            }
-            if not sector_name_set:
-                logger.warning("行业板块名称为空")
+            member_records = get_sw_l1_members()
+            if not member_records:
+                logger.warning("未获取到申万一级行业成分股数据")
                 return []
-
-            # 与板块名称对齐：对 industry 做 TRIM 再匹配，避免空格导致零命中
-            stocks_qs = (
-                IndividualStock.objects.annotate(_ind_trim=Trim("industry"))
-                .filter(_ind_trim__in=sector_name_set)
-                .values("id", "code", "name", "industry")
-            )
-            if not stocks_qs.exists():
-                logger.warning("无成分股数据（industry 与板块名称未对齐或个股表为空）")
-                return []
-            stocks_df = pd.DataFrame(list(stocks_qs))
-            industry_to_code = {(s["name"] or "").strip(): s["code"] for s in sectors}
-            ind_key = stocks_df["industry"].fillna("").astype(str).str.strip()
-            stocks_df["sector_code"] = ind_key.map(industry_to_code)
-            stocks_df["sector_name"] = ind_key
-            if stocks_df["sector_code"].isna().any():
-                stocks_df = stocks_df.dropna(subset=["sector_code"])
-
-            stock_ids = [int(x) for x in stocks_df["id"].tolist()]
-            if not stock_ids:
-                logger.warning("成分股行业字段无法映射到板块代码")
-                return []
-            map_cols = stocks_df[["id", "code", "sector_code", "sector_name"]].rename(
-                columns={"id": "stock_id"}
+            sector_code_set = {item["code"] for item in sectors}
+            stocks_df = pd.DataFrame(
+                [
+                    {
+                        "stock_id": item["ts_code"],
+                        "code": item["ts_code"].split(".")[0],
+                        "sector_code": item["sector_code"],
+                        "sector_name": item["sector_name"],
+                    }
+                    for item in member_records
+                    if item.get("sector_code") in sector_code_set and item.get("ts_code")
+                ]
             )
 
-            # 优先使用已入库的日频数据（MCP/任务环境常无法直连 Tushare）
-            db_rows = self._daily_rows_from_db(stock_ids, extended_start_dt, end_dt)
-            daily_df: pd.DataFrame
-            if db_rows:
-                ts_df = pd.DataFrame(db_rows)
-                ts_df["date"] = pd.to_datetime(ts_df["date"])
-                ts_df["close_price"] = pd.to_numeric(ts_df["close_price"], errors="coerce")
-                daily_df = ts_df.merge(map_cols, on="stock_id", how="inner")
-                daily_df = daily_df[
-                    ["stock_id", "date", "close_price", "sector_code", "sector_name"]
-                ]
-                logger.info(
-                    "行业MA宽度：使用库内个股日线 %s 条（股票数=%s）",
-                    len(daily_df),
-                    len(stock_ids),
-                )
-            else:
-                tus_records = self._daily_rows_from_tushare(extended_start_dt, end_dt)
-                if not tus_records:
-                    logger.warning("库内无个股日线且 Tushare 未返回数据，请同步 individual_stock_daily 或配置 TUSHARE_TOKEN")
-                    return []
+            if stocks_df.empty:
+                logger.warning("申万一级行业成分股为空")
+                return []
+            map_cols = stocks_df[["stock_id", "code", "sector_code", "sector_name"]].drop_duplicates()
 
-                ts_df = pd.DataFrame(tus_records)
-                if (
-                    "ts_code" not in ts_df.columns
-                    or "trade_date" not in ts_df.columns
-                    or "close" not in ts_df.columns
-                ):
-                    logger.warning("Tushare 返回数据缺少必要字段(ts_code, trade_date, close)")
-                    return []
+            tus_records = self._daily_rows_from_tushare(extended_start_dt, end_dt)
+            if not tus_records:
+                logger.warning("Tushare daily 未返回可用个股日线数据，请检查 TUSHARE_TOKEN 或日期范围")
+                return []
 
-                ts_df["code"] = ts_df["ts_code"].astype(str).str.split(".").str[0]
-                ts_df["date"] = pd.to_datetime(ts_df["trade_date"])
-                ts_df["close_price"] = pd.to_numeric(ts_df["close"], errors="coerce")
-                daily_df = ts_df.merge(map_cols, on="code", how="inner")
-                daily_df = daily_df[
-                    ["stock_id", "date", "close_price", "sector_code", "sector_name"]
-                ]
+            ts_df = pd.DataFrame(tus_records)
+            if (
+                "ts_code" not in ts_df.columns
+                or "trade_date" not in ts_df.columns
+                or "close" not in ts_df.columns
+            ):
+                logger.warning("Tushare 返回数据缺少必要字段(ts_code, trade_date, close)")
+                return []
+
+            ts_df["code"] = ts_df["ts_code"].astype(str).str.split(".").str[0]
+            ts_df["date"] = pd.to_datetime(ts_df["trade_date"])
+            ts_df["close_price"] = pd.to_numeric(ts_df["close"], errors="coerce")
+            daily_df: pd.DataFrame = ts_df.merge(map_cols, on="code", how="inner")
+            daily_df = daily_df[
+                ["stock_id", "date", "close_price", "sector_code", "sector_name"]
+            ]
+            logger.info(
+                "行业MA宽度：使用 Tushare daily %s 条（行业成分股数=%s）",
+                len(daily_df),
+                len(map_cols),
+            )
 
             if daily_df.empty:
                 logger.warning("合并行业成分后日线为空")

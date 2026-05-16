@@ -61,6 +61,7 @@ def get_index_rps(request):
     Query Parameters:
         periods (str): 时间周期，多个周期用逗号分隔，如 "5,20,60"
         idx_type (str): 板块类型：概念板块、行业板块、地域板块（默认：概念板块）
+        level (str): 东财行业层级，仅 idx_type=行业板块 时生效
         trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最新交易日
         token (str): Tushare Token（覆盖环境变量）
     
@@ -71,8 +72,13 @@ def get_index_rps(request):
         # 获取查询参数
         periods_str = request.GET.get('periods', '5,20,60')
         idx_type = request.GET.get('idx_type', '概念板块')
+        level = request.GET.get('level')
         trade_date = request.GET.get('trade_date')
         token = request.GET.get('token')
+        allowed_levels = {'东财一级行业', '东财二级行业', '东财三级行业'}
+        effective_level = level if idx_type == '行业板块' else None
+        if effective_level and effective_level not in allowed_levels:
+            return error_response('level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业', 400)
         
         # 解析周期参数
         try:
@@ -83,7 +89,13 @@ def get_index_rps(request):
             return error_response('周期参数格式错误，应为逗号分隔的整数', 400)
         
         # 使用 scheduled_tasks 的 Tushare 服务实时获取数据并计算RPS
-        df, errors = compute_board_rps(periods=periods, idx_type=idx_type, trade_date=trade_date, token=token)
+        df, errors = compute_board_rps(
+            periods=periods,
+            idx_type=idx_type,
+            trade_date=trade_date,
+            level=effective_level,
+            token=token,
+        )
         
         if df is None:
             return error_response(f'获取RPS数据失败: {", ".join(errors)}', 500)
@@ -96,6 +108,7 @@ def get_index_rps(request):
             'data': result,
             'periods': periods,
             'idx_type': idx_type,
+            'level': effective_level,
             'trade_date': trade_date,
             'errors': errors,
             'query_time': datetime.now().isoformat()
@@ -536,10 +549,15 @@ def get_industry_actual_output(request):
         )
         if result is None:
             return error_response('获取行业实际产出规模估算数据失败', 500)
+        resolved_sector_codes = sector_codes or [
+            item.get('sector_code')
+            for item in result
+            if item.get('sector_code')
+        ]
         return success_response({
             'total': len(result),
             'data': result,
-            'sector_codes': sector_codes,
+            'sector_codes': resolved_sector_codes,
             'top_n': top_n,
             'report_date': report_date,
             'query_time': datetime.now().isoformat()

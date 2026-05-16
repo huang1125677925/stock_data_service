@@ -1586,10 +1586,9 @@ class IndustrySectorService:
             包含日期、行业代码名称和资金流向数据的字典
         """
         try:
-            from datetime import datetime, timedelta
-            from django.db.models import Q
             from collections import defaultdict
-            import calendar
+            from common.tushare_industry import get_open_trade_dates
+            from common.tushare_proxy import call_tushare
             
             # 设置默认日期范围
             if weekly_flag:
@@ -1606,304 +1605,143 @@ class IndustrySectorService:
                     start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
             
             logger.info(f"获取行业资金流向数据，日期范围: {start_date} 到 {end_date}，按周汇聚: {weekly_flag}")
-            
-            # 查询数据库中的资金流向数据
-            fund_flow_data = IndustrySectorFundFlow.objects.filter(
-                date__gte=start_date,
-                date__lte=end_date
-            ).select_related('sector').order_by('date', 'sector__code')
-            
-            if not fund_flow_data.exists():
-                logger.warning("数据库中没有找到资金流向数据，尝试从akshare获取")
-                # 如果数据库没有数据，尝试从akshare获取并保存
-                self._fetch_and_save_fund_flow_data(start_date, end_date)
-                # 重新查询
-                fund_flow_data = IndustrySectorFundFlow.objects.filter(
-                    date__gte=start_date,
-                    date__lte=end_date
-                ).select_related('sector').order_by('date', 'sector__code')
-            
+
+            trade_dates = get_open_trade_dates(start_date, end_date)
+            if not trade_dates:
+                return {"dates": [], "swCodeNames": [], "congestions": {}}
+
+            per_code_rows: Dict[str, List[Dict]] = defaultdict(list)
+            code_name_map: Dict[str, str] = {}
+
+            for trade_date in trade_dates:
+                dc_resp = call_tushare(
+                    "dc_index",
+                    params={"trade_date": trade_date, "idx_type": "行业板块"},
+                    fields="ts_code,name,trade_date,level",
+                    use_query=False,
+                )
+                dc_records = [
+                    item for item in ((dc_resp.get("data") or {}).get("records") or [])
+                    if isinstance(item, dict)
+                    and "一级行业" in str(item.get("level") or "").strip()
+                    and "二级" not in str(item.get("level") or "").strip()
+                    and "三级" not in str(item.get("level") or "").strip()
+                ] if isinstance(dc_resp, dict) else []
+                name_to_code = {
+                    str(item.get("name") or "").strip(): str(item.get("ts_code") or "").strip()
+                    for item in dc_records
+                    if item.get("name") and item.get("ts_code")
+                }
+                allowed_names = set(name_to_code.keys())
+
+                flow_resp = call_tushare(
+                    "moneyflow_ind_dc",
+                    params={"trade_date": trade_date, "content_type": "行业"},
+                    fields=(
+                        "trade_date,name,net_amount,net_amount_rate,"
+                        "buy_elg_amount,buy_elg_amount_rate,"
+                        "buy_lg_amount,buy_lg_amount_rate,"
+                        "buy_md_amount,buy_md_amount_rate,"
+                        "buy_sm_amount,buy_sm_amount_rate"
+                    ),
+                    use_query=False,
+                )
+                flow_records = [
+                    item for item in ((flow_resp.get("data") or {}).get("records") or [])
+                    if isinstance(item, dict)
+                ] if isinstance(flow_resp, dict) else []
+
+                for item in flow_records:
+                    sector_name = str(item.get("name") or "").strip()
+                    if not sector_name or sector_name not in allowed_names:
+                        continue
+                    sector_code = name_to_code.get(sector_name) or sector_name
+                    code_name_map[sector_code] = sector_name
+                    per_code_rows[sector_code].append(
+                        {
+                            "date": trade_date,
+                            "main_net_inflow_amount": float(item.get("net_amount") or 0),
+                            "main_net_inflow_ratio": float(item.get("net_amount_rate") or 0),
+                            "super_large_net_inflow_amount": float(item.get("buy_elg_amount") or 0),
+                            "super_large_net_inflow_ratio": float(item.get("buy_elg_amount_rate") or 0),
+                            "large_net_inflow_amount": float(item.get("buy_lg_amount") or 0),
+                            "large_net_inflow_ratio": float(item.get("buy_lg_amount_rate") or 0),
+                            "medium_net_inflow_amount": float(item.get("buy_md_amount") or 0),
+                            "medium_net_inflow_ratio": float(item.get("buy_md_amount_rate") or 0),
+                            "small_net_inflow_amount": float(item.get("buy_sm_amount") or 0),
+                            "small_net_inflow_ratio": float(item.get("buy_sm_amount_rate") or 0),
+                        }
+                    )
+
+            dates = [f"{d[:4]}-{d[4:6]}-{d[6:8]}" for d in trade_dates]
+            sw_code_names = [
+                {"indexCode": code, "indexName": code_name_map[code]}
+                for code in sorted(code_name_map.keys())
+            ]
+
             if weekly_flag:
-                # 按周汇聚数据处理
-                return self._process_weekly_fund_flow_data(fund_flow_data)
-            else:
-                # 原有的日数据处理逻辑
-                return self._process_daily_fund_flow_data(fund_flow_data)
+                weekly_codes: Dict[str, List[Dict]] = defaultdict(list)
+                weekly_dates = sorted({datetime.strptime(d, "%Y%m%d").date().strftime("%Y-W%W") for d in trade_dates})
+                for code, rows in per_code_rows.items():
+                    bucket: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+                    count_map: Dict[str, int] = defaultdict(int)
+                    for row in rows:
+                        week_key = datetime.strptime(row["date"], "%Y%m%d").date().strftime("%Y-W%W")
+                        count_map[week_key] += 1
+                        for key, value in row.items():
+                            if key != "date":
+                                bucket[week_key][key] += float(value)
+                    for week_key in weekly_dates:
+                        if count_map.get(week_key):
+                            weekly_codes[code].append(
+                                {
+                                    key: round(val / count_map[week_key], 4)
+                                    for key, val in bucket[week_key].items()
+                                }
+                            )
+                        else:
+                            weekly_codes[code].append({})
+                return {
+                    "dates": weekly_dates,
+                    "swCodeNames": sw_code_names,
+                    "congestions": dict(weekly_codes),
+                }
+
+            congestions: Dict[str, List[Dict]] = {}
+            for code, rows in per_code_rows.items():
+                row_map = {row["date"]: row for row in rows}
+                series: List[Dict] = []
+                for trade_date in trade_dates:
+                    item = row_map.get(trade_date)
+                    if not item:
+                        series.append({})
+                        continue
+                    payload = {k: v for k, v in item.items() if k != "date"}
+                    payload["total_net_inflow_amount"] = round(
+                        payload["main_net_inflow_amount"]
+                        + payload["super_large_net_inflow_amount"]
+                        + payload["large_net_inflow_amount"]
+                        + payload["medium_net_inflow_amount"]
+                        + payload["small_net_inflow_amount"],
+                        4,
+                    )
+                    payload["total_net_inflow_ratio"] = round(
+                        payload["main_net_inflow_ratio"]
+                        + payload["super_large_net_inflow_ratio"]
+                        + payload["large_net_inflow_ratio"]
+                        + payload["medium_net_inflow_ratio"]
+                        + payload["small_net_inflow_ratio"],
+                        4,
+                    )
+                    series.append(payload)
+                congestions[code] = series
+
+            return {"dates": dates, "swCodeNames": sw_code_names, "congestions": congestions}
             
         except Exception as e:
             logger.error(f"获取行业资金流向数据失败: {str(e)}")
             return None
     
-    def _process_daily_fund_flow_data(self, fund_flow_data) -> Dict:
-        """
-        处理日度资金流向数据
-        
-        Args:
-            fund_flow_data: 查询到的资金流向数据
-            
-        Returns:
-            包含日期、行业代码名称和资金流向数据的字典
-        """
-        # 构建返回数据结构
-        dates = []
-        sw_code_names = []
-        congestions = {}
-        
-        # 收集所有唯一的日期和行业代码
-        date_set = set()
-        sector_dict = {}
-        
-        for item in fund_flow_data:
-            date_str = item.date.strftime('%Y-%m-%d')
-            date_set.add(date_str)
-            
-            sector_key = item.sector.code
-            if sector_key not in sector_dict:
-                sector_dict[sector_key] = {
-                    'indexCode': item.sector.code,
-                    'indexName': item.sector.name
-                }
-                congestions[sector_key] = []
-            
-            # 计算各项净流入金额和占比
-            main_amount = float(item.main_net_inflow_amount)
-            main_ratio = float(item.main_net_inflow_ratio)
-            super_large_amount = float(item.super_large_net_inflow_amount)
-            super_large_ratio = float(item.super_large_net_inflow_ratio)
-            large_amount = float(item.large_net_inflow_amount)
-            large_ratio = float(item.large_net_inflow_ratio)
-            medium_amount = float(item.medium_net_inflow_amount)
-            medium_ratio = float(item.medium_net_inflow_ratio)
-            small_amount = float(item.small_net_inflow_amount)
-            small_ratio = float(item.small_net_inflow_ratio)
-            
-            # 计算全部净流入金额和占比
-            total_amount = main_amount + super_large_amount + large_amount + medium_amount + small_amount
-            total_ratio = main_ratio + super_large_ratio + large_ratio + medium_ratio + small_ratio
-            
-            # 添加资金流向数据
-            congestions[sector_key].append({
-                'main_net_inflow_amount': main_amount,
-                'main_net_inflow_ratio': main_ratio,
-                'super_large_net_inflow_amount': super_large_amount,
-                'super_large_net_inflow_ratio': super_large_ratio,
-                'large_net_inflow_amount': large_amount,
-                'large_net_inflow_ratio': large_ratio,
-                'medium_net_inflow_amount': medium_amount,
-                'medium_net_inflow_ratio': medium_ratio,
-                'small_net_inflow_amount': small_amount,
-                'small_net_inflow_ratio': small_ratio,
-                'total_net_inflow_amount': total_amount,  # 全部净流入金额（元）- 计算字段
-                'total_net_inflow_ratio': total_ratio,   # 全部净流入占比（%）- 计算字段
-            })
-        
-        # 转换为列表并排序
-        dates = sorted(list(date_set))
-        sw_code_names = list(sector_dict.values())
-        
-        result = {
-            'dates': dates,
-            'swCodeNames': sw_code_names,
-            'congestions': congestions
-        }
-        
-        logger.info(f"成功获取行业资金流向数据，包含{len(dates)}个日期，{len(sw_code_names)}个行业")
-        return result
-    
-    def _process_weekly_fund_flow_data(self, fund_flow_data) -> Dict:
-        """
-        处理按周汇聚的资金流向数据
-        
-        Args:
-            fund_flow_data: 查询到的资金流向数据
-            
-        Returns:
-            包含周日期、行业代码名称和周平均资金流向数据的字典
-        """
-        from datetime import datetime, timedelta
-        from collections import defaultdict
-        import calendar
-        
-        # 按周分组数据
-        weekly_data = defaultdict(lambda: defaultdict(list))
-        sector_dict = {}
-        
-        for item in fund_flow_data:
-            # 获取该日期所在的周（周一为一周的开始）
-            date_obj = item.date
-            # 计算该日期所在周的周一日期
-            days_since_monday = date_obj.weekday()
-            week_start = date_obj - timedelta(days=days_since_monday)
-            week_key = week_start.strftime('%Y-%m-%d')
-            
-            sector_key = item.sector.code
-            if sector_key not in sector_dict:
-                sector_dict[sector_key] = {
-                    'indexCode': item.sector.code,
-                    'indexName': item.sector.name
-                }
-            
-            # 将数据按周和行业分组
-            weekly_data[week_key][sector_key].append({
-                'main_net_inflow_amount': float(item.main_net_inflow_amount),
-                'main_net_inflow_ratio': float(item.main_net_inflow_ratio),
-                'super_large_net_inflow_amount': float(item.super_large_net_inflow_amount),
-                'super_large_net_inflow_ratio': float(item.super_large_net_inflow_ratio),
-                'large_net_inflow_amount': float(item.large_net_inflow_amount),
-                'large_net_inflow_ratio': float(item.large_net_inflow_ratio),
-                'medium_net_inflow_amount': float(item.medium_net_inflow_amount),
-                'medium_net_inflow_ratio': float(item.medium_net_inflow_ratio),
-                'small_net_inflow_amount': float(item.small_net_inflow_amount),
-                'small_net_inflow_ratio': float(item.small_net_inflow_ratio),
-            })
-        
-        # 计算每周每个行业的平均值
-        congestions = {}
-        dates = []
-        
-        # 获取最近20周的数据
-        sorted_weeks = sorted(weekly_data.keys())[-20:]  # 取最近20周
-        dates = sorted_weeks
-        
-        for sector_key in sector_dict.keys():
-            congestions[sector_key] = []
-            
-            for week_key in sorted_weeks:
-                if sector_key in weekly_data[week_key] and weekly_data[week_key][sector_key]:
-                    # 计算该周该行业的平均值
-                    week_sector_data = weekly_data[week_key][sector_key]
-                    num_days = len(week_sector_data)
-                    
-                    # 计算各项指标的平均值
-                    avg_main_amount = sum(d['main_net_inflow_amount'] for d in week_sector_data) / num_days
-                    avg_main_ratio = sum(d['main_net_inflow_ratio'] for d in week_sector_data) / num_days
-                    avg_super_large_amount = sum(d['super_large_net_inflow_amount'] for d in week_sector_data) / num_days
-                    avg_super_large_ratio = sum(d['super_large_net_inflow_ratio'] for d in week_sector_data) / num_days
-                    avg_large_amount = sum(d['large_net_inflow_amount'] for d in week_sector_data) / num_days
-                    avg_large_ratio = sum(d['large_net_inflow_ratio'] for d in week_sector_data) / num_days
-                    avg_medium_amount = sum(d['medium_net_inflow_amount'] for d in week_sector_data) / num_days
-                    avg_medium_ratio = sum(d['medium_net_inflow_ratio'] for d in week_sector_data) / num_days
-                    avg_small_amount = sum(d['small_net_inflow_amount'] for d in week_sector_data) / num_days
-                    avg_small_ratio = sum(d['small_net_inflow_ratio'] for d in week_sector_data) / num_days
-                    
-                    # 计算全部净流入金额和占比的平均值
-                    avg_total_amount = avg_main_amount + avg_super_large_amount + avg_large_amount + avg_medium_amount + avg_small_amount
-                    avg_total_ratio = avg_main_ratio + avg_super_large_ratio + avg_large_ratio + avg_medium_ratio + avg_small_ratio
-                    
-                    congestions[sector_key].append({
-                        'main_net_inflow_amount': avg_main_amount,
-                        'main_net_inflow_ratio': avg_main_ratio,
-                        'super_large_net_inflow_amount': avg_super_large_amount,
-                        'super_large_net_inflow_ratio': avg_super_large_ratio,
-                        'large_net_inflow_amount': avg_large_amount,
-                        'large_net_inflow_ratio': avg_large_ratio,
-                        'medium_net_inflow_amount': avg_medium_amount,
-                        'medium_net_inflow_ratio': avg_medium_ratio,
-                        'small_net_inflow_amount': avg_small_amount,
-                        'small_net_inflow_ratio': avg_small_ratio,
-                        'total_net_inflow_amount': avg_total_amount,  # 全部净流入金额（元）- 周平均值
-                        'total_net_inflow_ratio': avg_total_ratio,   # 全部净流入占比（%）- 周平均值
-                    })
-                else:
-                    # 如果该周该行业没有数据，填充0值
-                    congestions[sector_key].append({
-                        'main_net_inflow_amount': 0.0,
-                        'main_net_inflow_ratio': 0.0,
-                        'super_large_net_inflow_amount': 0.0,
-                        'super_large_net_inflow_ratio': 0.0,
-                        'large_net_inflow_amount': 0.0,
-                        'large_net_inflow_ratio': 0.0,
-                        'medium_net_inflow_amount': 0.0,
-                        'medium_net_inflow_ratio': 0.0,
-                        'small_net_inflow_amount': 0.0,
-                        'small_net_inflow_ratio': 0.0,
-                        'total_net_inflow_amount': 0.0,
-                        'total_net_inflow_ratio': 0.0,
-                    })
-        
-        sw_code_names = list(sector_dict.values())
-        
-        result = {
-            'dates': dates,
-            'swCodeNames': sw_code_names,
-            'congestions': congestions
-        }
-        
-        logger.info(f"成功获取行业资金流向周汇聚数据，包含{len(dates)}周，{len(sw_code_names)}个行业")
-        return result
-    
-    def _fetch_and_save_fund_flow_data(self, start_date: str, end_date: str) -> None:
-        """
-        从akshare获取并保存行业资金流向数据
-        
-        Args:
-            start_date: 开始日期
-            end_date: 结束日期
-        """
-        try:
-            import akshare as ak
-            from datetime import datetime
-            
-            logger.info(f"从akshare获取行业资金流向数据: {start_date} 到 {end_date}")
-            
-            # 获取行业资金流向数据
-            # 注意：这里使用akshare的行业资金流向接口
-            df = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业板块")
-            
-            if df is None or df.empty:
-                logger.warning("从akshare获取的行业资金流向数据为空")
-                return
-            
-            # 获取或创建行业板块记录
-            sectors_to_create = []
-            fund_flows_to_create = []
-            current_date = datetime.now().date()
-            
-            for _, row in df.iterrows():
-                sector_name = str(row.get('名称', ''))
-                sector_code = str(row.get('代码', ''))
-                
-                if not sector_code or not sector_name:
-                    continue
-                
-                # 获取或创建行业板块
-                sector, created = IndustrySector.objects.get_or_create(
-                    code=sector_code,
-                    defaults={'name': sector_name}
-                )
-                
-                if created:
-                    logger.info(f"创建新的行业板块: {sector_code} - {sector_name}")
-                
-                # 创建资金流向记录
-                main_net_inflow = float(row.get('主力净流入-净额', 0))
-                main_net_inflow_ratio = float(row.get('主力净流入-净占比', 0))
-                
-                fund_flow, created = IndustrySectorFundFlow.objects.get_or_create(
-                    sector=sector,
-                    date=current_date,
-                    defaults={
-                        'main_net_inflow_amount': main_net_inflow,
-                        'main_net_inflow_ratio': main_net_inflow_ratio,
-                        'super_large_net_inflow_amount': float(row.get('超大单净流入-净额', 0)),
-                        'super_large_net_inflow_ratio': float(row.get('超大单净流入-净占比', 0)),
-                        'large_net_inflow_amount': float(row.get('大单净流入-净额', 0)),
-                        'large_net_inflow_ratio': float(row.get('大单净流入-净占比', 0)),
-                        'medium_net_inflow_amount': float(row.get('中单净流入-净额', 0)),
-                        'medium_net_inflow_ratio': float(row.get('中单净流入-净占比', 0)),
-                        'small_net_inflow_amount': float(row.get('小单净流入-净额', 0)),
-                        'small_net_inflow_ratio': float(row.get('小单净流入-净占比', 0)),
-                    }
-                )
-                
-                if created:
-                    logger.info(f"保存行业资金流向数据: {sector_name} - {current_date}")
-            
-            logger.info(f"成功从akshare获取并保存行业资金流向数据")
-            
-        except Exception as e:
-            logger.error(f"从akshare获取行业资金流向数据失败: {str(e)}")
-
     def get_all_sectors_fund_flow_summary(self, date: str = None) -> Optional[List[Dict]]:
         """获取所有行业板块指定日期的资金流汇总数据
         

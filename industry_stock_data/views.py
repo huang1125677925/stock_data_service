@@ -972,79 +972,106 @@ def get_industry_heatmap_data(request):
     }
     事件：无（视图函数不直接触发事件）
     """
-    from indival_stock_data.models import PerformanceReport, IndividualStock
-    from django.db.models import Sum, Count, Avg
-    
-    # 获取查询参数
+    from common.tushare_industry import (
+        build_report_periods,
+        fetch_bak_daily_snapshot,
+        fetch_financial_vip_period,
+    )
+
     industry = request.GET.get('industry')
-    report_type = request.GET.get('report_type')
-        
-    # 构建查询条件
-    queryset = PerformanceReport.objects.select_related('stock')
-    
-    # 按行业筛选
-    if industry:
-        queryset = queryset.filter(industry__icontains=industry)
-        
-    # 按报告类型筛选（根据报告期判断）
-    if report_type:
-        if report_type == 'annual':
-            # 年报：报告期以1231结尾
-            queryset = queryset.filter(report_date__endswith='1231')
-        elif report_type == 'semi_annual':
-            # 中报：报告期以0630结尾
-            queryset = queryset.filter(report_date__endswith='0630')
-        elif report_type == 'q1':
-            # 一季报：报告期以0331结尾
-            queryset = queryset.filter(report_date__endswith='0331')
-        elif report_type == 'q3':
-            # 三季报：报告期以0930结尾
-            queryset = queryset.filter(report_date__endswith='0930')
-        elif report_type == 'quarterly':
-            # 季报：报告期以0331或0930结尾（保持向后兼容）
-            queryset = queryset.filter(
-                models.Q(report_date__endswith='0331') | 
-                models.Q(report_date__endswith='0930')
-            )
-        
-    # 按报告期和行业分组汇聚数据
-    aggregated_data = queryset.values('report_date', 'industry').annotate(
-        # 汇聚财务指标
-        total_operating_revenue=Sum('operating_revenue'),
-        total_net_profit=Sum('net_profit'),
-        avg_earnings_per_share=Avg('earnings_per_share'),
-        avg_operating_revenue_growth_rate=Avg('operating_revenue_growth_rate'),
-        avg_net_profit_growth_rate=Avg('net_profit_growth_rate'),
-        avg_roe=Avg('roe'),
-        avg_gross_profit_margin=Avg('gross_profit_margin'),
-        avg_net_assets_per_share=Avg('net_assets_per_share'),
-        avg_operating_cash_flow_per_share=Avg('operating_cash_flow_per_share'),
-        # 统计信息
-        company_count=Count('stock', distinct=True)
-    ).order_by('report_date', 'industry')
-    
-    # 转换为列表格式
+    report_type = request.GET.get('report_type') or 'annual'
+    start_date = (request.GET.get('start_date') or '').replace('-', '')
+    end_date = (request.GET.get('end_date') or '').replace('-', '')
+
+    periods = build_report_periods(
+        report_type,
+        start_date=start_date or None,
+        end_date=end_date or None,
+    )
+    stock_snapshot = fetch_bak_daily_snapshot(fields='ts_code,industry')
+    stock_industry_map = {
+        str(item.get('ts_code') or '').strip(): str(item.get('industry') or '').strip()
+        for item in stock_snapshot
+        if item.get('ts_code') and item.get('industry')
+    }
+
     reports_list = []
-    for item in aggregated_data:
-        report_dict = {
-            'report_date': item['report_date'],
-            'industry': item['industry'],
-            'company_count': item['company_count'],
-            'total_operating_revenue': float(item['total_operating_revenue']) if item['total_operating_revenue'] else 0,
-            'total_net_profit': float(item['total_net_profit']) if item['total_net_profit'] else 0,
-            'avg_earnings_per_share': round(float(item['avg_earnings_per_share']), 4) if item['avg_earnings_per_share'] else 0,
-            'avg_operating_revenue_growth_rate': round(float(item['avg_operating_revenue_growth_rate']), 2) if item['avg_operating_revenue_growth_rate'] else 0,
-            'avg_net_profit_growth_rate': round(float(item['avg_net_profit_growth_rate']), 2) if item['avg_net_profit_growth_rate'] else 0,
-            'avg_roe': round(float(item['avg_roe']), 4) if item['avg_roe'] else 0,
-            'avg_gross_profit_margin': round(float(item['avg_gross_profit_margin']), 4) if item['avg_gross_profit_margin'] else 0,
-            'avg_net_assets_per_share': round(float(item['avg_net_assets_per_share']), 4) if item['avg_net_assets_per_share'] else 0,
-            'avg_operating_cash_flow_per_share': round(float(item['avg_operating_cash_flow_per_share']), 4) if item['avg_operating_cash_flow_per_share'] else 0,
+    for period in periods:
+        income_records = fetch_financial_vip_period(
+            'income_vip',
+            period,
+            fields='ts_code,end_date,total_revenue,n_income,basic_eps',
+        )
+        indicator_records = fetch_financial_vip_period(
+            'fina_indicator_vip',
+            period,
+            fields='ts_code,end_date,roe,grossprofit_margin,bps,ocfps,or_yoy,q_sales_yoy,q_profit_yoy',
+        )
+
+        indicator_map = {
+            str(item.get('ts_code') or '').strip(): item
+            for item in indicator_records
+            if item.get('ts_code')
         }
-        reports_list.append(report_dict)
-    
-    # 构建热力图数据格式
+        grouped = {}
+        for row in income_records:
+            ts_code = str(row.get('ts_code') or '').strip()
+            industry_name = stock_industry_map.get(ts_code)
+            if not industry_name:
+                continue
+            if industry and industry not in industry_name:
+                continue
+            metrics = indicator_map.get(ts_code, {})
+            group = grouped.setdefault(
+                industry_name,
+                {
+                    'report_date': period,
+                    'industry': industry_name,
+                    'company_count': 0,
+                    'total_operating_revenue': 0.0,
+                    'total_net_profit': 0.0,
+                    'avg_earnings_per_share_sum': 0.0,
+                    'avg_operating_revenue_growth_rate_sum': 0.0,
+                    'avg_net_profit_growth_rate_sum': 0.0,
+                    'avg_roe_sum': 0.0,
+                    'avg_gross_profit_margin_sum': 0.0,
+                    'avg_net_assets_per_share_sum': 0.0,
+                    'avg_operating_cash_flow_per_share_sum': 0.0,
+                },
+            )
+            group['company_count'] += 1
+            group['total_operating_revenue'] += float(row.get('total_revenue') or 0)
+            group['total_net_profit'] += float(row.get('n_income') or 0)
+            group['avg_earnings_per_share_sum'] += float(row.get('basic_eps') or 0)
+            group['avg_operating_revenue_growth_rate_sum'] += float(
+                metrics.get('q_sales_yoy') or metrics.get('or_yoy') or 0
+            )
+            group['avg_net_profit_growth_rate_sum'] += float(metrics.get('q_profit_yoy') or 0)
+            group['avg_roe_sum'] += float(metrics.get('roe') or 0)
+            group['avg_gross_profit_margin_sum'] += float(metrics.get('grossprofit_margin') or 0)
+            group['avg_net_assets_per_share_sum'] += float(metrics.get('bps') or 0)
+            group['avg_operating_cash_flow_per_share_sum'] += float(metrics.get('ocfps') or 0)
+
+        for item in grouped.values():
+            company_count = item['company_count'] or 1
+            reports_list.append(
+                {
+                    'report_date': item['report_date'],
+                    'industry': item['industry'],
+                    'company_count': item['company_count'],
+                    'total_operating_revenue': round(item['total_operating_revenue'], 2),
+                    'total_net_profit': round(item['total_net_profit'], 2),
+                    'avg_earnings_per_share': round(item['avg_earnings_per_share_sum'] / company_count, 4),
+                    'avg_operating_revenue_growth_rate': round(item['avg_operating_revenue_growth_rate_sum'] / company_count, 2),
+                    'avg_net_profit_growth_rate': round(item['avg_net_profit_growth_rate_sum'] / company_count, 2),
+                    'avg_roe': round(item['avg_roe_sum'] / company_count, 4),
+                    'avg_gross_profit_margin': round(item['avg_gross_profit_margin_sum'] / company_count, 4),
+                    'avg_net_assets_per_share': round(item['avg_net_assets_per_share_sum'] / company_count, 4),
+                    'avg_operating_cash_flow_per_share': round(item['avg_operating_cash_flow_per_share_sum'] / company_count, 4),
+                }
+            )
+
     heatmap_data = convert_to_heatmap_format(reports_list)
-    
     return success_response(heatmap_data)
 
 
@@ -1058,11 +1085,13 @@ def convert_to_heatmap_format(reports_data):
     返回:
         符合热力图要求的数据格式
     """
-    # 直接使用原始数据中的行业名称
-    industry_names = list(set([item['industry'] for item in reports_data]))
-    industry_code_mapping = {}
-    for i, industry in enumerate(industry_names):
-        industry_code_mapping[industry] = f'801{str(i+1).zfill(3)}.SI'
+    from common.tushare_industry import get_sw_l1_sectors
+
+    industry_code_mapping = {
+        item['sector_name']: item['sector_code']
+        for item in get_sw_l1_sectors()
+        if item.get('sector_name') and item.get('sector_code')
+    }
     
     # 获取所有唯一的报告日期
     unique_dates = sorted(list(set([item['report_date'] for item in reports_data])))
@@ -1073,7 +1102,7 @@ def convert_to_heatmap_format(reports_data):
     # 构建行业代码名称映射
     sw_code_names = []
     for industry in unique_industries:
-        index_code = industry_code_mapping.get(industry, f'801{str(len(sw_code_names) + 1).zfill(3)}.SI')
+        index_code = industry_code_mapping.get(industry, industry)
         sw_code_names.append({
             'indexCode': index_code,
             'indexName': industry
@@ -1082,7 +1111,7 @@ def convert_to_heatmap_format(reports_data):
     # 构建拥堵度数据
     congestions = {}
     for industry in unique_industries:
-        index_code = industry_code_mapping.get(industry, f'801{str(unique_industries.index(industry) + 1).zfill(3)}.SI')
+        index_code = industry_code_mapping.get(industry, industry)
         industry_data = []
         
         for date in unique_dates:

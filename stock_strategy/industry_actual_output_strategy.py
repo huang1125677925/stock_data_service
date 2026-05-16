@@ -5,14 +5,13 @@
 功能：
 - 计算行业实际产出规模（估算）≈ 前N大企业营业总收入之和 / 行业集中度（CRn）
 - 其中行业集中度CRn定义为：该行业前N名企业市场份额（以营业总收入计）的加总（0-1小数），即 CRn = Σ(Top N 企业营业收入 / 行业总营业收入)
-- 当CRn以数据库数据计算时，估算值等于行业总营业收入（用于验证与一致性）。
-- 仅从数据库获取数据（IndividualStock、PerformanceReport、IndustrySector），符合工作空间规则。
+- 通过 Tushare 申万一级行业成分股与财务接口获取数据。
 - 支持按行业板块代码筛选、选择Top N与报告期（可选），并对结果进行缓存。
 
 参数：
 - sector_codes(List[str], 可选): 行业板块代码列表；为空时计算所有板块。
 - top_n(int, 默认3): 前N大企业数。
-- report_date(str, 可选): 报告期（YYYYMMDD）；为空时使用每只股票的最新业绩快报（优先announcement_date，其次report_date）。
+- report_date(str, 可选): 报告期（YYYYMMDD）；为空时使用最近一个已完整披露的年报期。
 
 返回值：
 - List[Dict]: 每行业的实际产出规模估算数据列表，包含：
@@ -22,26 +21,29 @@
   - top_n_revenue_sum: 前N企业营业总收入之和（元）
   - crn_ratio: 行业集中度CRn（0-1）
   - estimated_industry_output: 行业实际产出规模估算值（元）
-  - industry_total_revenue: 行业总营业收入（以数据库可得数据计算）
+  - industry_total_revenue: 行业总营业收入
   - company_count_with_reports: 参与计算、具有报告数据的公司数量
 
 事件：
 - 参数校验
-- 从数据库读取行业板块、个股与业绩快报数据
+- 从 Tushare 读取申万一级行业成分股与财务数据
 - 聚合计算Top N收入与CRn，给出估算值
 - 结果缓存
 """
 
 import logging
+import math
 from typing import Dict, List, Optional
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Count, OuterRef, Subquery
 
-from industry_stock_data.models import IndustrySector
-from indival_stock_data.models import IndividualStock
-from indival_stock_data.models import PerformanceReport
+from common.tushare_industry import (
+    fetch_financial_vip_period,
+    get_latest_completed_report_period,
+    get_sw_l1_members,
+    get_sw_l1_sectors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,19 @@ class IndustryActualOutputStrategy:
         # 缓存超时时间，默认5分钟，可通过settings.STOCK_CACHE_TIMEOUT覆盖
         self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 300)
 
+    def _sanitize_result_item(self, item: Dict) -> Dict:
+        sanitized = dict(item)
+        for key in (
+            'top_n_revenue_sum',
+            'crn_ratio',
+            'estimated_industry_output',
+            'industry_total_revenue',
+        ):
+            value = sanitized.get(key)
+            if isinstance(value, float) and not math.isfinite(value):
+                sanitized[key] = 0.0
+        return sanitized
+
     def get_industry_actual_output(
         self,
         sector_codes: Optional[List[str]] = None,
@@ -72,11 +87,11 @@ class IndustryActualOutputStrategy:
         Args:
             sector_codes: 行业板块代码列表（可选）；为空时计算所有板块。
             top_n: 前N大企业数量（默认为3）。
-            report_date: 报告期（YYYYMMDD，可选）；为空时使用最新业绩快报。
+            report_date: 报告期（YYYYMMDD，可选）；为空时使用最近一个已完整披露的年报期。
         Returns:
             每行业的实际产出规模估算数据列表；若无数据返回None。
         事件：
-            - 读取IndustrySector、IndividualStock、PerformanceReport数据
+            - 读取 Tushare 申万一级行业成分股与财务数据
             - 对每行业聚合计算Top N收入之和、行业总收入与CRn
             - 计算估算值，并进行缓存
         """
@@ -87,59 +102,98 @@ class IndustryActualOutputStrategy:
                 return None
 
             # 构造缓存键
-            cache_key = f"industry_actual_output_{','.join(sector_codes) if sector_codes else 'all'}_n{top_n}_{report_date or 'latest'}"
+            cache_key = f"industry_actual_output_sw_l1_members_v2_{','.join(sector_codes) if sector_codes else 'all'}_n{top_n}_{report_date or 'latest'}"
             cached = cache.get(cache_key)
             if cached:
                 logger.info("从缓存获取行业实际产出规模估算数据")
-                return cached
+                return [self._sanitize_result_item(item) for item in cached]
 
-            # 获取行业板块（可筛选）
-            if sector_codes:
-                sectors = list(IndustrySector.objects.filter(code__in=sector_codes).values('code', 'name'))
-            else:
-                sectors = list(IndustrySector.objects.all().values('code', 'name'))
-
-            if not sectors:
-                logger.warning("未获取到行业板块数据")
+            sector_rows = get_sw_l1_sectors()
+            sector_by_code = {
+                item["sector_code"]: item["sector_name"]
+                for item in sector_rows
+                if item.get("sector_code") and item.get("sector_name")
+            }
+            if not sector_by_code:
+                logger.warning("未获取到申万一级行业列表")
                 return None
+
+            target_sector_codes = set(sector_by_code.keys())
+            if sector_codes:
+                sector_key_set = {str(code).strip() for code in sector_codes if str(code).strip()}
+                target_sector_codes = {
+                    code for code, name in sector_by_code.items()
+                    if code in sector_key_set or name in sector_key_set
+                }
+
+            if not target_sector_codes:
+                logger.warning("未匹配到目标申万一级行业")
+                return []
+
+            member_records = get_sw_l1_members()
+            if not member_records:
+                logger.warning("未获取到申万一级行业成分股")
+                return None
+
+            sector_members: Dict[str, Dict[str, object]] = {}
+            for item in member_records:
+                sector_code = str(item.get("sector_code") or "").strip()
+                ts_code = str(item.get("ts_code") or "").strip()
+                if not sector_code or not ts_code or sector_code not in target_sector_codes:
+                    continue
+                sector_members.setdefault(
+                    sector_code,
+                    {
+                        "sector_name": sector_by_code.get(sector_code) or item.get("sector_name") or "",
+                        "ts_codes": set(),
+                    },
+                )
+                sector_members[sector_code]["ts_codes"].add(ts_code)
+
+            if not sector_members:
+                logger.warning("目标申万一级行业成分股为空")
+                return []
+
+            actual_period = report_date or get_latest_completed_report_period("annual")
+            income_records = fetch_financial_vip_period(
+                "income_vip",
+                actual_period,
+                fields="ts_code,end_date,total_revenue",
+            )
+            if not income_records:
+                logger.warning("Tushare income_vip 未返回数据: period=%s", actual_period)
+                return None
+
+            revenue_by_stock: Dict[str, float] = {}
+            for item in income_records:
+                ts_code = str(item.get("ts_code") or "").strip()
+                revenue = item.get("total_revenue")
+                try:
+                    revenue_val = float(revenue)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(revenue_val) or revenue_val <= 0:
+                    continue
+                revenue_by_stock[ts_code] = revenue_val
 
             results: List[Dict] = []
 
-            # 遍历每个行业板块计算
-            for sector in sectors:
-                sector_code = sector['code']
-                sector_name = sector['name']
-
-                # 按行业名称选择股票（基于IndividualStock.industry与IndustrySector.name的匹配）
-                stocks_qs = IndividualStock.objects.filter(industry=sector_name)
-
-                # 为每只股票注入其（指定报告期或最新）营业总收入
-                if report_date:
-                    # 指定报告期：取该期报告的营业总收入（若无则为None）
-                    revenue_subq = PerformanceReport.objects.filter(
-                        stock=OuterRef('pk'),
-                        report_date=report_date
-                    ).order_by('-announcement_date', '-updated_at').values('operating_revenue')[:1]
-                else:
-                    # 最新报告：优先按announcement_date降序，其次report_date，再次updated_at
-                    revenue_subq = PerformanceReport.objects.filter(
-                        stock=OuterRef('pk')
-                    ).order_by('-announcement_date', '-report_date', '-updated_at').values('operating_revenue')[:1]
-
-                stocks_with_rev = stocks_qs.annotate(latest_operating_revenue=Subquery(revenue_subq))\
-                                        .values_list('latest_operating_revenue', flat=True)
-
-                # 收集有效收入（去除None与非正值）
-                revenues = [float(rv) for rv in stocks_with_rev if rv is not None and float(rv) > 0]
+            for sector_code, sector_info in sector_members.items():
+                sector_name = str(sector_info["sector_name"])
+                ts_codes = sector_info["ts_codes"]
+                revenues = [
+                    revenue_by_stock[ts_code]
+                    for ts_code in ts_codes
+                    if ts_code in revenue_by_stock
+                ]
 
                 company_count_with_reports = len(revenues)
                 if company_count_with_reports == 0:
-                    # 若该行业无可用收入数据，则跳过或填充0结果
                     results.append({
                         'sector_code': sector_code,
                         'sector_name': sector_name,
                         'top_n': top_n,
-                        'report_date': report_date,
+                        'report_date': actual_period,
                         'top_n_revenue_sum': 0.0,
                         'crn_ratio': 0.0,
                         'estimated_industry_output': 0.0,
@@ -165,7 +219,7 @@ class IndustryActualOutputStrategy:
                     'sector_code': sector_code,
                     'sector_name': sector_name,
                     'top_n': top_n,
-                    'report_date': report_date,
+                    'report_date': actual_period,
                     'top_n_revenue_sum': round(float(top_n_revenue_sum), 2),
                     'crn_ratio': round(float(crn_ratio), 6),
                     'estimated_industry_output': round(float(estimated_output), 2),
@@ -177,8 +231,9 @@ class IndustryActualOutputStrategy:
             results.sort(key=lambda x: x['estimated_industry_output'], reverse=True)
 
             # 缓存结果
-            cache.set(cache_key, results, self.cache_timeout)
-            return results
+            sanitized_results = [self._sanitize_result_item(item) for item in results]
+            cache.set(cache_key, sanitized_results, self.cache_timeout)
+            return sanitized_results
         except Exception as e:
             logger.error(f"计算行业实际产出规模估算失败: {str(e)}")
             return None
