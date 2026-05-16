@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from common.response import success_response, error_response
 from common.tushare_proxy import call_tushare
+from .github_markdown_service import github_markdown_service
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from .serializers import (
     SuccessResponseDcDailySerializer,
@@ -932,3 +933,89 @@ class HmDetailProxyView(APIView):
             return success_response(data, "查询游资每日明细成功")
         except Exception as e:
             return error_response(f"查询游资每日明细失败: {str(e)}", 500)
+
+
+class MybookDirectoryView(APIView):
+    """
+    GitHub mybook 仓库目录浏览接口。
+    """
+
+    @extend_schema(
+        summary="GitHub mybook 目录浏览",
+        description="列出配置仓库指定目录下的文件和子目录，供前端做文档树。",
+        tags=["GitHub Mybook"],
+        parameters=[
+            OpenApiParameter(name="path", description="仓库内目录路径，空值表示根目录", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={200: dict, 400: ErrorResponseSerializer, 500: ErrorResponseSerializer},
+    )
+    def get(self, request):
+        try:
+            path = request.query_params.get("path", "")
+            data = github_markdown_service.list_directory(path=path)
+            return success_response(data, "查询 GitHub mybook 目录成功")
+        except ValueError as e:
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except RuntimeError as e:
+            return error_response(str(e), 500)
+        except Exception as e:
+            return error_response(f"查询 GitHub mybook 目录失败: {str(e)}", 500)
+
+
+class MybookMarkdownFilesView(APIView):
+    """
+    GitHub mybook Markdown 文件列表接口。
+    """
+
+    @extend_schema(
+        summary="GitHub mybook Markdown 文件列表",
+        description="列出配置仓库中的 Markdown 文件，可递归扫描，供前端展示文档列表。",
+        tags=["GitHub Mybook"],
+        parameters=[
+            OpenApiParameter(name="prefix", description="仓库内路径前缀，空值表示全仓库", required=False, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="recursive", description="是否递归扫描，默认 true", required=False, type=OpenApiTypes.BOOL, location=OpenApiParameter.QUERY),
+        ],
+        responses={200: dict, 400: ErrorResponseSerializer, 500: ErrorResponseSerializer},
+    )
+    def get(self, request):
+        try:
+            prefix = request.query_params.get("prefix", "")
+            recursive_text = request.query_params.get("recursive", "true").strip().lower()
+            recursive = recursive_text not in ("0", "false", "no", "off")
+            data = github_markdown_service.list_markdown_files(prefix=prefix, recursive=recursive)
+            return success_response(data, "查询 GitHub mybook Markdown 文件列表成功")
+        except ValueError as e:
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except RuntimeError as e:
+            return error_response(str(e), 500)
+        except Exception as e:
+            return error_response(f"查询 GitHub mybook Markdown 文件列表失败: {str(e)}", 500)
+
+
+class MybookMarkdownContentView(APIView):
+    """
+    GitHub mybook Markdown 文件内容接口。
+    """
+
+    @extend_schema(
+        summary="GitHub mybook Markdown 内容",
+        description="读取配置仓库中指定 Markdown 文件内容，供前端渲染。",
+        tags=["GitHub Mybook"],
+        parameters=[
+            OpenApiParameter(name="path", description="仓库内 Markdown 文件路径", required=True, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name="max_chars", description="最大返回字符数，默认 200000，最大 500000", required=False, type=OpenApiTypes.INT, location=OpenApiParameter.QUERY),
+        ],
+        responses={200: dict, 400: ErrorResponseSerializer, 500: ErrorResponseSerializer},
+    )
+    def get(self, request):
+        try:
+            path = request.query_params.get("path", "")
+            max_chars = int(request.query_params.get("max_chars", 200000))
+            data = github_markdown_service.get_markdown_content(path=path, max_chars=max_chars)
+            return success_response(data, "查询 GitHub mybook Markdown 内容成功")
+        except ValueError as e:
+            return error_response(f"参数格式错误: {str(e)}", 400)
+        except RuntimeError as e:
+            return error_response(str(e), 500)
+        except Exception as e:
+            return error_response(f"查询 GitHub mybook Markdown 内容失败: {str(e)}", 500)

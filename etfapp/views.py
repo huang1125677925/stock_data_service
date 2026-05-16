@@ -201,7 +201,7 @@ class EtfDailyListView(APIView):
 class EtfLatestDailyAllView(APIView):
     """
     ETF 最近一个交易日所有ETF日线行情查询接口（类视图）
-    功能：首先获取数据库中最近一个交易日的日期，然后根据该日期读取所有ETF的日线交易数据并返回。
+    功能：从 Tushare 拉取最近一个有数据交易日的全部 ETF 日线行情并返回。
     参数（Query）：无
     返回值：调用 success_response 返回列表数据（data为 EtfDailySerializer[]）；错误时调用 error_response。
     事件：无
@@ -212,10 +212,34 @@ class EtfLatestDailyAllView(APIView):
     @extend_schema(
         summary="ETF 最近交易日所有ETF日线行情",
         description=(
-            "获取数据库中最新的交易日日期，并返回该日期下所有ETF的日线行情列表。\n"
+            "从 Tushare 获取最近一个有数据交易日的全部 ETF 日线行情列表。\n"
+            "支持按所跟踪指数的发布机构、类别/主题筛选，并支持按这些维度输出分类分析。\n"
             "统一响应结构（success_response），data 为行情列表。"
         ),
         tags=["etf"],
+        parameters=[
+            OpenApiParameter(
+                name="index_publisher",
+                description="按跟踪指数的发布机构筛选，模糊匹配，例如 中证指数有限公司",
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+            ),
+            OpenApiParameter(
+                name="index_category",
+                description="按跟踪指数的类别/主题筛选，模糊匹配 category、index_name、fullname，例如 消费、半导体",
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+            ),
+            OpenApiParameter(
+                name="group_by",
+                description="分类分析维度，可选值：index_publisher、index_category",
+                required=False,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+            ),
+        ],
         responses={
             200: SuccessResponseEtfDailyListSerializer,
             500: ErrorResponseSerializer,
@@ -223,17 +247,27 @@ class EtfLatestDailyAllView(APIView):
     )
     def get(self, request):
         try:
-            dailies = etf_service.query_daily_latest_all()
-            if not dailies:
-                return error_response('数据库中无ETF日线数据', 404)
+            index_publisher = request.query_params.get('index_publisher')
+            index_category = request.query_params.get('index_category')
+            group_by = request.query_params.get('group_by')
+            if group_by and group_by not in {'index_publisher', 'index_category'}:
+                return error_response('参数错误：group_by 仅支持 index_publisher 或 index_category', 400)
 
-            latest_date = dailies[0].trade_date
-            serializer = EtfDailySerializer(dailies, many=True)
-            # 按统一规范返回，并附加 trade_date 与总数元信息
+            payload = etf_service.query_daily_latest_all(
+                index_publisher=index_publisher,
+                index_category=index_category,
+                group_by=group_by,
+            )
+            dailies = payload.get('items') or []
+            if not dailies:
+                return error_response('Tushare中无可用ETF日线数据', 404)
+
             return success_response(
-                serializer.data,
-                trade_date=latest_date.strftime('%Y-%m-%d'),
+                dailies,
+                trade_date=payload.get('trade_date'),
                 total=len(dailies),
+                filters=payload.get('filters') or {},
+                analysis=payload.get('analysis') or [],
             )
         except Exception as e:
             logger.error(f"ETF 最近交易日所有ETF行情查询失败: {str(e)}")

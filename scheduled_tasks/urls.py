@@ -21,6 +21,9 @@ from .views import (
     IrmQaShProxyView,
     IrmQaSzProxyView,
     CyqPerfProxyView,
+    MybookDirectoryView,
+    MybookMarkdownFilesView,
+    MybookMarkdownContentView,
 )
 
 app_name = 'scheduled_tasks'
@@ -41,5 +44,8 @@ urlpatterns = [
     path('irm-qa-sh/', IrmQaShProxyView.as_view(), name='irm-qa-sh-proxy'),
     path('irm-qa-sz/', IrmQaSzProxyView.as_view(), name='irm-qa-sz-proxy'),
     path('cyq-perf/', CyqPerfProxyView.as_view(), name='cyq-perf-proxy'),
+    path('mybook/directory/', MybookDirectoryView.as_view(), name='mybook-directory'),
+    path('mybook/markdown-files/', MybookMarkdownFilesView.as_view(), name='mybook-markdown-files'),
+    path('mybook/markdown-content/', MybookMarkdownContentView.as_view(), name='mybook-markdown-content'),
     path('git-info/', GitInfoView.as_view(), name='git-info'),
 ]

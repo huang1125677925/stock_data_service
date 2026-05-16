@@ -19,10 +19,38 @@ from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tag
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
+from .auction_selection_strategy import auction_selection_strategy_service
+from .limit_board_service import limit_board_data_service
 from industry_stock_data.models import IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 from .index_analysis.services import get_macd_xgb_recent_growth_dates
 from stock_strategy.serializers import SuccessResponseMacdXgbGrowthDatesSerializer, SuccessResponseActualRiseRatio5DSerializer
 from etfapp.serializers import ErrorResponseSerializer
+
+
+def _get_required_trade_date(request):
+    trade_date = request.GET.get('trade_date')
+    if not trade_date or len(trade_date) != 8 or not trade_date.isdigit():
+        raise ValueError('trade_date 为必填参数，格式为 YYYYMMDD')
+    return trade_date
+
+
+def _get_positive_int_param(request, name, default, max_value=None):
+    value = int(request.GET.get(name, default))
+    if value <= 0:
+        raise ValueError(f'{name} 必须大于 0')
+    if max_value is not None:
+        value = min(value, max_value)
+    return value
+
+
+def _get_required_date_range(request):
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+    if not start_date or len(start_date) != 8 or not start_date.isdigit():
+        raise ValueError('start_date 为必填参数，格式为 YYYYMMDD')
+    if not end_date or len(end_date) != 8 or not end_date.isdigit():
+        raise ValueError('end_date 为必填参数，格式为 YYYYMMDD')
+    return start_date, end_date
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -646,6 +674,204 @@ def get_industry_fund_flow_correlation(request):
         logger = logging.getLogger(__name__)
         logger.error(f'获取行业资金流相关坐标点失败: {str(e)}')
         return error_response(f'获取行业资金流相关坐标点失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_auction_selection_result(request):
+    """
+    获取 9 点 25 竞价选股策略结果
+
+    功能：
+    - 基于前一交易日涨停池与目标交易日集合竞价数据，筛选竞价候选股并输出评分拆解。
+
+    参数：
+    - trade_date: 目标交易日，格式 YYYYMMDD，默认最近交易日
+    - top_n: 返回的首选池数量，默认 3
+    - token: 可选，覆盖环境变量中的 Tushare Token
+    - auction_max_retries: 集合竞价数据重试次数，默认 12
+    - auction_base_wait: 集合竞价数据基础等待秒数，默认 5
+    - prev_limit_max_retries: 昨日涨停数据重试次数，默认 3
+    - prev_limit_base_wait: 昨日涨停数据基础等待秒数，默认 3
+
+    返回值：
+    - 成功时返回市场情绪、候选池、TOP池、评分拆解和查询参数
+    - 失败时返回统一错误响应
+
+    事件：
+    - 参数格式错误时返回 400 业务码
+    - 数据获取或策略执行失败时返回 500 业务码
+    """
+    try:
+        trade_date = request.GET.get('trade_date')
+        top_n = int(request.GET.get('top_n', 3))
+        token = request.GET.get('token')
+        auction_max_retries = int(request.GET.get('auction_max_retries', 12))
+        auction_base_wait = int(request.GET.get('auction_base_wait', 5))
+        prev_limit_max_retries = int(request.GET.get('prev_limit_max_retries', 3))
+        prev_limit_base_wait = int(request.GET.get('prev_limit_base_wait', 3))
+
+        result = auction_selection_strategy_service.get_strategy_result(
+            trade_date=trade_date,
+            top_n=top_n,
+            token=token,
+            auction_max_retries=auction_max_retries,
+            auction_base_wait=auction_base_wait,
+            prev_limit_max_retries=prev_limit_max_retries,
+            prev_limit_base_wait=prev_limit_base_wait,
+        )
+        return success_response(result, '获取 9 点 25 竞价选股结果成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取 9 点 25 竞价选股结果失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_daily_sentiment(request):
+    """
+    获取每日打板情绪总览。
+
+    聚合 Tushare limit_list_d、limit_step、limit_cpt_list，输出涨停、跌停、炸板、
+    连板高度、封板率、炸板率和最强题材。
+    """
+    try:
+        trade_date = _get_required_trade_date(request)
+        token = request.GET.get('token')
+        result = limit_board_data_service.get_daily_sentiment(trade_date=trade_date, token=token)
+        return success_response(result, '获取每日打板情绪总览成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取每日打板情绪总览失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_enhanced_auction_candidates(request):
+    """
+    获取增强版竞价打板候选池。
+
+    在现有 9:25 竞价选股结果上，补充同花顺涨停原因、开盘啦题材、人气热榜等字段。
+    """
+    try:
+        trade_date = _get_required_trade_date(request)
+        token = request.GET.get('token')
+        top_n = _get_positive_int_param(request, 'top_n', 10, 100)
+        auction_max_retries = _get_positive_int_param(request, 'auction_max_retries', 6, 30)
+        auction_base_wait = _get_positive_int_param(request, 'auction_base_wait', 2, 30)
+        result = limit_board_data_service.get_enhanced_auction_candidates(
+            trade_date=trade_date,
+            token=token,
+            top_n=top_n,
+            auction_max_retries=auction_max_retries,
+            auction_base_wait=auction_base_wait,
+        )
+        return success_response(result, '获取增强版竞价打板候选池成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取增强版竞价打板候选池失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_theme_ladder(request):
+    """
+    获取涨停题材梯队。
+
+    聚合开盘啦榜单、题材、题材成分、涨停最强板块和连板天梯，输出题材热度和核心涨停股。
+    """
+    try:
+        trade_date = _get_required_trade_date(request)
+        token = request.GET.get('token')
+        top_n = _get_positive_int_param(request, 'top_n', 20, 100)
+        result = limit_board_data_service.get_theme_ladder(trade_date=trade_date, token=token, top_n=top_n)
+        return success_response(result, '获取涨停题材梯队成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取涨停题材梯队失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_break_reseal(request):
+    """
+    获取炸板/回封分析。
+
+    基于 limit_list_d 和 limit_list_ths，拆分开板后回封与最终炸板，输出回封率和个股明细。
+    """
+    try:
+        trade_date = _get_required_trade_date(request)
+        token = request.GET.get('token')
+        top_n = _get_positive_int_param(request, 'top_n', 50, 200)
+        result = limit_board_data_service.get_break_reseal_analysis(trade_date=trade_date, token=token, top_n=top_n)
+        return success_response(result, '获取炸板回封分析成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取炸板回封分析失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_hot_money_review(request):
+    """
+    获取游资打板复盘。
+
+    聚合龙虎榜、游资交易明细和涨停/炸板数据，输出上榜股票与游资参与情况。
+    """
+    try:
+        trade_date = _get_required_trade_date(request)
+        token = request.GET.get('token')
+        top_n = _get_positive_int_param(request, 'top_n', 100, 500)
+        result = limit_board_data_service.get_hot_money_review(trade_date=trade_date, token=token, top_n=top_n)
+        return success_response(result, '获取游资打板复盘成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取游资打板复盘失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_trend_analysis(request):
+    """
+    获取涨停打板趋势分析。
+
+    按时间区间分析情绪变化、题材变化、涨停股生命周期变化。
+    """
+    try:
+        start_date, end_date = _get_required_date_range(request)
+        token = request.GET.get('token')
+        top_n = _get_positive_int_param(request, 'top_n', 20, 100)
+        result = limit_board_data_service.get_trend_analysis(
+            start_date=start_date,
+            end_date=end_date,
+            token=token,
+            top_n=top_n,
+        )
+        return success_response(result, '获取涨停打板趋势分析成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取涨停打板趋势分析失败: {str(e)}', 500)
 
 class IndexMacdXgbGrowthDatesView(APIView):
     """

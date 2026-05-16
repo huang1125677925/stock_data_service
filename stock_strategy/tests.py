@@ -1,3 +1,305 @@
-from django.test import TestCase
+import unittest
 
-# Create your tests here.
+import pandas as pd
+
+from .auction_selection_strategy import AuctionSelectionStrategyService
+from .limit_board_service import LimitBoardDataService
+
+
+class FakeTusharePro:
+    """
+    组件：伪造 Tushare Pro 客户端（FakeTusharePro）
+
+    功能：
+    - 为竞价选股策略测试提供稳定的交易日历、涨停池和竞价数据。
+
+    参数：
+    - 无
+
+    返回值：
+    - trade_cal/limit_list_d/stk_auction 均返回 DataFrame。
+
+    事件：
+    - 无。
+    """
+
+    def trade_cal(self, exchange="", start_date=None, end_date=None, fields=None):
+        """
+        功能：返回测试所需交易日历数据。
+
+        参数：
+        - exchange (str，可选): 交易所参数，测试中忽略。
+        - start_date (str，可选): 开始日期。
+        - end_date (str，可选): 结束日期。
+        - fields (str，可选): 字段列表。
+
+        返回值：
+        - DataFrame: 交易日历数据。
+
+        异常：
+        - 无。
+        """
+        _ = (exchange, start_date, end_date, fields)
+        return pd.DataFrame(
+            [
+                {"cal_date": "20260112", "is_open": 1},
+                {"cal_date": "20260113", "is_open": 1},
+                {"cal_date": "20260114", "is_open": 1},
+            ]
+        )
+
+    def limit_list_d(self, trade_date=None, limit_type=None, fields=None):
+        """
+        功能：返回测试所需昨日涨停池数据。
+
+        参数：
+        - trade_date (str，可选): 交易日。
+        - limit_type (str，可选): 涨停类型。
+        - fields (str，可选): 字段列表。
+
+        返回值：
+        - DataFrame: 昨日涨停池数据。
+
+        异常：
+        - 无。
+        """
+        _ = (trade_date, limit_type, fields)
+        return pd.DataFrame(
+            [
+                {
+                    "trade_date": "20260113",
+                    "ts_code": "000001.SZ",
+                    "name": "测试股份",
+                    "float_mv": 300000,
+                    "amount": 100000000,
+                    "fd_amount": 40000000,
+                    "open_times": 0,
+                    "last_time": "145000",
+                    "limit_times": 2,
+                },
+                {
+                    "trade_date": "20260113",
+                    "ts_code": "000002.SZ",
+                    "name": "三板龙头",
+                    "float_mv": 500000,
+                    "amount": 120000000,
+                    "fd_amount": 60000000,
+                    "open_times": 0,
+                    "last_time": "144500",
+                    "limit_times": 3,
+                },
+                {
+                    "trade_date": "20260113",
+                    "ts_code": "000003.SZ",
+                    "name": "四板晋级",
+                    "float_mv": 600000,
+                    "amount": 140000000,
+                    "fd_amount": 70000000,
+                    "open_times": 0,
+                    "last_time": "144800",
+                    "limit_times": 4,
+                },
+            ]
+        )
+
+    def stk_auction(self, trade_date=None, fields=None):
+        """
+        功能：返回测试所需目标交易日竞价数据。
+
+        参数：
+        - trade_date (str，可选): 交易日。
+        - fields (str，可选): 字段列表。
+
+        返回值：
+        - DataFrame: 集合竞价数据。
+
+        异常：
+        - 无。
+        """
+        _ = (trade_date, fields)
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260114",
+                    "price": 13.0,
+                    "pre_close": 12.0,
+                    "amount": 2000000,
+                }
+            ]
+        )
+
+
+class AuctionSelectionStrategyServiceTests(unittest.TestCase):
+    """
+    组件：9点25竞价选股策略测试（AuctionSelectionStrategyServiceTests）
+
+    功能：
+    - 验证策略在给定的伪造行情数据下，能够输出候选池、情绪判断和评分拆解。
+
+    参数：
+    - 无
+
+    返回值：
+    - 无
+
+    事件：
+    - 无。
+    """
+
+    def test_get_strategy_result_returns_ranked_candidates_and_sentiment(self):
+        """
+        功能：验证策略输出包含排序候选股、市场情绪和评分拆解。
+
+        参数：
+        - 无
+
+        返回值：
+        - 无
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        service = AuctionSelectionStrategyService(
+            tushare_pro=FakeTusharePro(),
+            sleep_func=lambda seconds: None,
+        )
+
+        result = service.get_strategy_result(trade_date="20260114", top_n=3)
+
+        self.assertEqual(result["params"]["trade_date"], "20260114")
+        self.assertEqual(result["params"]["prev_trade_date"], "20260113")
+        self.assertEqual(result["market_sentiment"]["phase"], "attack")
+        self.assertEqual(result["statistics"]["selected_count"], 1)
+        self.assertEqual(result["top_candidates"][0]["code"], "000001.SZ")
+        self.assertIn("score_breakdown", result["top_candidates"][0])
+        self.assertGreaterEqual(result["top_candidates"][0]["score"], 16)
+
+
+class FakeLimitBoardFetcher:
+    """
+    组件：伪造 Tushare 组合接口调用器。
+
+    功能：
+    - 为涨停打板组合数据服务测试提供稳定的多接口记录。
+    """
+
+    def __call__(self, interface, params=None, fields=None, token=None, use_query=False):
+        _ = (fields, token, use_query)
+        params = params or {}
+        records = self._records(interface, params)
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "interface": interface,
+                "count": len(records),
+                "records": records,
+            },
+        }
+
+    def _records(self, interface, params):
+        is_range_query = bool(params.get("start_date") and params.get("end_date"))
+        limit_type = params.get("limit_type")
+        if interface == "limit_list_d" and limit_type == "U":
+            records = [
+                {"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "amount": 1000, "fd_amount": 200, "open_times": 0, "limit_times": 1},
+                {"trade_date": "20260114", "ts_code": "000002.SZ", "name": "二板股", "amount": 2000, "fd_amount": 500, "open_times": 1, "limit_times": 2},
+            ]
+            if is_range_query:
+                records.extend([
+                    {"trade_date": "20260115", "ts_code": "000001.SZ", "name": "一板股", "amount": 1500, "fd_amount": 300, "open_times": 0, "limit_times": 2},
+                    {"trade_date": "20260115", "ts_code": "000006.SZ", "name": "新启动", "amount": 1200, "fd_amount": 240, "open_times": 0, "limit_times": 1},
+                    {"trade_date": "20260115", "ts_code": "000007.SZ", "name": "高标股", "amount": 2200, "fd_amount": 600, "open_times": 0, "limit_times": 3},
+                ])
+            return records
+        if interface == "limit_list_d" and limit_type == "D":
+            records = [{"trade_date": "20260114", "ts_code": "000003.SZ", "name": "跌停股"}]
+            if is_range_query:
+                records.append({"trade_date": "20260115", "ts_code": "000008.SZ", "name": "补跌股"})
+            return records
+        if interface == "limit_list_d" and limit_type == "Z":
+            records = [{"trade_date": "20260114", "ts_code": "000004.SZ", "name": "炸板股", "amount": 3000, "open_times": 2}]
+            if is_range_query:
+                records.append({"trade_date": "20260115", "ts_code": "000002.SZ", "name": "二板股", "amount": 2500, "open_times": 3, "limit_times": 2})
+            return records
+        if interface == "limit_step":
+            records = [
+                {"trade_date": "20260114", "ts_code": "000002.SZ", "name": "二板股", "nums": "2"},
+                {"trade_date": "20260114", "ts_code": "000005.SZ", "name": "三板股", "nums": "3"},
+            ]
+            if is_range_query:
+                records.extend([
+                    {"trade_date": "20260115", "ts_code": "000001.SZ", "name": "一板股", "nums": "2"},
+                    {"trade_date": "20260115", "ts_code": "000007.SZ", "name": "高标股", "nums": "3"},
+                ])
+            return records
+        if interface == "limit_cpt_list":
+            records = [{"trade_date": "20260114", "ts_code": "885001.TI", "name": "机器人", "up_nums": 8, "cons_nums": 2, "up_stat": "3天3板", "pct_chg": 3.2, "rank": "1"}]
+            if is_range_query:
+                records.extend([
+                    {"trade_date": "20260115", "ts_code": "885001.TI", "name": "机器人", "up_nums": 12, "cons_nums": 3, "up_stat": "4天4板", "pct_chg": 4.1, "rank": "1"},
+                    {"trade_date": "20260115", "ts_code": "885002.TI", "name": "消费", "up_nums": 6, "cons_nums": 1, "up_stat": "2天2板", "pct_chg": 1.8, "rank": "2"},
+                ])
+            return records
+        if interface == "limit_list_ths":
+            return [{"trade_date": "20260114", "ts_code": "000004.SZ", "name": "炸板股", "lu_desc": "题材催化", "open_num": 2}]
+        if interface == "kpl_list":
+            return [{"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "tag": "涨停", "theme": "机器人", "status": "首板"}]
+        if interface == "kpl_concept":
+            return [{"trade_date": "20260114", "ts_code": "KPL001", "name": "机器人"}]
+        if interface == "kpl_concept_cons":
+            return [{"trade_date": "20260114", "ts_code": "KPL001", "con_code": "000001.SZ", "con_name": "一板股"}]
+        if interface == "top_list":
+            return [{"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "net_amount": 100}]
+        if interface == "hm_detail":
+            return [{"trade_date": "20260114", "ts_code": "000001.SZ", "hm_name": "测试游资", "buy_amount": 300, "sell_amount": 100}]
+        return []
+
+
+class LimitBoardDataServiceTests(unittest.TestCase):
+    """
+    组件：涨停打板组合数据服务测试。
+    """
+
+    def setUp(self):
+        self.service = LimitBoardDataService(fetcher=FakeLimitBoardFetcher())
+
+    def test_daily_sentiment_returns_summary_and_distribution(self):
+        result = self.service.get_daily_sentiment(trade_date="20260114")
+
+        self.assertEqual(result["summary"]["limit_up_count"], 2)
+        self.assertEqual(result["summary"]["broken_limit_count"], 1)
+        self.assertEqual(result["summary"]["max_board"], 3)
+        self.assertEqual(result["top_concepts"][0]["name"], "机器人")
+
+    def test_theme_ladder_groups_limit_up_stocks_by_concept(self):
+        result = self.service.get_theme_ladder(trade_date="20260114")
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["themes"][0]["concept_name"], "机器人")
+        self.assertEqual(result["themes"][0]["core_stocks"][0]["ts_code"], "000001.SZ")
+
+    def test_break_reseal_analysis_splits_resealed_and_failed(self):
+        result = self.service.get_break_reseal_analysis(trade_date="20260114")
+
+        self.assertEqual(result["summary"]["resealed_count"], 1)
+        self.assertEqual(result["summary"]["failed_break_count"], 1)
+        self.assertEqual(result["failed"][0]["reason"], "题材催化")
+
+    def test_hot_money_review_matches_limit_up_stock(self):
+        result = self.service.get_hot_money_review(trade_date="20260114")
+
+        self.assertEqual(result["summary"]["top_limit_up_count"], 1)
+        self.assertEqual(result["records"][0]["hot_money_count"], 1)
+        self.assertEqual(result["active_hot_money"][0]["hm_name"], "测试游资")
+
+    def test_trend_analysis_returns_sentiment_concept_and_lifecycle_trends(self):
+        result = self.service.get_trend_analysis(start_date="20260114", end_date="20260115", top_n=10)
+
+        self.assertEqual(result["summary"]["trade_day_count"], 2)
+        self.assertEqual(len(result["sentiment_series"]), 2)
+        self.assertEqual(result["sentiment_series"][1]["changes"]["limit_up_count"], 1)
+        self.assertEqual(result["concept_trends"][0]["concept_name"], "机器人")
+        lifecycle_by_code = {item["ts_code"]: item for item in result["stock_lifecycles"]}
+        self.assertEqual(lifecycle_by_code["000001.SZ"]["lifecycle_stage"], "二板确认")

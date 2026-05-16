@@ -966,3 +966,11 @@
 - `indicators` 为字典，键为指标名（如 `MACD`、`RSI`），值为该指标对应的逐日结果列表；具体字段取决于对应 TA-Lib 函数输出。
 - 当某些指标因参数不足或计算异常被跳过时，会在 `skipped` 中记录 `{ indicator, reason }`，其余指标照常返回。
 - 仅从数据库获取数据（`IndividualStock`、`IndividualStockDaily`），不进行外部数据拉取。
+
+---
+
+## 涨停打板组合数据接口
+
+新增的涨停情绪、竞价候选、题材梯队、炸板回封、游资复盘接口已拆分为独立文档，详见：
+
+- [`docs/limit_board_strategy_api.md`](./limit_board_strategy_api.md)

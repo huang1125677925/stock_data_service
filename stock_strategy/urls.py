@@ -14,6 +14,13 @@ urlpatterns = [
     path('industry-scale-breadth/', views.get_industry_scale_breadth, name='get_industry_scale_breadth'),
     path('industry-actual-output/', views.get_industry_actual_output, name='get_industry_actual_output'),
     path('industry-fund-flow-correlation/', views.get_industry_fund_flow_correlation, name='get_industry_fund_flow_correlation'),
+    path('auction-selection/', views.get_auction_selection_result, name='get_auction_selection_result'),
+    path('limit-board/daily-sentiment/', views.get_limit_board_daily_sentiment, name='get_limit_board_daily_sentiment'),
+    path('limit-board/auction-candidates/', views.get_enhanced_auction_candidates, name='get_enhanced_auction_candidates'),
+    path('limit-board/theme-ladder/', views.get_limit_board_theme_ladder, name='get_limit_board_theme_ladder'),
+    path('limit-board/break-reseal/', views.get_limit_board_break_reseal, name='get_limit_board_break_reseal'),
+    path('limit-board/hot-money-review/', views.get_limit_board_hot_money_review, name='get_limit_board_hot_money_review'),
+    path('limit-board/trend-analysis/', views.get_limit_board_trend_analysis, name='get_limit_board_trend_analysis'),
     path('individual-analysis/candlestick/<str:stock_code>/', analyze_candlestick_patterns, name='analyze_candlestick_patterns'),
     # 新增：大盘分析市场宽度相关接口
     path('market-analysis/adr/', get_market_adr, name='get_market_adr'),
