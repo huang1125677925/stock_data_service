@@ -225,7 +225,7 @@ def update_individual_stock_daily_data():
     """
     更新所有个股的日频数据
 
-    定时：工作日（周一至五）每 8 小时执行一次（与 settings.CRONJOBS 一致）。
+    定时：可由外部调度按需调用。
     只获取最近 30 天的数据。
     """
     logger.info("开始执行个股日频数据更新任务")
@@ -1761,9 +1761,3 @@ if __name__ == '__main__':
     # fetch_individual_stocks()
     # write_concept_to_db()
 
-
-# 个股数据 
-# ('22 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
-# ('40 17,19,22 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),
-# ('50 17,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
-    

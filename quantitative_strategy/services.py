@@ -5,10 +5,10 @@
 """
 import sys
 import traceback
+import re
 
 import backtrader as bt
 import pandas as pd
-import akshare as ak
 from common.tushare_proxy import call_tushare
 import uuid
 from datetime import datetime, timedelta
@@ -42,8 +42,8 @@ try:
     from .strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
     from .strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
     from .strategies.grid_trading_daily_change_strategy import GridTradingDailyChangeStrategy
-    from indival_stock_data.services import IndividualStockService
-    from etfapp.services import EtfService
+    from indival_stock_data.models import IndividualStock
+    from etfapp.models import EtfBasic
 except ImportError:
     # 如果相对导入失败，尝试绝对导入（独立运行时）
     import os
@@ -84,9 +84,8 @@ except ImportError:
     from quantitative_strategy.strategies.grid_trading_recentering_strategy import GridTradingRecenteringStrategy
     from quantitative_strategy.strategies.grid_trading_anchor_points_strategy import GridTradingAnchorPointsStrategy
     from quantitative_strategy.strategies.grid_trading_daily_change_strategy import GridTradingDailyChangeStrategy
-
-    from indival_stock_data.services import IndividualStockService
-    from etfapp.services import EtfService
+    from indival_stock_data.models import IndividualStock
+    from etfapp.models import EtfBasic
 
 
 
@@ -96,7 +95,7 @@ logger = logging.getLogger(__name__)
 class PandasData(bt.feeds.PandasData):
     """
     自定义Pandas数据源
-    适配akshare数据格式，并扩展九转信号列
+    适配 Tushare OHLCV 数据格式，并扩展九转信号列
     """
     # 扩展的信号行
     lines = ('nine_down_turn', 'nine_up_turn',)
@@ -124,10 +123,76 @@ class BacktestService:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+
+    def _resample_to_weekly(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df.resample('W-FRI').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum',
+            'nine_down_turn': 'max',
+            'nine_up_turn': 'max',
+        }).dropna()
+
+    def _prepare_backtest_dataframe(
+        self,
+        records: List[Dict[str, Any]],
+        *,
+        datetime_col: str,
+        open_col: str,
+        high_col: str,
+        low_col: str,
+        close_col: str,
+        volume_col: str,
+        frequency: str = "daily",
+    ) -> Optional[pd.DataFrame]:
+        if not records:
+            return None
+
+        df = pd.DataFrame(records)
+        if df.empty:
+            return None
+
+        column_mapping = {
+            datetime_col: 'datetime',
+            open_col: 'open',
+            high_col: 'high',
+            low_col: 'low',
+            close_col: 'close',
+            volume_col: 'volume',
+        }
+        existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
+        df.rename(columns=existing_columns, inplace=True)
+
+        df.columns = [str(c) for c in df.columns]
+        if 'datetime' not in df.columns:
+            return None
+
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df.set_index('datetime', inplace=True)
+        df.sort_index(inplace=True)
+        df = df[~df.index.duplicated(keep='first')]
+
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        df.dropna(subset=['open', 'high', 'low', 'close', 'volume'], inplace=True)
+
+        for sig_col in ['nine_down_turn', 'nine_up_turn']:
+            if sig_col not in df.columns:
+                df[sig_col] = 0
+            df[sig_col] = pd.to_numeric(df[sig_col], errors='coerce').fillna(0).astype(int)
+
+        if (frequency or "daily").lower() in ("weekly", "week", "w"):
+            df = self._resample_to_weekly(df)
+
+        return df if not df.empty else None
     
     def get_stock_data(self, stock_code: str, start_date: str, end_date: str, frequency: str = "daily") -> Optional[pd.DataFrame]:
         """
-        获取股票历史数据
+        从 Tushare 获取股票历史数据
         
         Args:
             stock_code: 股票代码
@@ -139,81 +204,42 @@ class BacktestService:
             股票数据DataFrame或None
         """
         try:
-            # 导入个股数据服务
-            from indival_stock_data.services import IndividualStockService
-            
-            # 创建个股数据服务实例
-            stock_service = IndividualStockService()
-            
-            # 转换日期格式 (YYYY-MM-DD -> YYYYMMDD)
-            start_date_formatted = start_date.replace('-', '')
-            end_date_formatted = end_date.replace('-', '')
-            
-            # 使用个股数据服务获取历史数据
-            stock_history = stock_service.get_stock_history(
-                stock_code=stock_code,
-                start_date=start_date_formatted,
-                end_date=end_date_formatted,
-                frequency=frequency,
-                # adjust="qfq"  # 前复权
+            ts_code = self._to_ts_code(stock_code)
+            resp = call_tushare(
+                interface='daily',
+                params={
+                    'ts_code': ts_code,
+                    'start_date': start_date.replace('-', ''),
+                    'end_date': end_date.replace('-', ''),
+                },
+                fields='ts_code,trade_date,open,high,low,close,vol',
+                use_query=False,
             )
-            
-            if not stock_history:
-                self.logger.warning(f"未获取到股票 {stock_code} 的数据")
+            if resp.get('code') != 200:
+                self.logger.warning(
+                    "调用 Tushare daily 失败: ts_code=%s, code=%s, msg=%s",
+                    ts_code,
+                    resp.get('code'),
+                    resp.get('message') or resp.get('error'),
+                )
                 return None
-            
-            # 转换为DataFrame
-            df = pd.DataFrame(stock_history)
-            
-            if df.empty:
-                self.logger.warning(f"股票 {stock_code} 数据为空")
+
+            records = (resp.get('data') or {}).get('records') or []
+            df = self._prepare_backtest_dataframe(
+                records,
+                datetime_col='trade_date',
+                open_col='open',
+                high_col='high',
+                low_col='low',
+                close_col='close',
+                volume_col='vol',
+                frequency=frequency,
+            )
+            if df is None:
+                self.logger.warning(f"股票 {stock_code} Tushare 数据为空")
                 return None
-            
-            # 重命名列名以适配backtrader
-            column_mapping = {
-                'date': 'datetime',
-                'open_price': 'open',
-                'close_price': 'close',
-                'high_price': 'high',
-                'low_price': 'low',
-                'volume': 'volume'
-            }
-            
-            # 只重命名存在的列
-            existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
-            df.rename(columns=existing_columns, inplace=True)
 
-            # 确保列名为字符串（避免 backtrader 对列名执行 lower() 时出错）
-            try:
-                df.columns = [str(c) for c in df.columns]
-            except Exception:
-                pass
-            
-            # 设置日期索引
-            if 'datetime' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df.set_index('datetime', inplace=True)
-                # 确保索引严格递增且无重复，避免回测引擎在一次性计算（once）阶段索引越界
-                df.sort_index(inplace=True)
-                df = df[~df.index.duplicated(keep='first')]
-            
-            # 确保数据类型正确
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # 删除包含NaN的行
-            df.dropna(inplace=True)
-
-            # 补充占位的九转信号列，避免数据源缺失导致回测数据映射报错
-            # 这两列在部分策略（如九转策略）中会使用；其他策略保持为0不影响计算
-            for sig_col in ['nine_down_turn', 'nine_up_turn']:
-                if sig_col not in df.columns:
-                    df[sig_col] = 0
-                # 确保类型为整数（0/1），并处理潜在的非数值情况
-                df[sig_col] = pd.to_numeric(df[sig_col], errors='coerce').fillna(0).astype(int)
-            
-            self.logger.info(f"成功获取股票 {stock_code} 数据，共 {len(df)} 条记录")
+            self.logger.info(f"成功获取股票 {stock_code} Tushare 数据，共 {len(df)} 条记录")
             return df
             
         except Exception as e:
@@ -222,93 +248,56 @@ class BacktestService:
 
     def get_etf_data(self, ts_code: str, start_date: str, end_date: str, frequency: str = "daily") -> Optional[pd.DataFrame]:
         """
-        获取ETF历史数据
-        
-        功能：从系统ETF服务查询指定ETF在日期范围内的日线数据，并转换为 backtrader 兼容的 DataFrame。
+        从 Tushare 获取ETF历史数据
+
+        功能：查询指定ETF在日期范围内的日线数据，并转换为 backtrader 兼容的 DataFrame。
         参数：
         - ts_code: ETF 的 Tushare 代码（如 `510300.SH`）
         - start_date: 开始日期 (YYYY-MM-DD)
         - end_date: 结束日期 (YYYY-MM-DD)
         - frequency: 数据频率，支持"daily"（默认）和"weekly"（按周聚合）
         返回值：DataFrame 或 None；列包含 `open, high, low, close, volume`，索引为 datetime。
-        事件：查询 ETF 日线数据；当 frequency=weekly 时按周聚合生成OHLCV。
+        事件：查询 Tushare fund_daily；当 frequency=weekly 时按周聚合生成OHLCV。
         """
         try:
-            etf_service = EtfService()
-            records = etf_service.query_daily(
-                ts_code=ts_code,
-                start_date=start_date,
-                end_date=end_date,
+            resp = call_tushare(
+                interface='fund_daily',
+                params={
+                    'ts_code': ts_code,
+                    'start_date': start_date.replace('-', ''),
+                    'end_date': end_date.replace('-', ''),
+                },
+                fields='ts_code,trade_date,open,high,low,close,vol,amount',
+                use_query=False,
             )
+            if resp.get('code') != 200:
+                self.logger.warning(
+                    "调用 Tushare fund_daily 失败: ts_code=%s, code=%s, msg=%s",
+                    ts_code,
+                    resp.get('code'),
+                    resp.get('message') or resp.get('error'),
+                )
+                return None
+            records = (resp.get('data') or {}).get('records') or []
             if not records:
                 self.logger.warning(f"未获取到ETF {ts_code} 的数据")
                 return None
-            
-            # 若返回为ORM对象列表（EtfDaily实例），先转换为字典列表再构建DataFrame
-            if records and not isinstance(records[0], dict):
-                try:
-                    records = [
-                        {
-                            'trade_date': r.trade_date,
-                            'open': float(r.open) if r.open is not None else None,
-                            'high': float(r.high) if r.high is not None else None,
-                            'low': float(r.low) if r.low is not None else None,
-                            'close': float(r.close) if r.close is not None else None,
-                            'vol': float(r.vol) if r.vol is not None else None,
-                            'amount': float(r.amount) if r.amount is not None else None,
-                        }
-                        for r in records
-                    ]
-                except Exception:
-                    try:
-                        records = [dict(r.__dict__) for r in records]
-                    except Exception:
-                        pass
-            print(records)
-            df = pd.DataFrame(records)
-            if df.empty:
-                self.logger.warning(f"ETF {ts_code} 数据为空")
-                return None
-            column_mapping = {
-                'trade_date': 'datetime',
-                'open': 'open',
-                'high': 'high',
-                'low': 'low',
-                'close': 'close',
-                'vol': 'volume',
-            }
-            existing_columns = {k: v for k, v in column_mapping.items() if k in df.columns}
-            df.rename(columns=existing_columns, inplace=True)
 
-            # 确保列名为字符串并小写（backtrader内部会做lower，这里先统一为字符串以避免'int'无lower报错）
-            try:
-                df.columns = [str(c) for c in df.columns]
-            except Exception:
-                pass
-            if 'datetime' in df.columns:
-                df['datetime'] = pd.to_datetime(df['datetime'])
-                df.set_index('datetime', inplace=True)
-                df.sort_index(inplace=True)
-                df = df[~df.index.duplicated(keep='first')]
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            df.dropna(inplace=True)
-            for sig_col in ['nine_down_turn', 'nine_up_turn']:
-                if sig_col not in df.columns:
-                    df[sig_col] = 0
-                df[sig_col] = pd.to_numeric(df[sig_col], errors='coerce').fillna(0).astype(int)
-            if frequency == 'weekly':
-                df = df.resample('W-FRI').agg({
-                    'open': 'first',
-                    'high': 'max',
-                    'low': 'min',
-                    'close': 'last',
-                    'volume': 'sum',
-                    'nine_down_turn': 'max',
-                    'nine_up_turn': 'max',
-                }).dropna()
-            self.logger.info(f"成功获取ETF {ts_code} 数据，共 {len(df)} 条记录")
+            df = self._prepare_backtest_dataframe(
+                records,
+                datetime_col='trade_date',
+                open_col='open',
+                high_col='high',
+                low_col='low',
+                close_col='close',
+                volume_col='vol',
+                frequency=frequency,
+            )
+            if df is None:
+                self.logger.warning(f"ETF {ts_code} Tushare 数据为空")
+                return None
+
+            self.logger.info(f"成功获取ETF {ts_code} Tushare 数据，共 {len(df)} 条记录")
             return df
         except Exception as e:
             self.logger.error(f"获取ETF数据失败: {str(e)}")
@@ -409,7 +398,6 @@ class BacktestService:
             
             if df is None or df.empty:
                 raise ValueError(f"无法获取标的 {task.stock_code} 的数据（来源：{getattr(task, 'data_source', 'stock')}）")
-            print(f"标的 {task.stock_code} 数据长度: {len(df)}，来源：{getattr(task, 'data_source', 'stock')}" )
             # 获取策略类
             strategy_class = StrategyRegistry.get_strategy(task.strategy_name)
             if strategy_class is None:
@@ -651,10 +639,8 @@ class BacktestService:
             股票名称
         """
         try:
-            # 这里可以通过akshare或其他方式获取股票名称
-            # 暂时返回代码本身
-            stock_object = IndividualStockService()._get_or_create_stock(stock_code)
-            return stock_object.name if stock_object else stock_code
+            stock_object = IndividualStock.objects.filter(code=stock_code).only('name').first()
+            return stock_object.name if stock_object and stock_object.name else stock_code
         except:
             return stock_code
 
@@ -669,10 +655,12 @@ class BacktestService:
             ETF名称字符串；若查询失败则返回原始 ts_code
         """
         try:
-            etf_service = EtfService()
-            basics = etf_service.query_basic(ts_code=ts_code)
-            if basics:
-                row = basics[0]
+            row = (
+                EtfBasic.objects.filter(ts_code=ts_code)
+                .values('extname', 'csname')
+                .first()
+            )
+            if row:
                 return row.get('extname') or row.get('csname') or ts_code
             return ts_code
         except Exception:
@@ -680,17 +668,16 @@ class BacktestService:
 
     def _to_ts_code(self, stock_code: str) -> str:
         """
-        将 6 位股票代码转换为 Tushare ts_code（带交易所后缀）。
-        规则：
-        - 以 '6' 开头：上交所（.SH）
-        - 以 '0' 或 '3' 开头：深交所（.SZ）
-        - 以 '8' 开头：北交所（.BJ）
-        - 其他：默认深交所（.SZ）
+        将股票代码转换为 Tushare ts_code（带交易所后缀）。
         """
-        code = stock_code.strip()
+        code = stock_code.strip().upper()
+        if re.match(r"^\d{6}\.(SH|SZ|BJ)$", code):
+            return code
         if code.startswith('6'):
             return f"{code}.SH"
         if code.startswith('8'):
+            return f"{code}.BJ"
+        if code.startswith('4'):
             return f"{code}.BJ"
         # 默认深市
         return f"{code}.SZ"

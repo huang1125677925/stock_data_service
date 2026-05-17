@@ -12,6 +12,7 @@ urlpatterns = [
     path('low-turnover-stocks/', views.get_low_turnover_stocks, name='low_turnover_stocks'),
     path('stock/type/<str:code>/', views.get_stock_type, name='stock_type'),
     path('stock/stock-value-em/<str:code>/', views.get_stock_value_em, name='stock_value_em'),
+    path('dividend-yield/', views.get_stock_dividend_yield, name='stock_dividend_yield'),
     path('stock/fund-flow/<str:code>/', views.get_stock_individual_fund_flow, name='stock_individual_fund_flow'),
     path('stock/history/<str:code>/', views.get_stock_history, name='stock_history'),
     path('stock/account/statistics/', views.get_stock_account_statistics, name='stock_account_statistics'),

@@ -4,12 +4,15 @@ from django.views.decorators.http import require_http_methods
 from django.db import models
 import json
 import logging
+import math
 import pandas as pd
 import akshare as ak
 from datetime import datetime
 from .services import stock_service, industry_sector_service
 from common.response import success_response, error_response
 from common.validators import validate_pagination_params, validate_stock_symbol
+from common.tushare_industry import get_latest_trade_date
+from common.tushare_proxy import call_tushare
 
 # 行业板块相关验证函数
 def validate_sector_code(code):
@@ -19,6 +22,36 @@ def validate_sector_code(code):
     return True
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_to_tushare_ts_code(symbol: str) -> str:
+    value = str(symbol or "").strip().upper()
+    if not value:
+        raise ValueError("股票代码不能为空")
+    if "." in value:
+        return value
+    if value.startswith("SH") and len(value) == 8:
+        return f"{value[2:]}.SH"
+    if value.startswith("SZ") and len(value) == 8:
+        return f"{value[2:]}.SZ"
+    if value.startswith("BJ") and len(value) == 8:
+        return f"{value[2:]}.BJ"
+    if len(value) == 6 and value.isdigit():
+        if value.startswith(("600", "601", "603", "605", "688", "900")):
+            return f"{value}.SH"
+        if value.startswith(("000", "001", "002", "003", "300", "301", "200")):
+            return f"{value}.SZ"
+        if value.startswith(("430", "440", "830", "831", "832", "833", "834", "835", "836", "837", "838", "839", "870", "871", "872", "873", "874", "875", "876", "877", "878", "879", "880", "881", "882", "883", "884", "885", "886", "887", "888", "889", "920")):
+            return f"{value}.BJ"
+    raise ValueError("无法识别的股票代码格式，请使用 000001、sz000001 或 000001.SZ")
+
+
+def _safe_float(value):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 @csrf_exempt
 @require_http_methods(["GET"])
@@ -161,6 +194,148 @@ def get_stock_detail(request, code):
     except Exception as e:
         logger.error(f"获取股票详情失败: {str(e)}")
         return error_response(f'获取股票详情失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_stock_dividend_yield(request):
+    """
+    获取股票股息率数据（基于 Tushare daily_basic）
+
+    Query Parameters:
+        ts_code (str): 股票代码，支持 000001 / sz000001 / 000001.SZ
+        trade_date (str): 交易日期，YYYYMMDD 或 YYYY-MM-DD；默认最近交易日
+        limit (int): 返回数量，默认50，最大500
+        offset (int): 偏移量，默认0
+        sort_by (str): 排序字段，默认 dv_ttm
+        order (str): 排序方向，asc/desc，默认desc
+        min_dv_ttm (float): 最低股息率TTM
+        min_dv_ratio (float): 最低股息率
+
+    Returns:
+        标准响应结构，data 中包含股票股息率列表与筛选参数
+    """
+    try:
+        ts_code = request.GET.get('ts_code')
+        trade_date = request.GET.get('trade_date')
+        limit = int(request.GET.get('limit', 50))
+        offset = int(request.GET.get('offset', 0))
+        sort_by = request.GET.get('sort_by', 'dv_ttm')
+        order = request.GET.get('order', 'desc').lower()
+        min_dv_ttm = request.GET.get('min_dv_ttm')
+        min_dv_ratio = request.GET.get('min_dv_ratio')
+
+        limit, offset = validate_pagination_params(limit, offset)
+        sort_by_allowed = {'dv_ttm', 'dv_ratio', 'pe', 'pe_ttm', 'pb', 'ps_ttm', 'total_mv', 'circ_mv', 'close'}
+        if sort_by not in sort_by_allowed:
+            return error_response(f"sort_by参数错误，仅支持: {', '.join(sorted(sort_by_allowed))}", 400)
+        if order not in {'asc', 'desc'}:
+            return error_response("order参数错误，仅支持 asc 或 desc", 400)
+
+        actual_trade_date = (trade_date or '').replace('-', '') or get_latest_trade_date()
+        if not actual_trade_date:
+            return error_response('未获取到可用交易日', 500)
+        if len(actual_trade_date) != 8 or not actual_trade_date.isdigit():
+            return error_response('trade_date参数格式错误，应为YYYYMMDD或YYYY-MM-DD', 400)
+
+        normalized_ts_code = None
+        if ts_code:
+            normalized_ts_code = _normalize_to_tushare_ts_code(ts_code)
+
+        fields = (
+            'ts_code,trade_date,close,pe,pe_ttm,pb,ps,ps_ttm,'
+            'dv_ratio,dv_ttm,total_mv,circ_mv'
+        )
+        params = {'trade_date': actual_trade_date}
+        if normalized_ts_code:
+            params['ts_code'] = normalized_ts_code
+
+        resp = call_tushare('daily_basic', params=params, fields=fields, use_query=False)
+        if resp.get('code') != 200:
+            return error_response(
+                resp.get('error') or resp.get('message') or '获取股票股息率数据失败',
+                500,
+            )
+
+        records = (resp.get('data') or {}).get('records') or []
+        if not isinstance(records, list):
+            records = []
+
+        from indival_stock_data.models import IndividualStock
+
+        code_list = []
+        for item in records:
+            if isinstance(item, dict) and item.get('ts_code'):
+                code_list.append(str(item.get('ts_code')).split('.')[0])
+        stock_map = {
+            item['code']: item
+            for item in IndividualStock.objects.filter(code__in=code_list).values('code', 'name', 'industry')
+        }
+
+        min_dv_ttm_val = _safe_float(min_dv_ttm)
+        min_dv_ratio_val = _safe_float(min_dv_ratio)
+        items = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            item_ts_code = str(item.get('ts_code') or '').strip()
+            if not item_ts_code:
+                continue
+            code = item_ts_code.split('.')[0]
+            stock_meta = stock_map.get(code) or {}
+            row = {
+                'ts_code': item_ts_code,
+                'code': code,
+                'name': stock_meta.get('name'),
+                'industry': stock_meta.get('industry'),
+                'trade_date': str(item.get('trade_date') or ''),
+                'close': _safe_float(item.get('close')),
+                'pe': _safe_float(item.get('pe')),
+                'pe_ttm': _safe_float(item.get('pe_ttm')),
+                'pb': _safe_float(item.get('pb')),
+                'ps': _safe_float(item.get('ps')),
+                'ps_ttm': _safe_float(item.get('ps_ttm')),
+                'dv_ratio': _safe_float(item.get('dv_ratio')),
+                'dv_ttm': _safe_float(item.get('dv_ttm')),
+                'total_mv': _safe_float(item.get('total_mv')),
+                'circ_mv': _safe_float(item.get('circ_mv')),
+            }
+            if min_dv_ttm_val is not None and (row['dv_ttm'] is None or row['dv_ttm'] < min_dv_ttm_val):
+                continue
+            if min_dv_ratio_val is not None and (row['dv_ratio'] is None or row['dv_ratio'] < min_dv_ratio_val):
+                continue
+            items.append(row)
+
+        reverse = order == 'desc'
+        none_sentinel = -math.inf if reverse else math.inf
+        items.sort(
+            key=lambda item: item.get(sort_by) if item.get(sort_by) is not None else none_sentinel,
+            reverse=reverse,
+        )
+
+        total = len(items)
+        paged_items = items[offset: offset + limit] if limit is not None else items[offset:]
+
+        return success_response({
+            'total': total,
+            'items': paged_items,
+            'filters': {
+                'ts_code': normalized_ts_code,
+                'trade_date': actual_trade_date,
+                'sort_by': sort_by,
+                'order': order,
+                'min_dv_ttm': min_dv_ttm_val,
+                'min_dv_ratio': min_dv_ratio_val,
+                'limit': limit,
+                'offset': offset,
+            }
+        })
+    except ValueError as e:
+        logger.error(f"获取股票股息率数据参数错误: {str(e)}")
+        return error_response(f'参数错误: {str(e)}', 400)
+    except Exception as e:
+        logger.error(f"获取股票股息率数据失败: {str(e)}")
+        return error_response(f'获取股票股息率数据失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])

@@ -313,32 +313,6 @@ CRONJOBS = [
     # 默认的系统维护任务
     ('0 2 * * *', 'scheduled_tasks.tasks.cleanup_old_logs'),  # 每天凌晨2点清理旧日志
     ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
-
-    # 新闻资讯
-    ('25 20,21 * * *', 'scheduled_tasks.tasks.fetch_cctv_news', f'>> {BASE_DIR}/logs/cctv_news.log 2>&1'),  # 每天晚上9:04爬取新闻联播
-    ('35 20,21 * * *', 'scheduled_tasks.tasks.analyze_cctv_news', f'>> {BASE_DIR}/logs/cctv_news_analysis.log 2>&1'),  # 每天晚上10:00分析新闻联播
-
-    # 行业板块
-    ('25 19 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.fetch_industry_sectors', f'>> {BASE_DIR}/logs/industry_sector_list.log 2>&1'),  # 每周一至周五9:00更新行业板块列表
-    ('45 8 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.mark_stock_industry', f'>> {BASE_DIR}/logs/mark_stock_industry.log 2>&1'),  # 每周一至周五16:00-22:00更新行业板块实时数据
-    ('1 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_daily_data', f'>> {BASE_DIR}/logs/fetch_industry_sector_daily_data.log 2>&1'),  # 每天16-22点每小时更新行业板块数据
-    ('30 19,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.industry_sector_tasks.update_industry_sector_fund_flow_data', f'>> {BASE_DIR}/logs/update_industry_sector_fund_flow_data.log 2>&1'),  # 每天16-22点每小时更新行业板块资金流数据
-
-    # 大盘数据
-    ('45 18,20 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_stock_market_fund_flow', f'>> {BASE_DIR}/logs/fetch_stock_market_fund_flow.log 2>&1'),  # 每天16-22点每小时更新大盘资金流数据
-    ('15 18,21 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.market_tasks.fetch_all_index_high_low_statistics', f'>> {BASE_DIR}/logs/fetch_all_index_high_low_statistics.log 2>&1'),  # 每天16-22点每小时更新大盘日频数据
-
-    # 个股数据 
-    ('22 18,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.fetch_individual_stocks', f'>> {BASE_DIR}/logs/fetch_individual_stock_list.log 2>&1'), 
-    ('0 */8 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_daily_data', f'>> {BASE_DIR}/logs/update_individual_stock_daily_data.log 2>&1'),  # 工作日每8小时（0/8/16点）
-    ('30 17,22 * * 5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_individual_stock_weekly_data', f'>> {BASE_DIR}/logs/update_individual_stock_weekly_data.log 2>&1'),
-    ('50 17,20,23 * * 1-5', 'scheduled_tasks.stock_data_query_tasks.individual_stock_tasks.update_index_stock_daily_data', f'>> {BASE_DIR}/logs/update_index_stock_daily_data.log 2>&1'),
-
-    # 模型训练与预测
-    # ('0 21 * * 1-5', 'stock_strategy.index_analysis.index_xgboost.PredictIndexFromEtfXGB', f'>> {BASE_DIR}/logs/predict_index_from_etf_xgb.log 2>&1'),  # 每周一至周五16:00-22:00更新指数XGBoost预测结果
-    # ('15 21 * * 1-5', 'stock_strategy.index_analysis.macd_xgboost.send_macd_xgboost_results_email', f'>> {BASE_DIR}/logs/send_macd_xgboost_results_email.log 2>&1'),  # 每周一至周五16:00-22:00更新MACD XGBoost结果邮件
-    ('0 21 * * 1-5', 'stock_strategy.index_analysis.dc_index_xgboost.PredictIndexFromEtfXGB', f'>> {BASE_DIR}/logs/predict_index_from_etf_xgb.log 2>&1'),  # 每周一至周五16:00-22:00更新指数XGBoost预测结果
-    ('53 0,8 * * 1-5', 'stock_strategy.index_analysis.actual_rise_ratio_5d_service.update_actual_rise_ratio_5d', f'>> {BASE_DIR}/logs/update_actual_rise_ratio_5d.log 2>&1'),  # 每周一至周五16:00-22:00更新5日实际上涨比例
 ]
 
 # Crontab配置
