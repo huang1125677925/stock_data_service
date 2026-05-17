@@ -1,5 +1,50 @@
 # 股票策略API文档
 
+## 价值股选取策略API
+
+### 获取价值股候选列表
+
+**接口地址**: `/django/api/strategy/value-stocks/`
+
+**请求方式**: GET
+
+**数据来源**: Tushare `income_vip` + `fina_indicator_vip`
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| report_period | string | 否 | 自动查找 | 财报期，格式 `YYYYMMDD`，如 `20240331` |
+| min_revenue_growth | number | 否 | 0 | 最低营收同比增长率，单位 `%` |
+| min_net_profit | number | 否 | 0 | 最低净利润，单位元 |
+| limit | integer | 否 | 50 | 返回数量，最大 2000 |
+| lookback_periods | integer | 否 | 8 | 未指定财报期时向前查找的季度数，最大 16 |
+
+**响应字段摘要**:
+
+- `report_period`: 实际使用的财报期
+- `data[].total_revenue`: 营业总收入
+- `data[].net_profit`: 归母净利润优先，缺失时使用净利润
+- `data[].revenue_growth_rate`: 营收同比增长率，优先使用 `or_yoy`，缺失时使用 `q_sales_yoy`
+- `data[].net_profit_growth_rate`: 净利润同比增长率
+- `data[].roe`: ROE
+- `data[].gross_profit_margin`: 毛利率
+
+### 获取候选股票营收历史
+
+**接口地址**: `/django/api/strategy/value-stocks/revenue-history/`
+
+**请求方式**: GET
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| ts_codes | string | 是 | - | Tushare 股票代码，多个用逗号分隔，如 `600519.SH,000333.SZ` |
+| periods | integer | 否 | 8 | 返回最近财报期数量，最大 16 |
+
+**说明**: 该接口用于给前端绘制高营收增长股票的过去一段时间营收走势，返回每个股票各财报期的 `total_revenue` 和 `net_profit`。
+
 ## 指数RPS强度排名API
 
 ### 获取实时指数RPS强度排名

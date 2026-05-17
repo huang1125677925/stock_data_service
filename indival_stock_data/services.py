@@ -14,6 +14,7 @@ from django.core.cache import cache
 from django.conf import settings
 from django.db import transaction
 from .models import IndividualStock, IndividualStockDaily, IndividualStockWeekly, IndividualStockRealtime, PerformanceReport
+from common.tushare_proxy import call_tushare, call_tushare_pro_bar
 from common.validators import validate_stock_symbol
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,127 @@ class IndividualStockService:
         self.max_retries = getattr(settings, 'STOCK_MAX_RETRIES', 3)
         
         logger.info(f"个股数据服务初始化: cache_timeout={self.cache_timeout}s")
+
+    def _only_dict_records(self, records) -> List[Dict]:
+        if not isinstance(records, list):
+            return []
+        return [item for item in records if isinstance(item, dict)]
+
+    def _get_recent_open_dates(self, days: int = 15) -> List[str]:
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        resp = call_tushare(
+            interface='trade_cal',
+            params={
+                'start_date': start_date,
+                'end_date': end_date,
+                'is_open': '1',
+            },
+            fields='cal_date,is_open',
+            use_query=False,
+        )
+        if resp.get('code') != 200:
+            raise RuntimeError(resp.get('error') or resp.get('message') or '获取交易日历失败')
+
+        return sorted(
+            [
+                str(item.get('cal_date'))
+                for item in self._only_dict_records((resp.get('data') or {}).get('records') or [])
+                if item.get('cal_date')
+            ],
+            reverse=True,
+        )
+
+    def _safe_float(self, value):
+        if value is None or value == '':
+            return None
+        try:
+            if pd.isna(value):
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_int(self, value):
+        number = self._safe_float(value)
+        return int(number) if number is not None else None
+
+    def get_stock_list_from_tushare(self) -> Dict:
+        """
+        从 Tushare 获取股票列表
+        功能：按最近一个有 bak_daily 数据的交易日获取全市场个股列表并映射为接口字段。
+        返回值：dict，包含 trade_date 与 data。
+        事件：Tushare 调用失败时抛出异常。
+        """
+        open_dates = self._get_recent_open_dates()
+        if not open_dates:
+            return {'trade_date': None, 'data': []}
+
+        fields = (
+            'trade_date,ts_code,name,pct_change,close,change,open,high,low,pre_close,'
+            'vol_ratio,turn_over,swing,vol,amount,float_mv,total_mv,pe,industry,area'
+        )
+        for trade_date in open_dates:
+            resp = call_tushare(
+                interface='bak_daily',
+                params={'trade_date': trade_date},
+                fields=fields,
+                use_query=False,
+            )
+            if resp.get('code') != 200:
+                raise RuntimeError(resp.get('error') or resp.get('message') or '获取股票列表失败')
+
+            records = self._only_dict_records((resp.get('data') or {}).get('records') or [])
+            if not records:
+                continue
+
+            items = []
+            for row in records:
+                ts_code = str(row.get('ts_code') or '')
+                code = ts_code.split('.')[0] if ts_code else ''
+                if not code:
+                    continue
+
+                items.append({
+                    'code': code,
+                    'ts_code': ts_code,
+                    'name': row.get('name'),
+                    'industry': row.get('industry'),
+                    'area': row.get('area'),
+                    'dc_concept': None,
+                    'index_type': None,
+                    'index_type_display': None,
+                    'total_shares': None,
+                    'circulating_shares': None,
+                    'list_date': None,
+                    'pe_ratio': self._safe_float(row.get('pe')),
+                    'pb_ratio': None,
+                    'total_market_cap': self._safe_float(row.get('total_mv')),
+                    'circulating_market_cap': self._safe_float(row.get('float_mv')),
+                    'latest_price': self._safe_float(row.get('close')),
+                    'change_percent': self._safe_float(row.get('pct_change')),
+                    'change_amount': self._safe_float(row.get('change')),
+                    'volume': self._safe_int(row.get('vol')),
+                    'amount': self._safe_float(row.get('amount')),
+                    'amplitude': self._safe_float(row.get('swing')),
+                    'high': self._safe_float(row.get('high')),
+                    'low': self._safe_float(row.get('low')),
+                    'open_price': self._safe_float(row.get('open')),
+                    'close_price': self._safe_float(row.get('pre_close')),
+                    'volume_ratio': self._safe_float(row.get('vol_ratio')),
+                    'turnover_rate': self._safe_float(row.get('turn_over')),
+                    'price_change_speed': None,
+                    'change_5min': None,
+                    'change_60d': None,
+                    'change_ytd': None,
+                    'trade_date': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}',
+                    'created_at': None,
+                    'updated_at': None,
+                })
+
+            return {'trade_date': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}', 'data': items}
+
+        return {'trade_date': None, 'data': []}
     
     def get_stock_list(self) -> Optional[List[Dict]]:
         """
@@ -150,7 +272,7 @@ class IndividualStockService:
             start_date: 开始日期，格式：YYYYMMDD，默认为30天前
             end_date: 结束日期，格式：YYYYMMDD，默认为今天
             adjust: 复权类型，""为不复权，"qfq"为前复权，"hfq"为后复权
-            frequency: 频率，支持"daily"（默认）和"weekly"，当为"weekly"时从周频模型获取数据
+            frequency: 频率，支持"daily"（默认）和"weekly"
         
         Returns:
             股票历史行情数据列表
@@ -166,45 +288,88 @@ class IndividualStockService:
             start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
         
         try:
-            # 获取股票信息
-            try:
-                stock = IndividualStock.objects.get(code=stock_code)
-            except IndividualStock.DoesNotExist:
-                logger.warning(f"未找到股票{stock_code}的信息")
-                return None
-            
-            # 从数据库获取历史数据
-            start_date_obj = datetime.strptime(start_date, '%Y%m%d').date()
-            end_date_obj = datetime.strptime(end_date, '%Y%m%d').date()
-            
-            # 根据频率选择模型
+            ts_code = self._to_ts_code(stock_code)
             freq = (frequency or "daily").lower()
-            if freq in ("weekly", "week", "w"):
-                queryset = IndividualStockWeekly.objects.filter(
-                    stock=stock,
-                    date__gte=start_date_obj,
-                    date__lte=end_date_obj
-                ).order_by('date')
-            else:
-                queryset = IndividualStockDaily.objects.filter(
-                    stock=stock,
-                    date__gte=start_date_obj,
-                    date__lte=end_date_obj
-                ).order_by('date')
+            ts_freq = 'W' if freq in ("weekly", "week", "w") else 'D'
+            adjust = (adjust or '').lower()
 
-            db_history = queryset
-            
-            if db_history.exists():
-                history_list = [history.to_dict() for history in db_history]
-                logger.info(f"从数据库获取股票{stock_code}历史行情数据")
-                return history_list
+            fields = 'ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount'
+            if adjust in {'qfq', 'hfq'}:
+                resp = call_tushare_pro_bar(
+                    params={
+                        'ts_code': ts_code,
+                        'asset': 'E',
+                        'freq': ts_freq,
+                        'adj': adjust,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                    },
+                    fields=fields,
+                )
             else:
-                logger.warning(f"数据库中没有股票{stock_code}在指定日期范围的历史数据")
-                return []
-            
+                resp = call_tushare(
+                    interface='weekly' if ts_freq == 'W' else 'daily',
+                    params={
+                        'ts_code': ts_code,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                    },
+                    fields=fields,
+                    use_query=False,
+                )
+
+            if resp.get('code') != 200:
+                logger.warning(
+                    "调用 Tushare 股票历史行情失败: stock_code=%s, code=%s, msg=%s",
+                    stock_code,
+                    resp.get('code'),
+                    resp.get('message') or resp.get('error'),
+                )
+                return None
+
+            records = self._only_dict_records((resp.get('data') or {}).get('records') or [])
+            history_list = [self._normalize_tushare_history_record(row) for row in records]
+            history_list = [row for row in history_list if row]
+            history_list.sort(key=lambda row: row.get('date') or '')
+            logger.info(f"从 Tushare 获取股票{stock_code}历史行情数据，共 {len(history_list)} 条")
+            return history_list
         except Exception as e:
             logger.error(f"获取股票{stock_code}历史行情数据失败: {str(e)}")
             return None
+
+    def _to_ts_code(self, stock_code: str) -> str:
+        if '.' in stock_code:
+            return stock_code.upper()
+        if stock_code.startswith(('6', '9')):
+            return f'{stock_code}.SH'
+        if stock_code.startswith(('0', '2', '3')):
+            return f'{stock_code}.SZ'
+        if stock_code.startswith(('4', '8')):
+            return f'{stock_code}.BJ'
+        return f'{stock_code}.SZ'
+
+    def _normalize_tushare_history_record(self, row: Dict) -> Optional[Dict]:
+        raw_trade_date = str(row.get('trade_date') or '')
+        if len(raw_trade_date) != 8:
+            return None
+
+        return {
+            'stock_code': str(row.get('ts_code') or '').split('.')[0],
+            'ts_code': row.get('ts_code'),
+            'date': f'{raw_trade_date[:4]}-{raw_trade_date[4:6]}-{raw_trade_date[6:]}',
+            'open_price': self._safe_float(row.get('open')),
+            'close_price': self._safe_float(row.get('close')),
+            'high_price': self._safe_float(row.get('high')),
+            'low_price': self._safe_float(row.get('low')),
+            'pre_close': self._safe_float(row.get('pre_close')),
+            'change_percent': self._safe_float(row.get('pct_chg')),
+            'change_amount': self._safe_float(row.get('change')),
+            'volume': self._safe_int(row.get('vol')),
+            'amount': self._safe_float(row.get('amount')),
+            'amplitude': None,
+            'turnover_rate': None,
+            'created_at': None,
+        }
     
     def get_stocks_history_bulk(self, stock_codes: List[str], start_date: str = None, end_date: str = None, frequency: str = "daily") -> Dict[str, List[Dict]]:
         valid_codes = [c for c in stock_codes if validate_stock_symbol(c)]

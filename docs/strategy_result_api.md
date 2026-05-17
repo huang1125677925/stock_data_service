@@ -75,7 +75,7 @@
         "execution_time": "2024-01-15T09:30:00",
         "parameters": {
             "short_period": 5,
-            "long_period": 20,
+            "long_period": 10,
             "min_score": 70
         }
     },
@@ -198,7 +198,7 @@ GET /api/individual-stock/strategy-results/1/
             "execution_time": "2024-01-15T09:30:00",
             "parameters": {
                 "short_period": 5,
-                "long_period": 20
+                "long_period": 10
             }
         },
         "created_at": "2024-01-15T09:30:00.123456Z",
@@ -339,7 +339,7 @@ Content-Type: application/json
         "execution_time": "2024-01-15T15:30:00",
         "parameters": {
             "short_period": 5,
-            "long_period": 20,
+            "long_period": 10,
             "volume_factor": 1.5
         }
     }

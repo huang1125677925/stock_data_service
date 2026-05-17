@@ -21,6 +21,9 @@ urlpatterns = [
     path('limit-board/break-reseal/', views.get_limit_board_break_reseal, name='get_limit_board_break_reseal'),
     path('limit-board/hot-money-review/', views.get_limit_board_hot_money_review, name='get_limit_board_hot_money_review'),
     path('limit-board/trend-analysis/', views.get_limit_board_trend_analysis, name='get_limit_board_trend_analysis'),
+    path('value-stocks/', views.get_value_stock_candidates, name='get_value_stock_candidates'),
+    path('value-stocks/revenue-history/', views.get_value_stock_revenue_history, name='get_value_stock_revenue_history'),
+    path('swing-analysis/', views.get_swing_analysis, name='get_swing_analysis'),
     path('individual-analysis/candlestick/<str:stock_code>/', analyze_candlestick_patterns, name='analyze_candlestick_patterns'),
     # 新增：大盘分析市场宽度相关接口
     path('market-analysis/adr/', get_market_adr, name='get_market_adr'),

@@ -52,6 +52,156 @@ class EtfService:
 
         return list(qs)
 
+    def _get_recent_open_dates(self, days: int = 14) -> List[str]:
+        """
+        查询最近一段时间的开市日期列表
+        功能：通过 Tushare trade_cal 获取最近交易日，按日期倒序返回。
+        参数：
+        - days: 回溯天数
+        返回值：YYYYMMDD 字符串列表
+        事件：Tushare 调用失败时抛出异常
+        """
+        end_dt = datetime.now().date()
+        start_dt = end_dt - timedelta(days=days)
+
+        trade_cal_resp = call_tushare(
+            interface='trade_cal',
+            params={
+                'exchange': '',
+                'start_date': start_dt.strftime('%Y%m%d'),
+                'end_date': end_dt.strftime('%Y%m%d'),
+                'is_open': '1',
+            },
+            fields='cal_date,is_open',
+            use_query=False,
+        )
+        if trade_cal_resp.get('code') != 200:
+            raise RuntimeError(
+                trade_cal_resp.get('error') or trade_cal_resp.get('message') or '获取交易日历失败'
+            )
+
+        return sorted(
+            [
+                str(item.get('cal_date'))
+                for item in self._only_dict_records((trade_cal_resp.get('data') or {}).get('records', []))
+                if item.get('cal_date')
+            ],
+            reverse=True,
+        )
+
+    def query_basic_latest(self) -> Dict[str, Any]:
+        """
+        查询最近一个有日线数据的 ETF 列表
+        功能：以 Tushare fund_daily 作为“最新 ETF 列表”的来源，再用本地 etf_basic 补充基础字段。
+        参数：无
+        返回值：dict，包含 trade_date/items。
+        事件：无
+        """
+        open_dates = self._get_recent_open_dates()
+        if not open_dates:
+            return {'trade_date': None, 'items': []}
+
+        fields = 'ts_code,trade_date'
+        for trade_date in open_dates:
+            daily_resp = call_tushare(
+                interface='fund_daily',
+                params={'trade_date': trade_date},
+                fields=fields,
+                use_query=False,
+            )
+            if daily_resp.get('code') != 200:
+                raise RuntimeError(
+                    daily_resp.get('error') or daily_resp.get('message') or '获取 ETF 日线失败'
+                )
+
+            records = self._only_dict_records((daily_resp.get('data') or {}).get('records') or [])
+            if not records:
+                continue
+
+            ts_codes = sorted(
+                {
+                    str(item.get('ts_code'))
+                    for item in records
+                    if item.get('ts_code')
+                }
+            )
+            basic_map = {
+                item.ts_code: item
+                for item in EtfBasic.objects.filter(ts_code__in=ts_codes)
+            }
+
+            normalized_trade_date = f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}'
+            items: List[Dict[str, Any]] = []
+            for ts_code in ts_codes:
+                basic = basic_map.get(ts_code)
+                items.append(
+                    replace_nan(
+                        {
+                            'ts_code': ts_code,
+                            'trade_date': normalized_trade_date,
+                            'csname': basic.csname if basic else None,
+                            'extname': basic.extname if basic else None,
+                            'cname': basic.cname if basic else None,
+                            'index_code': basic.index_code if basic else None,
+                            'index_name': basic.index_name if basic else None,
+                            'setup_date': basic.setup_date.isoformat() if basic and basic.setup_date else None,
+                            'list_date': basic.list_date.isoformat() if basic and basic.list_date else None,
+                            'delist_date': basic.delist_date.isoformat() if basic and basic.delist_date else None,
+                            'list_status': basic.list_status if basic else None,
+                            'exchange': basic.exchange if basic else None,
+                            'mgr_name': basic.mgr_name if basic else None,
+                            'custod_name': basic.custod_name if basic else None,
+                            'mgt_fee': float(basic.mgt_fee) if basic and basic.mgt_fee is not None else None,
+                            'etf_type': basic.etf_type if basic else None,
+                        }
+                    )
+                )
+
+            return {
+                'trade_date': normalized_trade_date,
+                'items': items,
+            }
+
+        return {'trade_date': None, 'items': []}
+
+    def query_latest_daily_ts_codes(self) -> Dict[str, Any]:
+        """
+        查询最近一个有 ETF 日线数据交易日的代码集合
+        功能：通过交易日历倒序尝试 fund_daily，返回最近有行情数据的 ETF ts_code 集合。
+        参数：无
+        返回值：dict，包含 trade_date 与 ts_codes。
+        事件：Tushare 调用失败时抛出异常。
+        """
+        open_dates = self._get_recent_open_dates()
+        if not open_dates:
+            return {'trade_date': None, 'ts_codes': set()}
+
+        for trade_date in open_dates:
+            daily_resp = call_tushare(
+                interface='fund_daily',
+                params={'trade_date': trade_date},
+                fields='ts_code,trade_date',
+                use_query=False,
+            )
+            if daily_resp.get('code') != 200:
+                raise RuntimeError(
+                    daily_resp.get('error') or daily_resp.get('message') or '获取 ETF 日线失败'
+                )
+
+            records = self._only_dict_records((daily_resp.get('data') or {}).get('records') or [])
+            ts_codes = {
+                str(item.get('ts_code'))
+                for item in records
+                if item.get('ts_code')
+            }
+            if ts_codes:
+                return {
+                    'trade_date': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}',
+                    'ts_codes': ts_codes,
+                }
+
+        return {'trade_date': None, 'ts_codes': set()}
+
     def query_daily(self, ts_code: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[EtfDaily]:
         """
         查询ETF日线行情
@@ -81,6 +231,57 @@ class EtfService:
             qs = qs.filter(trade_date__lte=ed)
 
         return list(qs.order_by('trade_date'))
+
+    def query_daily_from_tushare(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        从 Tushare 查询 ETF 日线行情
+        功能：根据 ts_code 与日期范围调用 fund_daily，并返回接口可直接序列化的字典列表。
+        参数：
+        - ts_code: ETF 的 Tushare 代码（必填）
+        - start_date: 开始日期(YYYY-MM-DD)
+        - end_date: 结束日期(YYYY-MM-DD)
+        返回值：清洗后的行情字典列表。
+        事件：Tushare 调用失败时抛出异常。
+        """
+        if not ts_code:
+            return []
+
+        params: Dict[str, Any] = {'ts_code': ts_code}
+        if start_date:
+            params['start_date'] = start_date.replace('-', '')
+        if end_date:
+            params['end_date'] = end_date.replace('-', '')
+
+        fields = 'ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount'
+        resp = call_tushare(
+            interface='fund_daily',
+            params=params,
+            fields=fields,
+            use_query=False,
+        )
+        if resp.get('code') != 200:
+            raise RuntimeError(
+                resp.get('error') or resp.get('message') or '获取 ETF 日线失败'
+            )
+
+        records = self._only_dict_records((resp.get('data') or {}).get('records') or [])
+        cleaned: List[Dict[str, Any]] = []
+        for item in records:
+            normalized = dict(item)
+            raw_trade_date = str(normalized.get('trade_date') or '')
+            if len(raw_trade_date) == 8:
+                normalized['trade_date'] = (
+                    f'{raw_trade_date[:4]}-{raw_trade_date[4:6]}-{raw_trade_date[6:]}'
+                )
+            cleaned.append(replace_nan(normalized))
+
+        cleaned.sort(key=lambda item: item.get('trade_date') or '')
+        return cleaned
 
     def _fetch_index_basic_map(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -192,33 +393,7 @@ class EtfService:
         返回值：dict，包含 trade_date/items/analysis/filters。
         事件：无
         """
-        end_dt = datetime.now().date()
-        start_dt = end_dt - timedelta(days=14)
-
-        trade_cal_resp = call_tushare(
-            interface='trade_cal',
-            params={
-                'exchange': '',
-                'start_date': start_dt.strftime('%Y%m%d'),
-                'end_date': end_dt.strftime('%Y%m%d'),
-                'is_open': '1',
-            },
-            fields='cal_date,is_open',
-            use_query=False,
-        )
-        if trade_cal_resp.get('code') != 200:
-            raise RuntimeError(
-                trade_cal_resp.get('error') or trade_cal_resp.get('message') or '获取交易日历失败'
-            )
-
-        open_dates = sorted(
-            [
-                str(item.get('cal_date'))
-                for item in self._only_dict_records((trade_cal_resp.get('data') or {}).get('records', []))
-                if item.get('cal_date')
-            ],
-            reverse=True,
-        )
+        open_dates = self._get_recent_open_dates()
         if not open_dates:
             return {'trade_date': None, 'items': [], 'analysis': [], 'filters': {}}
 

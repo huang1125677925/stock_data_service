@@ -36,7 +36,7 @@ def test_raw_indicator_data_collection():
         'commission': 0.001,
         'strategy_params': {
             'short_period': 5,
-            'long_period': 20
+            'long_period': 10
         }
     }
     

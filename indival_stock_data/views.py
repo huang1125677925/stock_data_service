@@ -17,12 +17,11 @@ from common.validators import validate_stock_symbol
 from common.response import success_response, error_response
 from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement, StockTag
 from .serializers import (
-    IndividualStockSerializer, StrategyResultSerializer, BalanceSheetSerializer, 
+    StrategyResultSerializer, BalanceSheetSerializer, 
     IncomeStatementSerializer, CashFlowStatementSerializer, StockTagSerializer, StockTagQuerySerializer,
     SuccessResponseConceptListSerializer, ErrorResponseSerializer,
     SuccessResponseStockCorrelationSerializer, SuccessResponseStockVolatilityListSerializer,
 )
-from django.db.models import Q
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 import json
 import pandas as pd
@@ -83,24 +82,30 @@ class StockListView(APIView):
             if codes_param:
                 codes_list = [c.strip() for c in codes_param.split(',') if c and c.strip()]
 
-            # 使用数据库层面的过滤与分页，避免一次性加载全部数据
-            queryset = IndividualStock.objects.all().order_by('code')
-            if keyword:
-                queryset = queryset.filter(Q(name__icontains=keyword) | Q(code__icontains=keyword))
-            if industry:
-                queryset = queryset.filter(industry__icontains=industry)
-            if dc_concept:
-                queryset = queryset.filter(dc_concept__icontains=dc_concept)
-            if names_list:
-                queryset = queryset.filter(name__in=names_list)
-            if codes_list:
-                queryset = queryset.filter(code__in=codes_list)
+            tushare_payload = individual_stock_service.get_stock_list_from_tushare()
+            items = tushare_payload.get('data', [])
+            trade_date = tushare_payload.get('trade_date')
 
-            if queryset.count() == 0:
+            if keyword:
+                items = [
+                    item for item in items
+                    if keyword in (item.get('name') or '') or keyword in (item.get('code') or '')
+                ]
+            if industry:
+                items = [item for item in items if industry in (item.get('industry') or '')]
+            if dc_concept:
+                items = [item for item in items if dc_concept in (item.get('dc_concept') or '')]
+            if names_list:
+                items = [item for item in items if item.get('name') in names_list]
+            if codes_list:
+                items = [item for item in items if item.get('code') in codes_list]
+
+            items = sorted(items, key=lambda item: item.get('code') or '')
+
+            if len(items) == 0:
                 return error_response("没有搜索到相关股票", 404)
 
-            # 分页处理（数据库分页）
-            paginator = Paginator(queryset, page_size)
+            paginator = Paginator(items, page_size)
             if paginator.count == 0:
                 return error_response("获取股票列表失败", 404)
             try:
@@ -109,16 +114,15 @@ class StockListView(APIView):
                 logger.warning(f"页码超出范围: {page}")
                 return error_response("页码超出范围", 400)
 
-            # 仅序列化当前页的数据，减少序列化开销
-            serializer = IndividualStockSerializer(current_page.object_list, many=True)
-            logger.info(f"从数据库获取{paginator.count}只股票信息，当前返回第{page}页，共{paginator.num_pages}页")
+            logger.info(f"从 Tushare 获取{paginator.count}只股票信息，当前返回第{page}页，共{paginator.num_pages}页")
 
             return success_response({
                 "total": paginator.count,
                 "page": page,
                 "page_size": page_size,
                 "total_pages": paginator.num_pages,
-                "data": serializer.data
+                "trade_date": trade_date,
+                "data": list(current_page.object_list)
             })
         except ValueError as e:
             logger.error(f"参数格式错误: {str(e)}")
@@ -225,11 +229,11 @@ class StockRealtimeView(APIView):
 
 class StockHistoryView(APIView):
     """
-    获取股票历史行情数据
+    从 Tushare 获取股票历史行情数据
     """
     def get(self, request, stock_code):
         """
-        功能：获取指定股票的历史行情数据，支持日频和周频。
+        功能：从 Tushare 获取指定股票的历史行情数据，支持日频和周频。
         参数：
         - request(HttpRequest): 请求对象，查询参数包括：
           - start_date(str, 可选): 开始日期，格式：YYYYMMDD，默认30天前
@@ -252,10 +256,7 @@ class StockHistoryView(APIView):
             adjust = request.query_params.get('adjust', "")
             frequency = request.query_params.get('frequency', 'daily')
             
-            # 获取历史数据
             history = individual_stock_service.get_stock_history(stock_code, start_date, end_date, adjust, frequency)
-            
-            
             return success_response(history)
         except ValueError as e:
             logger.error(f"参数格式错误: {str(e)}")

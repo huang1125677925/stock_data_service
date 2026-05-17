@@ -60,7 +60,7 @@ class SuccessResponseEtfBasicListSerializer(serializers.Serializer):
     - code (int): 状态码
     - message (str): 信息
     - timestamp (str): 时间戳（ISO 格式）
-    - data (object): 分页载荷对象，包含 items 列表与分页元信息
+    - data (object): 分页载荷对象，包含当前页 ETF 列表与分页元信息
     事件：无
     """
     code = serializers.IntegerField()
@@ -73,18 +73,20 @@ class SuccessResponseEtfBasicListSerializer(serializers.Serializer):
         功能：描述统一响应中的 data 字段结构。
         参数：无
         返回值：
-        - items (EtfBasicSerializer[]): 当前页数据列表
+        - total (int): 总记录数
         - page (int): 当前页码
         - page_size (int): 每页数量
-        - total (int): 总记录数
-        - pages (int): 总页数
+        - total_pages (int): 总页数
+        - latest_daily_trade_date (str): 用于过滤有效 ETF 的最近 fund_daily 交易日
+        - data (EtfBasicSerializer[]): 当前页 ETF 列表
         事件：无
         """
-        items = EtfBasicSerializer(many=True)
+        total = serializers.IntegerField()
         page = serializers.IntegerField()
         page_size = serializers.IntegerField()
-        total = serializers.IntegerField()
-        pages = serializers.IntegerField()
+        total_pages = serializers.IntegerField()
+        latest_daily_trade_date = serializers.CharField(allow_null=True, required=False)
+        data = EtfBasicSerializer(many=True)
 
     data = EtfBasicListPayloadSerializer()
 
@@ -92,19 +94,33 @@ class SuccessResponseEtfBasicListSerializer(serializers.Serializer):
 class SuccessResponseEtfDailyListSerializer(serializers.Serializer):
     """
     ETF 日线行情列表统一响应序列化器
-    功能：描述接口返回的统一结构，其中 data 为 EtfDailySerializer 列表。
+    功能：描述接口返回的统一结构，其中 data 为 Tushare fund_daily 行情列表。
     参数：无
     返回值：
     - code (int): 状态码
     - message (str): 信息
     - timestamp (str): 时间戳（ISO 格式）
-    - data (EtfDailySerializer[]): ETF 日线行情列表
+    - data (object[]): ETF 日线行情列表
     事件：无
     """
     code = serializers.IntegerField()
     message = serializers.CharField()
     timestamp = serializers.CharField()
-    data = EtfDailySerializer(many=True)
+
+    class EtfDailyTushareItemSerializer(serializers.Serializer):
+        ts_code = serializers.CharField()
+        trade_date = serializers.CharField()
+        open = serializers.FloatField(required=False, allow_null=True)
+        high = serializers.FloatField(required=False, allow_null=True)
+        low = serializers.FloatField(required=False, allow_null=True)
+        close = serializers.FloatField(required=False, allow_null=True)
+        pre_close = serializers.FloatField(required=False, allow_null=True)
+        change = serializers.FloatField(required=False, allow_null=True)
+        pct_chg = serializers.FloatField(required=False, allow_null=True)
+        vol = serializers.FloatField(required=False, allow_null=True)
+        amount = serializers.FloatField(required=False, allow_null=True)
+
+    data = EtfDailyTushareItemSerializer(many=True)
 
 
 class ErrorResponseSerializer(serializers.Serializer):

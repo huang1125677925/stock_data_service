@@ -78,7 +78,7 @@ def create_backtest(request):
             "data_source": "stock" 或 "etf"，默认 "stock",
             "strategy_params": {
                 "short_period": 5,
-                "long_period": 20
+                "long_period": 10
             }
         }
     

@@ -9,7 +9,6 @@ from common.response import success_response, error_response
 from common.tushare_proxy import call_tushare
 from .serializers import (
     EtfBasicSerializer,
-    EtfDailySerializer,
     SuccessResponseEtfBasicListSerializer,
     SuccessResponseEtfDailyListSerializer,
     SuccessResponseEtfCorrelationSerializer,
@@ -63,7 +62,6 @@ class EtfBasicListView(APIView):
         try:
             # 1. 构造 Tushare 查询参数
             ts_params = {}
-            # 直接映射的参数
             if request.query_params.get('ts_code'):
                 ts_params['ts_code'] = request.query_params.get('ts_code')
             if request.query_params.get('index_code'):
@@ -72,32 +70,61 @@ class EtfBasicListView(APIView):
                 ts_params['exchange'] = request.query_params.get('exchange')
             if request.query_params.get('list_status'):
                 ts_params['list_status'] = request.query_params.get('list_status')
-            # 参数名映射 mgr_name -> mgr
             if request.query_params.get('mgr_name'):
                 ts_params['mgr'] = request.query_params.get('mgr_name')
 
-            # 2. 调用 Tushare 接口
-            # 字段列表参考文档和 Serializer 需求，尽量获取全量字段
             fields = "ts_code,csname,extname,cname,index_code,index_name,setup_date,list_date,delist_date,list_status,exchange,mgr_name,custod_name,mgt_fee,etf_type"
-            
             resp = call_tushare("etf_basic", params=ts_params, fields=fields, use_query=False)
             if resp.get("code") != 200:
                 return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
-            
-            items = resp.get("data", {}).get("records", [])
 
-            # 3. 内存过滤 (Tushare 接口不支持的参数)
+            items = resp.get("data", {}).get("records", [])
+            latest_daily = etf_service.query_latest_daily_ts_codes()
+            latest_daily_ts_codes = latest_daily.get('ts_codes') or set()
+            latest_daily_trade_date = latest_daily.get('trade_date')
+
+            # 2. 过滤掉 OF 类型 ETF，同时剔除最近交易日无 fund_daily 行情的 ETF
             etf_type_filter = request.query_params.get('etf_type')
             name_filter = request.query_params.get('name')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
 
+            items = [
+                x for x in items
+                if x.get('ts_code')
+                and not str(x.get('ts_code')).endswith('.OF')
+                and str(x.get('ts_code')) in latest_daily_ts_codes
+            ]
+
+            def six_months_ago():
+                today = datetime.now().date()
+                month = today.month - 6
+                year = today.year
+                if month <= 0:
+                    month += 12
+                    year -= 1
+                day = min(today.day, calendar.monthrange(year, month)[1])
+                return today.replace(year=year, month=month, day=day)
+
+            listed_before = six_months_ago()
+
+            def is_listed_over_six_months(item):
+                raw_list_date = str(item.get('list_date') or '')
+                if len(raw_list_date) != 8 or not raw_list_date.isdigit():
+                    return False
+                return datetime.strptime(raw_list_date, '%Y%m%d').date() <= listed_before
+
+            items = [x for x in items if is_listed_over_six_months(x)]
             if etf_type_filter:
                 items = [x for x in items if x.get('etf_type') == etf_type_filter]
-            
             if name_filter:
-                # 模糊匹配中文简称、扩位简称或全称
-                items = [x for x in items if (name_filter in x.get('csname', '')) or (name_filter in x.get('extname', '')) or (name_filter in x.get('cname', ''))]
+                items = [
+                    x for x in items
+                    if (name_filter in (x.get('csname') or ''))
+                    or (name_filter in (x.get('extname') or ''))
+                    or (name_filter in (x.get('cname') or ''))
+                ]
 
-            # 4. 数据清洗 (日期格式转换 YYYYMMDD -> YYYY-MM-DD, 处理 NaN)
             from index_data.utils import replace_nan
 
             def format_date(date_str):
@@ -107,23 +134,15 @@ class EtfBasicListView(APIView):
 
             cleaned_items = []
             for item in items:
-                # 格式化日期
                 for date_field in ['setup_date', 'list_date', 'delist_date']:
                     if item.get(date_field):
                         item[date_field] = format_date(item[date_field])
-                
-                # 处理 NaN
-                cleaned_item = replace_nan(item)
-                cleaned_items.append(cleaned_item)
-
-            # 5. 分页
-            page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 20))
+                cleaned_items.append(replace_nan(item))
 
             paginator = Paginator(cleaned_items, page_size)
             if paginator.count == 0:
                 if page == 1:
-                     return error_response("没有搜索到相关ETF", 404)
+                    return error_response("没有搜索到相关ETF", 404)
                 else:
                     pass
 
@@ -133,10 +152,8 @@ class EtfBasicListView(APIView):
                 logger.warning(f"ETF 基本信息页码超出范围: {page}")
                 return error_response("页码超出范围", 400)
 
-            # 6. 序列化
-            # 由于 items 已经是字典列表，且字段已清洗，直接传给 Serializer
             serializer = EtfBasicSerializer(current_page.object_list, many=True)
-            
+
             logger.info(f"ETF 基本信息总数 {paginator.count}，返回第 {page} 页 / 共 {paginator.num_pages} 页")
 
             return success_response({
@@ -144,6 +161,7 @@ class EtfBasicListView(APIView):
                 'page': page,
                 'page_size': page_size,
                 'total_pages': paginator.num_pages,
+                'latest_daily_trade_date': latest_daily_trade_date,
                 'data': serializer.data,
             })
         except ValueError as e:
@@ -157,7 +175,7 @@ class EtfBasicListView(APIView):
 class EtfDailyListView(APIView):
     """
     ETF 日线行情查询接口（类视图）
-    功能：按 ts_code 与日期范围查询 ETF 日线行情。
+    功能：按 ts_code 与日期范围从 Tushare 查询 ETF 日线行情。
     参数（Query）：
     - ts_code(str, 必填)：TS代码
     - start_date(str, 可选)：开始日期，格式YYYY-MM-DD
@@ -171,7 +189,7 @@ class EtfDailyListView(APIView):
     @extend_schema(
         summary="ETF 日线行情查询",
         description=(
-            "按 ts_code 与日期范围查询 ETF 日线行情。\n"
+            "按 ts_code 与日期范围从 Tushare fund_daily 查询 ETF 日线行情。\n"
             "参数（Query）：ts_code（必填），start_date（可选，YYYY-MM-DD），end_date（可选，YYYY-MM-DD）。\n"
             "统一响应结构（success_response），data 为行情列表。"
         ),
@@ -190,9 +208,8 @@ class EtfDailyListView(APIView):
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
 
-            dailies = etf_service.query_daily(ts_code, start_date, end_date)
-            serializer = EtfDailySerializer(dailies, many=True)
-            return success_response(serializer.data)
+            dailies = etf_service.query_daily_from_tushare(ts_code, start_date, end_date)
+            return success_response(dailies)
         except Exception as e:
             logger.error(f"ETF 日线行情查询失败: {str(e)}")
             return error_response(f'ETF日线行情查询失败: {str(e)}', 500)

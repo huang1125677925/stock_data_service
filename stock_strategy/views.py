@@ -21,6 +21,8 @@ from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
 from .auction_selection_strategy import auction_selection_strategy_service
 from .limit_board_service import limit_board_data_service
+from .value_stock_strategy import value_stock_strategy_service
+from .swing_analysis_strategy import swing_analysis_service
 from industry_stock_data.models import IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 from .index_analysis.services import get_macd_xgb_recent_growth_dates
 from stock_strategy.serializers import SuccessResponseMacdXgbGrowthDatesSerializer, SuccessResponseActualRiseRatio5DSerializer
@@ -51,6 +53,117 @@ def _get_required_date_range(request):
     if not end_date or len(end_date) != 8 or not end_date.isdigit():
         raise ValueError('end_date 为必填参数，格式为 YYYYMMDD')
     return start_date, end_date
+
+
+def _get_float_param(request, name, default):
+    raw_value = request.GET.get(name, default)
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f'{name} 参数格式错误，应为数字')
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_value_stock_candidates(request):
+    """
+    价值股筛选接口
+    功能：从 Tushare 最新财报数据筛选营收正增长、净利润靠前的股票。
+
+    Query Parameters:
+        report_period: 财报期，格式 YYYYMMDD；不传时自动向前查找最新可用季度
+        min_revenue_growth: 最低营收同比增长率，默认 0
+        min_net_profit: 最低净利润，单位元，默认 0
+        limit: 返回数量，默认 50，最大 2000
+        lookback_periods: 自动查找最新财报时最多回看季度数，默认 8，最大 16
+    """
+    try:
+        report_period = request.GET.get('report_period')
+        if report_period and (len(report_period) != 8 or not report_period.isdigit()):
+            return error_response('report_period 参数格式错误，应为 YYYYMMDD', 400)
+
+        min_revenue_growth = _get_float_param(request, 'min_revenue_growth', 0)
+        min_net_profit = _get_float_param(request, 'min_net_profit', 0)
+        limit = _get_positive_int_param(request, 'limit', 50, max_value=2000)
+        lookback_periods = _get_positive_int_param(request, 'lookback_periods', 8, max_value=16)
+
+        result = value_stock_strategy_service.screen_value_stocks(
+            report_period=report_period,
+            min_revenue_growth=min_revenue_growth,
+            min_net_profit=min_net_profit,
+            limit=limit,
+            lookback_periods=lookback_periods,
+        )
+        return success_response(result)
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(f'价值股筛选失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_value_stock_revenue_history(request):
+    """
+    高营收增长股票营收历史接口
+    功能：根据 ts_codes 获取过去若干财报期的营业收入和净利润数据。
+
+    Query Parameters:
+        ts_codes: Tushare 股票代码，多个用逗号分隔，如 600519.SH,000333.SZ
+        periods: 财报期数量，默认 8，最大 16
+    """
+    try:
+        ts_codes_param = request.GET.get('ts_codes')
+        if not ts_codes_param:
+            return error_response('ts_codes 为必填参数，多个代码用逗号分隔', 400)
+
+        ts_codes = [code.strip() for code in ts_codes_param.split(',') if code.strip()]
+        invalid_codes = [
+            code for code in ts_codes
+            if len(code) != 9 or code[6] != '.' or code[-2:].upper() not in {'SH', 'SZ', 'BJ'}
+        ]
+        if invalid_codes:
+            return error_response(f'ts_codes 参数包含无效代码: {",".join(invalid_codes)}', 400)
+
+        periods = _get_positive_int_param(request, 'periods', 8, max_value=16)
+        result = value_stock_strategy_service.get_revenue_history(
+            ts_codes=ts_codes,
+            periods=periods,
+        )
+        return success_response(result)
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(f'获取营收历史失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_swing_analysis(request):
+    """
+    波段分析接口
+    功能：从 Tushare 获取股票或 ETF 行情，返回波段交易所需的趋势、位置、波动、量能和支撑压力数据。
+
+    Query Parameters:
+        target_type: 标的类型，stock 或 etf
+        code: 股票代码或 ETF ts_code。股票可传 600519 或 600519.SH；ETF 传 510300.SH
+        start_date: 开始日期，YYYYMMDD 或 YYYY-MM-DD，默认最近约 240 天
+        end_date: 结束日期，YYYYMMDD 或 YYYY-MM-DD，默认今天
+        adjust: 股票复权类型，可选 qfq/hfq；ETF 忽略该参数
+    """
+    try:
+        result = swing_analysis_service.analyze(
+            target_type=request.GET.get('target_type', 'stock'),
+            code=request.GET.get('code') or request.GET.get('ts_code') or request.GET.get('stock_code'),
+            start_date=request.GET.get('start_date'),
+            end_date=request.GET.get('end_date'),
+            adjust=request.GET.get('adjust', ''),
+        )
+        return success_response(result)
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(f'波段分析失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])

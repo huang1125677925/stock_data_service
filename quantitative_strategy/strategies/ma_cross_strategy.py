@@ -13,8 +13,8 @@ class MACrossStrategy(BaseQuantStrategy):
     _strategy_name = 'ma_cross'
     _strategy_description = '移动平均线交叉策略'
     _strategy_params = {
-        'short_period': {'type': 'int', 'default': 20, 'description': '短期均线周期'},
-        'long_period': {'type': 'int', 'default': 50, 'description': '长期均线周期'}
+        'short_period': {'type': 'int', 'default': 5, 'description': '短期均线周期'},
+        'long_period': {'type': 'int', 'default': 10, 'description': '长期均线周期'}
     }
     """
     移动平均线交叉策略
@@ -25,8 +25,8 @@ class MACrossStrategy(BaseQuantStrategy):
     """
     
     params = dict(
-        short_period=20,    # 短期均线周期
-        long_period=50,    # 长期均线周期
+        short_period=5,    # 短期均线周期
+        long_period=10,    # 长期均线周期
         printlog=True
     )
     
