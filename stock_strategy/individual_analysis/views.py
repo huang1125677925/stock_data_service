@@ -7,6 +7,7 @@ from django.views.decorators.http import require_http_methods
 from django.http import JsonResponse
 from common.response import success_response, error_response
 from indival_stock_data.models import IndividualStock, IndividualStockDaily
+from etfapp.models import EtfBasic, EtfDaily
 
 # 由于项目中未引入TA-Lib，这里实现部分常见K线形态识别的简化版本逻辑。
 # 若后续引入TA-Lib，可将具体形态识别函数替换为talib对应函数的输出。
@@ -33,6 +34,40 @@ def _build_ohlc_dataframe(daily_qs):
     if not df.empty:
         df = df.sort_values('日期').reset_index(drop=True)
     return df
+
+
+def _build_etf_ohlc_dataframe(daily_qs):
+    """
+    构建ETF日线OHLC DataFrame。
+    参数：
+        daily_qs: QuerySet[EtfDaily]，数据库查询结果
+    返回：
+        DataFrame，列包含：日期、开盘、最高、最低、收盘
+    """
+    rows = []
+    for d in daily_qs:
+        rows.append({
+            '日期': d.trade_date,
+            '开盘': float(d.open),
+            '最高': float(d.high),
+            '最低': float(d.low),
+            '收盘': float(d.close)
+        })
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values('日期').reset_index(drop=True)
+    return df
+
+
+def _build_etf_code_candidates(code: str):
+    """
+    构建ETF代码候选列表，兼容 510300.SH 和 510300 两种输入。
+    """
+    raw_code = (code or '').strip().upper()
+    candidates = [raw_code]
+    if raw_code and '.' not in raw_code:
+        candidates.extend([f'{raw_code}.SH', f'{raw_code}.SZ'])
+    return list(dict.fromkeys(candidates))
 
 
 def recognize_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
@@ -185,25 +220,69 @@ def analyze_candlestick_patterns(request, stock_code: str):
     try:
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
+        requested_type = (request.GET.get('type') or '').strip().lower()
+        if requested_type and requested_type not in {'stock', 'etf'}:
+            return error_response('type参数仅支持 stock 或 etf', 400)
 
-        # 验证股票存在
-        try:
-            stock = IndividualStock.objects.get(code=stock_code)
-        except IndividualStock.DoesNotExist:
-            return error_response(f'股票代码不存在: {stock_code}', 404)
+        target_type = 'stock'
+        target_code = stock_code
+        target_name = None
 
-        # 从数据库获取日频数据
-        qs = IndividualStockDaily.objects.filter(stock=stock)
-        if start_date:
-            qs = qs.filter(date__gte=start_date)
-        if end_date:
-            qs = qs.filter(date__lte=end_date)
-        qs = qs.order_by('date')
+        if requested_type != 'etf':
+            try:
+                stock = IndividualStock.objects.get(code=stock_code)
+                target_code = stock.code
+                target_name = stock.name
 
-        if not qs.exists():
-            return error_response('无日频数据', 404)
+                qs = IndividualStockDaily.objects.filter(stock=stock)
+                if start_date:
+                    qs = qs.filter(date__gte=start_date)
+                if end_date:
+                    qs = qs.filter(date__lte=end_date)
+                qs = qs.order_by('date')
 
-        df = _build_ohlc_dataframe(qs)
+                if not qs.exists():
+                    return error_response('无日频数据', 404)
+
+                df = _build_ohlc_dataframe(qs)
+            except IndividualStock.DoesNotExist:
+                if requested_type == 'stock':
+                    return error_response(f'股票代码不存在: {stock_code}', 404)
+                df = None
+        else:
+            df = None
+
+        if df is None:
+            target_type = 'etf'
+            etf_code_candidates = _build_etf_code_candidates(stock_code)
+            etf_basic = EtfBasic.objects.filter(ts_code__in=etf_code_candidates).first()
+            etf_ts_code = etf_basic.ts_code if etf_basic else etf_code_candidates[0]
+
+            qs = EtfDaily.objects.filter(ts_code=etf_ts_code)
+            if not qs.exists() and etf_basic is None:
+                qs = EtfDaily.objects.filter(ts_code__in=etf_code_candidates)
+
+            if start_date:
+                qs = qs.filter(trade_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(trade_date__lte=end_date)
+            qs = qs.order_by('trade_date')
+
+            if not qs.exists():
+                return error_response(f'股票或ETF代码不存在/无日频数据: {stock_code}', 404)
+
+            first_daily = qs.first()
+            target_code = first_daily.ts_code
+            if etf_basic is None:
+                etf_basic = EtfBasic.objects.filter(ts_code=target_code).first()
+            target_name = (
+                etf_basic.csname
+                or etf_basic.extname
+                or etf_basic.cname
+                if etf_basic else None
+            )
+
+            df = _build_etf_ohlc_dataframe(qs)
         patterns_df = recognize_candlestick_patterns(df)
 
         # 构建输出
@@ -272,8 +351,9 @@ def analyze_candlestick_patterns(request, stock_code: str):
             })
 
         data = {
-            'stock_code': stock.code,
-            'stock_name': stock.name,
+            'target_type': target_type,
+            'stock_code': target_code,
+            'stock_name': target_name,
             'total': len(output),
             'patterns': output,
         }

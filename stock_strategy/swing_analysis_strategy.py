@@ -1,6 +1,7 @@
 import math
+import calendar
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -43,6 +44,38 @@ class SwingAnalysisService:
         if len(normalized) != 8 or not normalized.isdigit():
             raise ValueError('日期参数格式错误，应为 YYYYMMDD 或 YYYY-MM-DD')
         return normalized
+
+    def _recent_open_dates(self, days: int = 15) -> List[str]:
+        end_dt = datetime.now().date()
+        start_dt = end_dt - timedelta(days=days)
+        resp = call_tushare(
+            interface='trade_cal',
+            params={
+                'exchange': '',
+                'start_date': start_dt.strftime('%Y%m%d'),
+                'end_date': end_dt.strftime('%Y%m%d'),
+                'is_open': '1',
+            },
+            fields='cal_date,is_open',
+            use_query=False,
+        )
+        if resp.get('code') != 200:
+            raise RuntimeError(resp.get('error') or resp.get('message') or '获取交易日历失败')
+        records = (resp.get('data') or {}).get('records') or []
+        return sorted(
+            [str(item.get('cal_date')) for item in records if isinstance(item, dict) and item.get('cal_date')],
+            reverse=True,
+        )
+
+    def _six_months_ago(self) -> datetime.date:
+        today = datetime.now().date()
+        month = today.month - 6
+        year = today.year
+        if month <= 0:
+            month += 12
+            year -= 1
+        day = min(today.day, calendar.monthrange(year, month)[1])
+        return today.replace(year=year, month=month, day=day)
 
     def _fetch_records(
         self,
@@ -87,6 +120,109 @@ class SwingAnalysisService:
         records = (resp.get('data') or {}).get('records') or []
         return [item for item in records if isinstance(item, dict)]
 
+    def _fetch_stock_universe(self, universe_limit: int) -> Dict[str, Any]:
+        fields = 'trade_date,ts_code,name,close,amount,total_mv,industry,area'
+        for trade_date in self._recent_open_dates():
+            resp = call_tushare(
+                interface='bak_daily',
+                params={'trade_date': trade_date},
+                fields=fields,
+                use_query=False,
+            )
+            if resp.get('code') != 200:
+                raise RuntimeError(resp.get('error') or resp.get('message') or '获取股票候选池失败')
+            records = [
+                item for item in ((resp.get('data') or {}).get('records') or [])
+                if isinstance(item, dict) and item.get('ts_code')
+            ]
+            if not records:
+                continue
+            records.sort(key=lambda item: self._safe_float(item.get('amount')) or 0, reverse=True)
+            items = []
+            for item in records[:universe_limit]:
+                ts_code = str(item.get('ts_code'))
+                items.append({
+                    'target_type': 'stock',
+                    'ts_code': ts_code,
+                    'code': ts_code.split('.')[0],
+                    'name': item.get('name'),
+                    'industry': item.get('industry'),
+                    'amount': self._safe_float(item.get('amount')),
+                    'total_mv': self._safe_float(item.get('total_mv')),
+                })
+            return {'trade_date': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}', 'items': items}
+        return {'trade_date': None, 'items': []}
+
+    def _fetch_latest_fund_daily_codes(self) -> Dict[str, Any]:
+        for trade_date in self._recent_open_dates():
+            resp = call_tushare(
+                interface='fund_daily',
+                params={'trade_date': trade_date},
+                fields='ts_code,trade_date,amount',
+                use_query=False,
+            )
+            if resp.get('code') != 200:
+                raise RuntimeError(resp.get('error') or resp.get('message') or '获取 ETF 最新行情失败')
+            records = [
+                item for item in ((resp.get('data') or {}).get('records') or [])
+                if isinstance(item, dict) and item.get('ts_code')
+            ]
+            if records:
+                amount_map = {str(item.get('ts_code')): self._safe_float(item.get('amount')) for item in records}
+                return {
+                    'trade_date': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}',
+                    'codes': set(amount_map.keys()),
+                    'amount_map': amount_map,
+                }
+        return {'trade_date': None, 'codes': set(), 'amount_map': {}}
+
+    def _fetch_etf_universe(self, universe_limit: int) -> Dict[str, Any]:
+        fields = (
+            'ts_code,csname,extname,cname,index_code,index_name,setup_date,list_date,'
+            'delist_date,list_status,exchange,mgr_name,mgt_fee,etf_type'
+        )
+        resp = call_tushare(interface='etf_basic', params={}, fields=fields, use_query=False)
+        if resp.get('code') != 200:
+            raise RuntimeError(resp.get('error') or resp.get('message') or '获取 ETF 基础信息失败')
+
+        latest = self._fetch_latest_fund_daily_codes()
+        latest_codes = latest.get('codes') or set()
+        amount_map = latest.get('amount_map') or {}
+        listed_before = self._six_months_ago()
+        records = [
+            item for item in ((resp.get('data') or {}).get('records') or [])
+            if isinstance(item, dict) and item.get('ts_code')
+        ]
+
+        items = []
+        for item in records:
+            ts_code = str(item.get('ts_code'))
+            raw_list_date = str(item.get('list_date') or '')
+            if ts_code.endswith('.OF'):
+                continue
+            if ts_code not in latest_codes:
+                continue
+            if len(raw_list_date) != 8 or not raw_list_date.isdigit():
+                continue
+            if datetime.strptime(raw_list_date, '%Y%m%d').date() > listed_before:
+                continue
+            if item.get('list_status') and item.get('list_status') != 'L':
+                continue
+            items.append({
+                'target_type': 'etf',
+                'ts_code': ts_code,
+                'code': ts_code,
+                'name': item.get('csname') or item.get('extname') or item.get('cname'),
+                'index_code': item.get('index_code'),
+                'index_name': item.get('index_name'),
+                'exchange': item.get('exchange'),
+                'list_date': f'{raw_list_date[:4]}-{raw_list_date[4:6]}-{raw_list_date[6:]}',
+                'etf_type': item.get('etf_type'),
+                'amount': amount_map.get(ts_code),
+            })
+        items.sort(key=lambda item: item.get('amount') or 0, reverse=True)
+        return {'trade_date': latest.get('trade_date'), 'items': items[:universe_limit]}
+
     def _build_dataframe(self, records: List[Dict[str, Any]]) -> pd.DataFrame:
         df = pd.DataFrame(records)
         if df.empty:
@@ -99,6 +235,60 @@ class SwingAnalysisService:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna(subset=['open', 'high', 'low', 'close'])
         return df
+
+    def _linear_regression(self, values: List[float]) -> Optional[Tuple[float, float]]:
+        n = len(values)
+        if n < 2:
+            return None
+        x_mean = (n - 1) / 2
+        y_mean = sum(values) / n
+        numerator = sum((idx - x_mean) * (value - y_mean) for idx, value in enumerate(values))
+        denominator = sum((idx - x_mean) ** 2 for idx in range(n))
+        if denominator == 0:
+            return None
+        slope = numerator / denominator
+        intercept = y_mean - slope * x_mean
+        return slope, intercept
+
+    def _channel_metrics(self, df: pd.DataFrame, channel_window: int) -> Optional[Dict[str, Any]]:
+        if len(df) < channel_window:
+            return None
+        window_df = df.tail(channel_window).copy()
+        lows = [float(v) for v in window_df['low'].tolist()]
+        highs = [float(v) for v in window_df['high'].tolist()]
+        lower_line = self._linear_regression(lows)
+        upper_line = self._linear_regression(highs)
+        if lower_line is None or upper_line is None:
+            return None
+        lower_slope, lower_intercept = lower_line
+        upper_slope, upper_intercept = upper_line
+        latest = window_df.iloc[-1]
+        latest_close = float(latest['close'])
+        last_x = channel_window - 1
+        lower_latest = lower_intercept + lower_slope * last_x
+        upper_latest = upper_intercept + upper_slope * last_x
+        channel_width = upper_latest - lower_latest
+        if latest_close <= 0 or lower_latest <= 0 or channel_width <= 0:
+            return None
+        distance_to_lower_pct = (latest_close - lower_latest) / latest_close * 100
+        channel_position_pct = (latest_close - lower_latest) / channel_width * 100
+        lower_slope_pct = lower_slope / latest_close * 100
+        upper_slope_pct = upper_slope / latest_close * 100
+        return {
+            'latest_trade_date': latest['trade_date'].strftime('%Y-%m-%d'),
+            'latest_close': round(latest_close, 4),
+            'channel_window': channel_window,
+            'lower_line_latest': round(lower_latest, 4),
+            'upper_line_latest': round(upper_latest, 4),
+            'channel_width_pct': round(channel_width / latest_close * 100, 4),
+            'distance_to_lower_pct': round(distance_to_lower_pct, 4),
+            'channel_position_pct': round(channel_position_pct, 4),
+            'lower_slope': round(lower_slope, 6),
+            'upper_slope': round(upper_slope, 6),
+            'lower_slope_pct_per_day': round(lower_slope_pct, 6),
+            'upper_slope_pct_per_day': round(upper_slope_pct, 6),
+            'is_channel_up': lower_slope > 0 and upper_slope > 0,
+        }
 
     def _pct_change(self, current: float, previous: Optional[float]) -> Optional[float]:
         if previous is None or previous == 0:
@@ -323,6 +513,136 @@ class SwingAnalysisService:
                     'related_fields': ['volume'],
                 },
             ],
+        })
+
+    def screen_up_channel_near_lower(
+        self,
+        *,
+        target_type: str = 'etf',
+        codes: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adjust: str = '',
+        channel_window: int = 60,
+        max_distance_pct: float = 3.0,
+        max_channel_position_pct: float = 35.0,
+        min_slope_pct: float = 0.0,
+        universe_limit: int = 100,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        target_type = (target_type or 'etf').lower()
+        if target_type not in {'stock', 'etf'}:
+            raise ValueError('target_type 仅支持 stock 或 etf')
+        channel_window = max(20, min(int(channel_window), 180))
+        universe_limit = max(1, min(int(universe_limit), 2000))
+        limit = max(1, min(int(limit), 500))
+        max_distance_pct = float(max_distance_pct)
+        max_channel_position_pct = float(max_channel_position_pct)
+        min_slope_pct = float(min_slope_pct)
+
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=max(240, channel_window * 4))
+        start = self._normalize_date(start_date, start_dt)
+        end = self._normalize_date(end_date, end_dt)
+
+        requested_codes = []
+        if codes:
+            requested_codes = [code.strip() for code in codes.split(',') if code.strip()]
+
+        if requested_codes:
+            universe_trade_date = None
+            universe = []
+            for code in requested_codes:
+                ts_code = self._to_stock_ts_code(code) if target_type == 'stock' else code.upper()
+                universe.append({
+                    'target_type': target_type,
+                    'ts_code': ts_code,
+                    'code': ts_code.split('.')[0] if target_type == 'stock' else ts_code,
+                    'name': None,
+                })
+        elif target_type == 'stock':
+            payload = self._fetch_stock_universe(universe_limit)
+            universe_trade_date = payload.get('trade_date')
+            universe = payload.get('items') or []
+        else:
+            payload = self._fetch_etf_universe(universe_limit)
+            universe_trade_date = payload.get('trade_date')
+            universe = payload.get('items') or []
+
+        matches: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        for item in universe:
+            ts_code = item['ts_code']
+            try:
+                records = self._fetch_records(
+                    target_type=target_type,
+                    ts_code=ts_code,
+                    start_date=start,
+                    end_date=end,
+                    adjust=adjust if target_type == 'stock' else '',
+                )
+                df = self._build_dataframe(records)
+                metrics = self._channel_metrics(df, channel_window)
+                if not metrics:
+                    skipped.append({'ts_code': ts_code, 'reason': '行情数据不足或通道无法计算'})
+                    continue
+                if not metrics['is_channel_up']:
+                    continue
+                if metrics['distance_to_lower_pct'] < 0:
+                    continue
+                if metrics['distance_to_lower_pct'] > max_distance_pct:
+                    continue
+                if metrics['channel_position_pct'] > max_channel_position_pct:
+                    continue
+                if metrics['lower_slope_pct_per_day'] < min_slope_pct:
+                    continue
+                matches.append({
+                    **item,
+                    'analysis': metrics,
+                    'score': round(
+                        max(0, max_distance_pct - metrics['distance_to_lower_pct']) * 2
+                        + max(0, max_channel_position_pct - metrics['channel_position_pct']) * 0.2
+                        + metrics['lower_slope_pct_per_day'] * 100,
+                        4,
+                    ),
+                })
+            except Exception as exc:
+                skipped.append({'ts_code': ts_code, 'reason': str(exc)})
+
+        matches.sort(
+            key=lambda item: (
+                item['analysis']['distance_to_lower_pct'],
+                -item['analysis']['lower_slope_pct_per_day'],
+            )
+        )
+        return replace_nan({
+            'target_type': target_type,
+            'data_source': 'Tushare',
+            'universe_trade_date': universe_trade_date,
+            'start_date': f'{start[:4]}-{start[4:6]}-{start[6:]}',
+            'end_date': f'{end[:4]}-{end[4:6]}-{end[6:]}',
+            'filters': {
+                'channel_window': channel_window,
+                'max_distance_pct': max_distance_pct,
+                'max_channel_position_pct': max_channel_position_pct,
+                'min_slope_pct': min_slope_pct,
+                'universe_limit': universe_limit,
+                'limit': limit,
+                'adjust': adjust if target_type == 'stock' else None,
+                'codes': requested_codes,
+            },
+            'total': len(matches[:limit]),
+            'matched_total': len(matches),
+            'scanned_total': len(universe),
+            'skipped_total': len(skipped),
+            'data': matches[:limit],
+            'skipped_sample': skipped[:20],
+            'theory': [
+                '上升通道由不断抬高的高点与低点构成，代表资金愿意在更高位置承接。',
+                '靠近下通道线通常对应趋势内回调区，理论上比追高更便于设置止损。',
+                '筛选结果仍需要结合量能、市场环境与个股/ETF 基本面确认，不构成交易建议。',
+            ],
+            'query_time': datetime.now().isoformat(),
         })
 
 

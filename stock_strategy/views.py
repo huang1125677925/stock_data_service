@@ -165,6 +165,46 @@ def get_swing_analysis(request):
     except Exception as e:
         return error_response(f'波段分析失败: {str(e)}', 500)
 
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_swing_channel_candidates(request):
+    """
+    上升通道靠近下轨波段选股接口
+    功能：筛选股票或 ETF 中通道线朝上，且当前价格接近下通道线的波段候选标的。
+
+    Query Parameters:
+        target_type: 标的类型，stock 或 etf，默认 etf
+        codes: 可选，逗号分隔指定扫描代码；为空时使用 Tushare 候选池
+        start_date/end_date: 行情区间，YYYYMMDD 或 YYYY-MM-DD
+        channel_window: 通道计算窗口，默认 60，范围 20-180
+        max_distance_pct: 当前价距离下轨最大百分比，默认 3
+        max_channel_position_pct: 当前价在通道内最大位置百分比，默认 35
+        min_slope_pct: 下轨最小日斜率百分比，默认 0
+        universe_limit: 候选池扫描数量，默认 100，最大 2000
+        limit: 返回数量，默认 50，最大 500
+        adjust: 股票复权类型 qfq/hfq；ETF 忽略
+    """
+    try:
+        result = swing_analysis_service.screen_up_channel_near_lower(
+            target_type=request.GET.get('target_type', 'etf'),
+            codes=request.GET.get('codes'),
+            start_date=request.GET.get('start_date'),
+            end_date=request.GET.get('end_date'),
+            adjust=request.GET.get('adjust', ''),
+            channel_window=_get_positive_int_param(request, 'channel_window', 60, max_value=180),
+            max_distance_pct=_get_float_param(request, 'max_distance_pct', 3.0),
+            max_channel_position_pct=_get_float_param(request, 'max_channel_position_pct', 35.0),
+            min_slope_pct=_get_float_param(request, 'min_slope_pct', 0.0),
+            universe_limit=_get_positive_int_param(request, 'universe_limit', 100, max_value=2000),
+            limit=_get_positive_int_param(request, 'limit', 50, max_value=500),
+        )
+        return success_response(result)
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(f'上升通道波段筛选失败: {str(e)}', 500)
+
 @csrf_exempt
 @require_http_methods(["GET"])
 def get_index_rps(request):

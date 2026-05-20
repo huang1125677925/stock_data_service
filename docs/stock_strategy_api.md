@@ -567,7 +567,7 @@
 
 ## 个股K线形态识别API
 
-### 分析指定股票的K线形态（TA-Lib）
+### 分析指定股票或ETF的K线形态（TA-Lib）
 
 **接口地址**: `/django/api/strategy/individual-analysis/candlestick/<stock_code>/`
 
@@ -577,7 +577,8 @@
 
 | 参数名 | 类型 | 必填 | 默认值 | 说明 |
 | ----- | --- | ---- | ----- | ---- |
-| stock_code | string | 是 | - | 股票代码，路径参数 |
+| stock_code | string | 是 | - | 股票代码或ETF代码，路径参数。ETF支持 `510300.SH`，也兼容不带后缀的 `510300` |
+| type | string | 否 | - | 标的类型，支持 `stock` 或 `etf`。不传时先按股票查，查不到再按ETF查 |
 | start_date | string | 否 | - | 开始日期，格式YYYY-MM-DD |
 | end_date | string | 否 | - | 结束日期，格式YYYY-MM-DD |
 
@@ -591,6 +592,7 @@
   "data": {
     "stock_code": "600519",
     "stock_name": "贵州茅台",
+    "target_type": "stock",
     "total": 3,
     "patterns": [
       {
@@ -639,7 +641,7 @@
 ```json
 {
   "code": 404,
-  "message": "股票代码不存在: 000000",
+  "message": "股票或ETF代码不存在/无日频数据: 000000",
   "timestamp": "2024-10-26T12:00:00"
 }
 ```
@@ -654,7 +656,9 @@
 
 **说明**:
 - 识别形态使用 TA-Lib 的 CDL 系列函数，信号值定义：+100 看涨，-100 看跌，0 无信号。
-- 仅从数据库获取数据（IndividualStock、IndividualStockDaily），不进行外部数据拉取。
+- `type=stock` 时只查询股票数据；`type=etf` 时只查询ETF数据；不传 `type` 时保持自动识别。
+- 仅从数据库获取数据，不进行外部数据拉取。股票读取 IndividualStock、IndividualStockDaily；ETF读取 EtfBasic、EtfDaily。
+- ETF 输入优先按完整 ts_code 匹配；如果路径只传6位代码，会依次尝试 `.SH`、`.SZ` 后缀。
 - 输入数据按“日期”升序排列并转换为 numpy 数组后传入 TA-Lib。
 - 返回统一使用 success_response/error_response 封装；日期格式为 YYYY-MM-DD。
 
