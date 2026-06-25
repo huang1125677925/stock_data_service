@@ -351,22 +351,25 @@ class BoardRpsTradeDayTests(unittest.TestCase):
 
         self.assertEqual(start_date, "20260102")
 
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.cache")
     @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._fetch_dc_daily_range")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_dates")
     @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_board_map_by_date")
-    def test_compute_board_rps_uses_trade_day_based_start_date(
+    def test_compute_board_rps_fetches_daily_data_once_and_reuses_for_periods(
         self,
         mock_get_board_map_by_date,
-        mock_get_period_start_trade_date,
+        mock_get_period_start_trade_dates,
         mock_fetch_dc_daily_range,
+        mock_cache,
     ):
         """
-        功能：验证 compute_board_rps 调用交易日起始日计算逻辑，并使用该起始日拉取行情。
+        功能：验证 compute_board_rps 仅拉取一次区间行情，并在内存中复用给多个周期。
 
         参数：
         - mock_get_board_map_by_date: 模拟板块列表。
-        - mock_get_period_start_trade_date: 模拟交易日起始日计算。
+        - mock_get_period_start_trade_dates: 模拟多周期交易日起始日计算。
         - mock_fetch_dc_daily_range: 模拟区间日线行情。
+        - mock_cache: 模拟缓存对象。
 
         返回值：
         - 无。
@@ -378,28 +381,37 @@ class BoardRpsTradeDayTests(unittest.TestCase):
             "BK001": {"name": "机器人", "level": ""},
             "BK002": {"name": "算力", "level": ""},
         }
-        mock_get_period_start_trade_date.return_value = "20260102"
+        mock_get_period_start_trade_dates.return_value = {
+            5: "20260106",
+            20: "20260102",
+        }
         mock_fetch_dc_daily_range.return_value = pd.DataFrame(
             [
                 {"ts_code": "BK001", "trade_date": "20260102", "close": 100},
+                {"ts_code": "BK001", "trade_date": "20260106", "close": 108},
                 {"ts_code": "BK001", "trade_date": "20260109", "close": 110},
                 {"ts_code": "BK002", "trade_date": "20260102", "close": 100},
+                {"ts_code": "BK002", "trade_date": "20260106", "close": 102},
                 {"ts_code": "BK002", "trade_date": "20260109", "close": 105},
             ]
         )
+        mock_cache.get.return_value = None
 
         result_df, errors = dc_board_rps.compute_board_rps(
-            periods=[5],
+            periods=[5, 20],
             idx_type="概念板块",
             trade_date="20260109",
         )
 
         self.assertEqual(errors, [])
         self.assertIsNotNone(result_df)
-        mock_get_period_start_trade_date.assert_called_once_with("20260109", 5, token=None)
+        mock_get_period_start_trade_dates.assert_called_once_with("20260109", [5, 20], token=None)
         mock_fetch_dc_daily_range.assert_called_once_with(
             "20260102",
             "20260109",
             idx_type="概念板块",
             token=None,
         )
+        self.assertIn("RPS_5", result_df.columns)
+        self.assertIn("RPS_20", result_df.columns)
+        mock_cache.set.assert_called_once()

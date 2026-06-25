@@ -10,6 +10,7 @@ django.setup()
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple, Dict
+from django.core.cache import cache
 
 from common.tushare_proxy import call_tushare
 from common.tushare_industry import get_open_trade_dates
@@ -151,6 +152,51 @@ def _get_period_start_trade_date(end_date: str, period: int, token: Optional[str
     raise RuntimeError(f'交易日历数据不足，无法计算 {period} 个交易日回看区间')
 
 
+def _get_period_start_trade_dates(end_date: str, periods: List[int], token: Optional[str] = None) -> Dict[int, str]:
+    """
+    根据截止交易日和多个回看交易日数量，批量计算各周期的起始交易日。
+
+    Args:
+        end_date: 截止交易日，格式 YYYYMMDD。
+        periods: 回看交易日数量列表，例如 [5, 20, 60, 120, 250]。
+        token: Tushare Token。
+
+    Returns:
+        Dict[int, str]: 各周期对应的起始交易日映射，键为周期，值为 YYYYMMDD 格式日期。
+
+    Raises:
+        ValueError: 当 periods 为空，或存在非正整数周期时抛出。
+        RuntimeError: 当交易日历数据不足以覆盖最大周期时抛出。
+    """
+    if not periods:
+        raise ValueError('periods 不能为空')
+
+    invalid_periods = [period for period in periods if period <= 0]
+    if invalid_periods:
+        raise ValueError('period 必须大于 0')
+
+    unique_periods = sorted(set(periods))
+    max_period = unique_periods[-1]
+    end_dt = datetime.strptime(end_date, '%Y%m%d')
+    window_days = max(max_period * 2 + 10, 30)
+
+    for _ in range(6):
+        start_dt = end_dt - timedelta(days=window_days)
+        trade_dates = get_open_trade_dates(
+            start_dt.strftime('%Y%m%d'),
+            end_date,
+            token=token,
+        )
+        if len(trade_dates) >= max_period + 1:
+            return {
+                period: trade_dates[-(period + 1)]
+                for period in unique_periods
+            }
+        window_days *= 2
+
+    raise RuntimeError(f'交易日历数据不足，无法计算最大周期 {max_period} 个交易日回看区间')
+
+
 def _compute_period_return(df: pd.DataFrame, end_date: str) -> pd.DataFrame:
     """基于 close 计算区间收益：return_pct = (last/first - 1) * 100。"""
     if df.empty:
@@ -194,6 +240,11 @@ def compute_board_rps(
         (df, errors): df 包含 ts_code、name 及各周期的 return_{p} 与 RPS_{p} 列；errors 为错误信息列表
     """
     errors: List[str] = []
+    normalized_periods = [int(period) for period in periods]
+    if not normalized_periods:
+        errors.append('periods 不能为空')
+        return None, errors
+
     effective_level = level if idx_type == '行业板块' else None
     if effective_level and effective_level not in DC_INDUSTRY_LEVELS:
         errors.append(f'level参数错误，仅支持: {", ".join(sorted(DC_INDUSTRY_LEVELS))}')
@@ -205,6 +256,14 @@ def compute_board_rps(
         latest = _get_latest_trade_date(token)
         if latest:
             end_date = latest
+
+    cache_key = (
+        f'board_rps:{end_date}:{idx_type or ""}:{effective_level or ""}:'
+        f'{",".join(map(str, normalized_periods))}'
+    )
+    cached_result = cache.get(cache_key)
+    if cached_result:
+        return cached_result
 
     # 获取板块映射
     board_map = _get_board_map_by_date(end_date, token, idx_type=idx_type, level=effective_level)
@@ -218,37 +277,55 @@ def compute_board_rps(
         'level': [board_map[k]['level'] for k in board_map.keys()],
     })
 
-    for p in periods:
+    try:
+        period_start_dates = _get_period_start_trade_dates(end_date, normalized_periods, token=token)
+    except Exception as e:
+        errors.append(f'计算交易日起始区间失败: {str(e)}')
+        return None, errors
+
+    earliest_start_date = min(period_start_dates.values())
+    daily_df = _fetch_dc_daily_range(earliest_start_date, end_date, idx_type=idx_type, token=token)
+    if daily_df.empty:
+        errors.append(f'dc_daily返回空数据: {earliest_start_date}-{end_date}')
+        return None, errors
+
+    daily_df = daily_df[daily_df['ts_code'].isin(board_map.keys())].copy()
+    if daily_df.empty:
+        errors.append(f'dc_daily无匹配板块数据: {earliest_start_date}-{end_date}')
+        return None, errors
+
+    daily_df = daily_df.sort_values(['ts_code', 'trade_date'])
+
+    for p in normalized_periods:
         try:
-            start_date = _get_period_start_trade_date(end_date, p, token=token)
-            # 获取区间内的日线数据
-            daily_df = _fetch_dc_daily_range(start_date, end_date, idx_type=idx_type, token=token)
-            if daily_df.empty:
+            start_date = period_start_dates[p]
+            period_df = daily_df[daily_df['trade_date'] >= start_date]
+            if period_df.empty:
                 errors.append(f'dc_daily返回空数据: period={p}, {start_date}-{end_date}')
-                # 继续其他周期
                 continue
-            # 仅保留当前板块集合的数据
-            daily_df = daily_df[daily_df['ts_code'].isin(board_map.keys())]
-            # 计算区间收益
-            rets = _compute_period_return(daily_df, end_date)
-            # 合并到结果
-            result_df = result_df.merge(rets, on='ts_code', how='right', suffixes=(None, None))
-            # 列重命名 return_pct -> return_{p}
-            result_df.rename(columns={'return_pct': f'return_{p}'}, inplace=True)
-            # 计算RPS
+
+            rets = _compute_period_return(period_df, end_date)
+            if rets.empty:
+                errors.append(f'计算区间收益为空: period={p}, {start_date}-{end_date}')
+                continue
+
+            return_map = rets.set_index('ts_code')['return_pct']
+            result_df[f'return_{p}'] = result_df['ts_code'].map(return_map)
             result_df[f'RPS_{p}'] = _apply_rps(result_df[f'return_{p}'].fillna(-999))
         except Exception as e:
             errors.append(f'计算周期{p}失败: {str(e)}')
 
     # 排序：优先第一个周期，其次其他周期之和
-    sort_cols = [f'RPS_{periods[0]}'] if periods else []
+    sort_cols = [f'RPS_{normalized_periods[0]}'] if normalized_periods else []
     if sort_cols:
         try:
             result_df = result_df.sort_values(by=sort_cols, ascending=False)
         except Exception:
             pass
 
-    return result_df, errors
+    result = (result_df, errors)
+    cache.set(cache_key, result, 900)
+    return result
 
 if __name__ == '__main__':
     # 测试：计算5日、20日、60日RPS，截止20240930
