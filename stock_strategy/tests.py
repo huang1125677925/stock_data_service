@@ -1,9 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
 from .auction_selection_strategy import AuctionSelectionStrategyService
 from .limit_board_service import LimitBoardDataService
+from scheduled_tasks.stock_data_query_tasks import dc_board_rps
 
 
 class FakeTusharePro:
@@ -303,3 +305,101 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(result["concept_trends"][0]["concept_name"], "机器人")
         lifecycle_by_code = {item["ts_code"]: item for item in result["stock_lifecycles"]}
         self.assertEqual(lifecycle_by_code["000001.SZ"]["lifecycle_stage"], "二板确认")
+
+
+class BoardRpsTradeDayTests(unittest.TestCase):
+    """
+    组件：板块 RPS 交易日回看测试。
+
+    功能：
+    - 验证板块 RPS 的起始日期按交易日历回推，而不是按自然日回推。
+
+    参数：
+    - 无。
+
+    返回值：
+    - 无。
+
+    事件：
+    - 使用 mock 隔离交易日历、板块列表与日线行情依赖。
+    """
+
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.get_open_trade_dates")
+    def test_get_period_start_trade_date_uses_trade_calendar(self, mock_get_open_trade_dates):
+        """
+        功能：验证起始交易日会根据交易日历回推 period 个交易日。
+
+        参数：
+        - mock_get_open_trade_dates: 模拟交易日历查询结果。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_get_open_trade_dates.return_value = [
+            "20260102",
+            "20260105",
+            "20260106",
+            "20260107",
+            "20260108",
+            "20260109",
+        ]
+
+        start_date = dc_board_rps._get_period_start_trade_date("20260109", 5)
+
+        self.assertEqual(start_date, "20260102")
+
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._fetch_dc_daily_range")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_board_map_by_date")
+    def test_compute_board_rps_uses_trade_day_based_start_date(
+        self,
+        mock_get_board_map_by_date,
+        mock_get_period_start_trade_date,
+        mock_fetch_dc_daily_range,
+    ):
+        """
+        功能：验证 compute_board_rps 调用交易日起始日计算逻辑，并使用该起始日拉取行情。
+
+        参数：
+        - mock_get_board_map_by_date: 模拟板块列表。
+        - mock_get_period_start_trade_date: 模拟交易日起始日计算。
+        - mock_fetch_dc_daily_range: 模拟区间日线行情。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_get_board_map_by_date.return_value = {
+            "BK001": {"name": "机器人", "level": ""},
+            "BK002": {"name": "算力", "level": ""},
+        }
+        mock_get_period_start_trade_date.return_value = "20260102"
+        mock_fetch_dc_daily_range.return_value = pd.DataFrame(
+            [
+                {"ts_code": "BK001", "trade_date": "20260102", "close": 100},
+                {"ts_code": "BK001", "trade_date": "20260109", "close": 110},
+                {"ts_code": "BK002", "trade_date": "20260102", "close": 100},
+                {"ts_code": "BK002", "trade_date": "20260109", "close": 105},
+            ]
+        )
+
+        result_df, errors = dc_board_rps.compute_board_rps(
+            periods=[5],
+            idx_type="概念板块",
+            trade_date="20260109",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        mock_get_period_start_trade_date.assert_called_once_with("20260109", 5, token=None)
+        mock_fetch_dc_daily_range.assert_called_once_with(
+            "20260102",
+            "20260109",
+            idx_type="概念板块",
+            token=None,
+        )

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Tuple, Dict
 
 from common.tushare_proxy import call_tushare
+from common.tushare_industry import get_open_trade_dates
 
 
 def _ensure_date_str(date: Optional[str]) -> str:
@@ -114,6 +115,42 @@ def _fetch_dc_daily_range(start_date: str, end_date: str, idx_type: Optional[str
     return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
 
 
+def _get_period_start_trade_date(end_date: str, period: int, token: Optional[str] = None) -> str:
+    """
+    根据截止交易日和回看交易日数量，计算对应的起始交易日。
+
+    Args:
+        end_date: 截止交易日，格式 YYYYMMDD。
+        period: 回看交易日数量，例如 5、20、60、120、250。
+        token: Tushare Token。
+
+    Returns:
+        str: 起始交易日，格式 YYYYMMDD。
+
+    Raises:
+        ValueError: 当 period 非正整数时抛出。
+        RuntimeError: 当交易日历数据不足以覆盖目标周期时抛出。
+    """
+    if period <= 0:
+        raise ValueError('period 必须大于 0')
+
+    end_dt = datetime.strptime(end_date, '%Y%m%d')
+    window_days = max(period * 2 + 10, 30)
+
+    for _ in range(6):
+        start_dt = end_dt - timedelta(days=window_days)
+        trade_dates = get_open_trade_dates(
+            start_dt.strftime('%Y%m%d'),
+            end_date,
+            token=token,
+        )
+        if len(trade_dates) >= period + 1:
+            return trade_dates[-(period + 1)]
+        window_days *= 2
+
+    raise RuntimeError(f'交易日历数据不足，无法计算 {period} 个交易日回看区间')
+
+
 def _compute_period_return(df: pd.DataFrame, end_date: str) -> pd.DataFrame:
     """基于 close 计算区间收益：return_pct = (last/first - 1) * 100。"""
     if df.empty:
@@ -147,7 +184,7 @@ def compute_board_rps(
     使用 Tushare dc_index/dc_daily 计算东方财富板块的 RPS 排名。
 
     Args:
-        periods: 周期列表（单位：自然日），例如 [5, 20, 60]
+        periods: 周期列表（单位：交易日），例如 [5, 20, 60]
         idx_type: 板块类型（dc_daily 的 idx_type 参数），如：概念板块、行业板块、地域板块
         trade_date: 计算截止交易日（YYYYMMDD），为空时自动获取最新交易日
         level: 东财行业层级，仅在 idx_type=行业板块 时使用
@@ -183,8 +220,7 @@ def compute_board_rps(
 
     for p in periods:
         try:
-            start_dt = datetime.strptime(end_date, '%Y%m%d') - timedelta(days=p)
-            start_date = start_dt.strftime('%Y%m%d')
+            start_date = _get_period_start_trade_date(end_date, p, token=token)
             # 获取区间内的日线数据
             daily_df = _fetch_dc_daily_range(start_date, end_date, idx_type=idx_type, token=token)
             if daily_df.empty:

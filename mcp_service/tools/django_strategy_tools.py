@@ -416,7 +416,7 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
         查询东方财富板块 RPS 排名，参数与 HTTP 接口一致。
 
         Args:
-            periods: 逗号分隔周期（自然日），默认 5,20,60
+            periods: 逗号分隔周期（交易日），默认 5,20,60
             idx_type: 板块类型，如 概念板块、行业板块、地域板块
             trade_date: 截止交易日 YYYYMMDD，空则取 dc_index 最新交易日
             token: Tushare Token（可选）

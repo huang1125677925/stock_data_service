@@ -212,7 +212,7 @@ def get_index_rps(request):
     获取指数/板块RPS强度排名数据（基于 Tushare 东方财富板块接口）
     
     Query Parameters:
-        periods (str): 时间周期，多个周期用逗号分隔，如 "5,20,60"
+        periods (str): 回看交易日周期，多个周期用逗号分隔，如 "5,20,60"
         idx_type (str): 板块类型：概念板块、行业板块、地域板块（默认：概念板块）
         level (str): 东财行业层级，仅 idx_type=行业板块 时生效
         trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最新交易日
