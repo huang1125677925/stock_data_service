@@ -234,7 +234,7 @@ def compute_dc_board_member_rps(
     meta["board_name"] = board_name or board_ts_code
 
     members_df = members_df.drop_duplicates(subset=["con_code"]).copy()
-    result_df = members_df.rename(columns={"con_code": "ts_code"})[["ts_code", "name"]]
+    result_df = members_df[["con_code", "name"]].rename(columns={"con_code": "ts_code"})
     stock_codes = result_df["ts_code"].dropna().astype(str).tolist()
     meta["member_count"] = len(stock_codes)
 
