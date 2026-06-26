@@ -40,7 +40,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'drf_spectacular',
-    'django_crontab',
     'industry_stock_data',
     'cctv_news',
     'stock_strategy',
@@ -291,34 +290,12 @@ STOCK_CACHE_TIMEOUT = int(os.environ.get('STOCK_CACHE_TIMEOUT', 300))
 STOCK_REQUEST_TIMEOUT = int(os.environ.get('STOCK_REQUEST_TIMEOUT', 30))
 STOCK_MAX_RETRIES = int(os.environ.get('STOCK_MAX_RETRIES', 3))
 
-# 定时任务配置
-# CRONJOBS = [
-#     # 每天早上9:00更新个股列表
-#     ('0 9 * * *', 'scheduled_tasks.individual_stock_tasks.fetch_individual_stocks'),
-#     # 交易时间内每5分钟更新个股实时行情（9:30-11:30, 13:00-15:00）
-#     ('*/5 9-11,13-15 * * 1-5', 'scheduled_tasks.individual_stock_tasks.update_individual_stock_realtime'),
-#     # 每天收盘后更新个股日频数据
-#     ('30 15 * * 1-5', 'scheduled_tasks.individual_stock_tasks.update_individual_stock_daily_data'),
-# ]
-
 # API限流配置
 API_RATE_LIMIT = os.environ.get('API_RATE_LIMIT', '100/hour')
 
 # 创建日志目录
 log_dir = BASE_DIR / 'logs'
 log_dir.mkdir(exist_ok=True)
-
-# Django Crontab配置
-CRONJOBS = [
-    # 默认的系统维护任务
-    ('0 2 * * *', 'scheduled_tasks.tasks.cleanup_old_logs'),  # 每天凌晨2点清理旧日志
-    ('*/30 * * * *', 'scheduled_tasks.tasks.check_task_status'),  # 每30分钟检查任务状态
-]
-
-# Crontab配置
-CRONTAB_LOCK_JOBS = True
-CRONTAB_COMMAND_PREFIX = f'PYTHONPATH={BASE_DIR}'
-CRONTAB_DJANGO_SETTINGS_MODULE = 'stock_data_service.settings'
 
 # 注释迁移插件配置
 DCM_COMMENT_KEY = 'verbose_name'  # 将字段 verbose_name 作为列注释来源

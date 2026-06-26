@@ -9,7 +9,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
 django.setup()
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from django.core.cache import cache
 
 from common.tushare_proxy import call_tushare
