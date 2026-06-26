@@ -217,6 +217,10 @@ def get_index_rps(request):
         level (str): 东财行业层级，仅 idx_type=行业板块 时生效
         trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最新交易日
         token (str): Tushare Token（覆盖环境变量）
+
+    默认附加字段:
+        pct_change (float): 截止交易日当天涨跌幅
+        RPS_today (float): 按当天涨跌幅计算的横向 RPS
     
     Returns:
         JSON响应
@@ -241,7 +245,8 @@ def get_index_rps(request):
         except ValueError:
             return error_response('周期参数格式错误，应为逗号分隔的整数', 400)
         
-        # 使用 scheduled_tasks 的 Tushare 服务实时获取数据并计算RPS
+        # 使用 scheduled_tasks 的 Tushare 服务实时获取数据并计算RPS，
+        # 默认附带当天涨跌幅及其 RPS。
         df, errors = compute_board_rps(
             periods=periods,
             idx_type=idx_type,

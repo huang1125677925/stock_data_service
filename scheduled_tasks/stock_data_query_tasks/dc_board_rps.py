@@ -1,7 +1,6 @@
 import sys
 import os
 from pathlib import Path
-from tracemalloc import start
 import django
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
@@ -74,24 +73,31 @@ def _get_board_map_by_date(
 
 
 def _fetch_dc_daily_trade_date(trade_date: str, idx_type: Optional[str], token: Optional[str]) -> pd.DataFrame:
-    """按单个交易日获取 dc_daily 数据，仅保留 ts_code/trade_date/close。"""
+    """按单个交易日获取 dc_daily 数据，仅保留计算 RPS 需要的字段。"""
     params = {'trade_date': trade_date}
     if idx_type:
         params['idx_type'] = idx_type
-    resp = call_tushare('dc_daily', params=params, token=token, fields='ts_code,trade_date,close', use_query=False)
+    resp = call_tushare(
+        'dc_daily',
+        params=params,
+        token=token,
+        fields='ts_code,trade_date,close,pct_change',
+        use_query=False,
+    )
     if resp.get('code') != 200:
-        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close', 'pct_change'])
 
     records = (resp.get('data') or {}).get('records') or []
     if not records:
-        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close', 'pct_change'])
 
     out = pd.DataFrame.from_records(records)
     if out.empty:
-        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close', 'pct_change'])
 
     out['trade_date'] = out['trade_date'].astype(str)
     out['close'] = pd.to_numeric(out['close'], errors='coerce')
+    out['pct_change'] = pd.to_numeric(out.get('pct_change'), errors='coerce')
     return out.dropna(subset=['ts_code', 'trade_date', 'close'])
 
 
@@ -181,9 +187,9 @@ def _build_close_snapshot_map(
     idx_type: Optional[str],
     token: Optional[str],
     board_codes: List[str],
-) -> Dict[str, pd.Series]:
+) -> Dict[str, pd.DataFrame]:
     """
-    按交易日批量拉取板块收盘快照，并构建 trade_date -> close Series 映射。
+    按交易日批量拉取板块日快照，并构建 trade_date -> snapshot DataFrame 映射。
 
     Args:
         trade_dates: 需要拉取的交易日列表，格式 YYYYMMDD。
@@ -192,9 +198,9 @@ def _build_close_snapshot_map(
         board_codes: 当前结果集对应的板块代码列表。
 
     Returns:
-        Dict[str, pd.Series]: 键为交易日，值为以 ts_code 为索引、close 为值的 Series。
+        Dict[str, pd.DataFrame]: 键为交易日，值为以 ts_code 为索引，包含 close/pct_change 的 DataFrame。
     """
-    snapshot_map: Dict[str, pd.Series] = {}
+    snapshot_map: Dict[str, pd.DataFrame] = {}
     board_code_set = set(board_codes)
 
     for trade_date in sorted(set(trade_dates)):
@@ -204,9 +210,15 @@ def _build_close_snapshot_map(
         filtered_df = daily_df[daily_df['ts_code'].isin(board_code_set)].copy()
         if filtered_df.empty:
             continue
-        snapshot_map[trade_date] = filtered_df.drop_duplicates(subset=['ts_code']).set_index('ts_code')['close']
+        if 'pct_change' not in filtered_df.columns:
+            filtered_df['pct_change'] = pd.NA
+        snapshot_map[trade_date] = filtered_df.drop_duplicates(subset=['ts_code']).set_index('ts_code')[
+            ['close', 'pct_change']
+        ]
 
     return snapshot_map
+
+
 def _apply_rps(values: pd.Series) -> pd.Series:
     """计算 RPS = (1 - rank/total) * 100。"""
     ranks = values.rank(ascending=False, method='min')
@@ -232,7 +244,7 @@ def compute_board_rps(
         token: 传递给 Tushare 的 token
 
     Returns:
-        (df, errors): df 包含 ts_code、name 及各周期的 return_{p} 与 RPS_{p} 列；errors 为错误信息列表
+        (df, errors): df 包含 ts_code、name、pct_change、RPS_today 及各周期的 return_{p} 与 RPS_{p} 列；errors 为错误信息列表
     """
     errors: List[str] = []
     normalized_periods = [int(period) for period in periods]
@@ -253,7 +265,7 @@ def compute_board_rps(
             end_date = latest
 
     cache_key = (
-        f'board_rps:{end_date}:{idx_type or ""}:{effective_level or ""}:'
+        f'board_rps:v2:{end_date}:{idx_type or ""}:{effective_level or ""}:'
         f'{",".join(map(str, normalized_periods))}'
     )
     cached_result = cache.get(cache_key)
@@ -279,28 +291,30 @@ def compute_board_rps(
         return None, errors
 
     snapshot_dates = [end_date] + list(period_start_dates.values())
-    close_snapshot_map = _build_close_snapshot_map(
+    daily_snapshot_map = _build_close_snapshot_map(
         trade_dates=snapshot_dates,
         idx_type=idx_type,
         token=token,
         board_codes=list(board_map.keys()),
     )
-    if end_date not in close_snapshot_map:
+    if end_date not in daily_snapshot_map:
         errors.append(f'dc_daily返回空数据: trade_date={end_date}')
         return None, errors
 
-    end_close_map = close_snapshot_map[end_date]
-    result_df['close_end'] = result_df['ts_code'].map(end_close_map)
+    end_snapshot = daily_snapshot_map[end_date]
+    result_df['close_end'] = result_df['ts_code'].map(end_snapshot['close'])
+    result_df['pct_change'] = result_df['ts_code'].map(end_snapshot['pct_change'])
+    result_df['RPS_today'] = _apply_rps(result_df['pct_change'].fillna(-999))
 
     for p in normalized_periods:
         try:
             start_date = period_start_dates[p]
-            start_close_map = close_snapshot_map.get(start_date)
-            if start_close_map is None or start_close_map.empty:
+            start_snapshot = daily_snapshot_map.get(start_date)
+            if start_snapshot is None or start_snapshot.empty:
                 errors.append(f'dc_daily返回空数据: period={p}, trade_date={start_date}')
                 continue
 
-            result_df[f'close_{p}'] = result_df['ts_code'].map(start_close_map)
+            result_df[f'close_{p}'] = result_df['ts_code'].map(start_snapshot['close'])
             result_df[f'return_{p}'] = (
                 (result_df['close_end'] / result_df[f'close_{p}'] - 1.0) * 100.0
             )

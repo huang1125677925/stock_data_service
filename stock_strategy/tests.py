@@ -388,20 +388,20 @@ class BoardRpsTradeDayTests(unittest.TestCase):
         mock_fetch_dc_daily_trade_date.side_effect = [
             pd.DataFrame(
                 [
-                    {"ts_code": "BK001", "trade_date": "20260102", "close": 100},
-                    {"ts_code": "BK002", "trade_date": "20260102", "close": 100},
+                    {"ts_code": "BK001", "trade_date": "20260102", "close": 100, "pct_change": 0.0},
+                    {"ts_code": "BK002", "trade_date": "20260102", "close": 100, "pct_change": 0.0},
                 ]
             ),
             pd.DataFrame(
                 [
-                    {"ts_code": "BK001", "trade_date": "20260106", "close": 108},
-                    {"ts_code": "BK002", "trade_date": "20260106", "close": 102},
+                    {"ts_code": "BK001", "trade_date": "20260106", "close": 108, "pct_change": 0.0},
+                    {"ts_code": "BK002", "trade_date": "20260106", "close": 102, "pct_change": 0.0},
                 ]
             ),
             pd.DataFrame(
                 [
-                    {"ts_code": "BK001", "trade_date": "20260109", "close": 110},
-                    {"ts_code": "BK002", "trade_date": "20260109", "close": 105},
+                    {"ts_code": "BK001", "trade_date": "20260109", "close": 110, "pct_change": 5.0},
+                    {"ts_code": "BK002", "trade_date": "20260109", "close": 105, "pct_change": 2.0},
                 ]
             ),
         ]
@@ -426,4 +426,10 @@ class BoardRpsTradeDayTests(unittest.TestCase):
         )
         self.assertIn("RPS_5", result_df.columns)
         self.assertIn("RPS_20", result_df.columns)
+        self.assertIn("pct_change", result_df.columns)
+        self.assertIn("RPS_today", result_df.columns)
+        result_map = result_df.set_index("ts_code")
+        self.assertEqual(result_map.loc["BK001", "pct_change"], 5.0)
+        self.assertEqual(result_map.loc["BK002", "pct_change"], 2.0)
+        self.assertGreater(result_map.loc["BK001", "RPS_today"], result_map.loc["BK002", "RPS_today"])
         mock_cache.set.assert_called_once()
