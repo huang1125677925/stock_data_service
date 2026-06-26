@@ -90,6 +90,39 @@
 }
 ```
 
+### 获取东财板块成分股RPS排名
+
+**接口地址**: `/django/api/strategy/dc-board-member-rps/`
+
+**请求方式**: GET
+
+**数据来源**: Tushare `dc_member` + `dc_index` + `daily`
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| `ts_code` | string | 否 | `BK1462.DC` | 东财板块代码 |
+| `periods` | string | 否 | `5,20,60` | 回看交易日周期，多个周期用逗号分隔 |
+| `trade_date` | string | 否 | 最新交易日 | 截止交易日，格式 `YYYYMMDD` |
+| `token` | string | 否 | 环境变量 | Tushare Token，传入时覆盖环境变量 |
+
+**响应字段摘要**:
+
+- `board_ts_code`: 本次查询的东财板块代码
+- `board_name`: 板块名称
+- `member_count`: 板块成分股数量
+- `data[].ts_code`: 成分股 Tushare 代码
+- `data[].name`: 成分股名称
+- `data[].pct_change`: 截止交易日当天涨跌幅
+- `data[].RPS_today`: 按当天涨跌幅计算的横向 RPS
+- `data[].return_{period}`: 对应周期区间收益率
+- `data[].RPS_{period}`: 对应周期区间收益率的 RPS
+
+**详细文档**:
+
+- 参见 `docs/dc_board_member_rps_api.md`
+
 ### 获取历史RPS数据
 
 **接口地址**: `/api/strategy/historical-rps/`

@@ -6,6 +6,7 @@ import pandas as pd
 from .auction_selection_strategy import AuctionSelectionStrategyService
 from .limit_board_service import LimitBoardDataService
 from scheduled_tasks.stock_data_query_tasks import dc_board_rps
+from scheduled_tasks.stock_data_query_tasks import dc_board_member_rps
 
 
 class FakeTusharePro:
@@ -432,4 +433,114 @@ class BoardRpsTradeDayTests(unittest.TestCase):
         self.assertEqual(result_map.loc["BK001", "pct_change"], 5.0)
         self.assertEqual(result_map.loc["BK002", "pct_change"], 2.0)
         self.assertGreater(result_map.loc["BK001", "RPS_today"], result_map.loc["BK002", "RPS_today"])
+        mock_cache.set.assert_called_once()
+
+
+class DcBoardMemberRpsTests(unittest.TestCase):
+    """
+    组件：东财板块成分股 RPS 测试。
+
+    功能：
+    - 验证指定板块成分股 RPS 计算会先读取成分股，再按交易日快照拉取成分股日线并计算多周期 RPS。
+
+    参数：
+    - 无。
+
+    返回值：
+    - 无。
+
+    事件：
+    - 使用 mock 隔离成分股、板块名称、交易日历和日线行情依赖。
+    """
+
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps.cache")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_stock_daily_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._get_period_start_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_dc_board_name")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_dc_board_members")
+    def test_compute_dc_board_member_rps_fetches_member_snapshots_for_periods(
+        self,
+        mock_fetch_dc_board_members,
+        mock_fetch_dc_board_name,
+        mock_get_period_start_trade_dates,
+        mock_fetch_stock_daily_trade_date,
+        mock_cache,
+    ):
+        """
+        功能：验证 compute_dc_board_member_rps 会按成分股集合和各交易日快照计算 RPS。
+
+        参数：
+        - mock_fetch_dc_board_members: 模拟板块成分股列表。
+        - mock_fetch_dc_board_name: 模拟板块名称查询。
+        - mock_get_period_start_trade_dates: 模拟多周期交易日起始日计算。
+        - mock_fetch_stock_daily_trade_date: 模拟成分股日线快照。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_fetch_dc_board_members.return_value = pd.DataFrame(
+            [
+                {"trade_date": "20260109", "ts_code": "BK1462.DC", "con_code": "000001.SZ", "name": "机器人一号"},
+                {"trade_date": "20260109", "ts_code": "BK1462.DC", "con_code": "000002.SZ", "name": "机器人二号"},
+            ]
+        )
+        mock_fetch_dc_board_name.return_value = "机器人概念"
+        mock_get_period_start_trade_dates.return_value = {
+            5: "20260106",
+            20: "20260102",
+        }
+        mock_fetch_stock_daily_trade_date.side_effect = [
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260106", "close": 11.0, "pct_change": 0.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260106", "close": 10.2, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260109", "close": 12.0, "pct_change": 5.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260109", "close": 10.5, "pct_change": 1.5},
+                ]
+            ),
+        ]
+        mock_cache.get.return_value = None
+
+        result_df, meta, errors = dc_board_member_rps.compute_dc_board_member_rps(
+            periods=[5, 20],
+            board_ts_code="BK1462.DC",
+            trade_date="20260109",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        self.assertEqual(meta["board_name"], "机器人概念")
+        self.assertEqual(meta["member_count"], 2)
+        mock_get_period_start_trade_dates.assert_called_once_with("20260109", [5, 20], token=None)
+        self.assertEqual(
+            mock_fetch_stock_daily_trade_date.call_args_list,
+            [
+                unittest.mock.call("20260102", stock_codes=["000001.SZ", "000002.SZ"], token=None),
+                unittest.mock.call("20260106", stock_codes=["000001.SZ", "000002.SZ"], token=None),
+                unittest.mock.call("20260109", stock_codes=["000001.SZ", "000002.SZ"], token=None),
+            ],
+        )
+        self.assertIn("RPS_5", result_df.columns)
+        self.assertIn("RPS_20", result_df.columns)
+        self.assertIn("pct_change", result_df.columns)
+        self.assertIn("RPS_today", result_df.columns)
+        result_map = result_df.set_index("ts_code")
+        self.assertEqual(result_map.loc["000001.SZ", "pct_change"], 5.0)
+        self.assertEqual(result_map.loc["000002.SZ", "pct_change"], 1.5)
+        self.assertGreater(result_map.loc["000001.SZ", "RPS_5"], result_map.loc["000002.SZ", "RPS_5"])
+        self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
