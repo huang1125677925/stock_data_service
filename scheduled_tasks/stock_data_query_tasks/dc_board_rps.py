@@ -9,7 +9,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
 django.setup()
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Dict
 from django.core.cache import cache
 
 from common.tushare_proxy import call_tushare
@@ -36,23 +36,6 @@ def _get_latest_trade_date(token: Optional[str] = None) -> Optional[str]:
         return max(dates) if dates else None
     except Exception:
         return None
-
-
-def _chunk_date_ranges(start_date: str, end_date: str, chunk_days: int = 4) -> List[Tuple[str, str]]:
-    """将区间拆分为小块，避免 dc_daily 单次返回超过 2000 条。"""
-    start = datetime.strptime(start_date, '%Y%m%d')
-    end = datetime.strptime(end_date, '%Y%m%d')
-    chunks = []
-    cur = start
-    while cur <= end:
-        nxt = cur + timedelta(days=chunk_days - 1)
-        if nxt > end:
-            nxt = end
-        chunks.append((cur.strftime('%Y%m%d'), nxt.strftime('%Y%m%d')))
-        cur = nxt + timedelta(days=1)
-    return chunks
-
-
 DC_INDUSTRY_LEVELS = {'东财一级行业', '东财二级行业', '东财三级行业'}
 
 
@@ -90,30 +73,26 @@ def _get_board_map_by_date(
     return mapping
 
 
-def _fetch_dc_daily_range(start_date: str, end_date: str, idx_type: Optional[str], token: Optional[str]) -> pd.DataFrame:
-    """按日期区间分块获取 dc_daily 数据，仅保留 ts_code/trade_date/close。"""
-    frames = []
-    for s, e in _chunk_date_ranges(start_date, end_date, chunk_days=4):
-        params = {'start_date': s, 'end_date': e}
-        if idx_type:
-            params['idx_type'] = idx_type
-        resp = call_tushare('dc_daily', params=params, token=token, fields='ts_code,trade_date,close', use_query=False)
-        if resp.get('code') != 200:
-            # 忽略单块错误，继续获取其他块
-            continue
-        records = (resp.get('data') or {}).get('records') or []
-        if not records:
-            continue
-        df = pd.DataFrame.from_records(records)
-        if not df.empty:
-            frames.append(df)
-    if frames:
-        out = pd.concat(frames, ignore_index=True)
-        # 确保类型正确
-        out['trade_date'] = out['trade_date'].astype(str)
-        out['close'] = pd.to_numeric(out['close'], errors='coerce')
-        return out.dropna(subset=['ts_code', 'trade_date', 'close'])
-    return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+def _fetch_dc_daily_trade_date(trade_date: str, idx_type: Optional[str], token: Optional[str]) -> pd.DataFrame:
+    """按单个交易日获取 dc_daily 数据，仅保留 ts_code/trade_date/close。"""
+    params = {'trade_date': trade_date}
+    if idx_type:
+        params['idx_type'] = idx_type
+    resp = call_tushare('dc_daily', params=params, token=token, fields='ts_code,trade_date,close', use_query=False)
+    if resp.get('code') != 200:
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+
+    records = (resp.get('data') or {}).get('records') or []
+    if not records:
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        return pd.DataFrame(columns=['ts_code', 'trade_date', 'close'])
+
+    out['trade_date'] = out['trade_date'].astype(str)
+    out['close'] = pd.to_numeric(out['close'], errors='coerce')
+    return out.dropna(subset=['ts_code', 'trade_date', 'close'])
 
 
 def _get_period_start_trade_date(end_date: str, period: int, token: Optional[str] = None) -> str:
@@ -197,21 +176,37 @@ def _get_period_start_trade_dates(end_date: str, periods: List[int], token: Opti
     raise RuntimeError(f'交易日历数据不足，无法计算最大周期 {max_period} 个交易日回看区间')
 
 
-def _compute_period_return(df: pd.DataFrame, end_date: str) -> pd.DataFrame:
-    """基于 close 计算区间收益：return_pct = (last/first - 1) * 100。"""
-    if df.empty:
-        return pd.DataFrame(columns=['ts_code', 'return_pct'])
-    # 按 ts_code, trade_date 排序
-    df = df.sort_values(['ts_code', 'trade_date'])
-    # 选择每个 ts_code 的首尾有效收盘
-    first_close = df.groupby('ts_code')['close'].first()
-    last_close = df.groupby('ts_code')['close'].last()
-    ret = (last_close / first_close - 1.0) * 100.0
-    out = ret.reset_index()
-    out.columns = ['ts_code', 'return_pct']
-    return out
+def _build_close_snapshot_map(
+    trade_dates: List[str],
+    idx_type: Optional[str],
+    token: Optional[str],
+    board_codes: List[str],
+) -> Dict[str, pd.Series]:
+    """
+    按交易日批量拉取板块收盘快照，并构建 trade_date -> close Series 映射。
 
+    Args:
+        trade_dates: 需要拉取的交易日列表，格式 YYYYMMDD。
+        idx_type: 板块类型。
+        token: Tushare Token。
+        board_codes: 当前结果集对应的板块代码列表。
 
+    Returns:
+        Dict[str, pd.Series]: 键为交易日，值为以 ts_code 为索引、close 为值的 Series。
+    """
+    snapshot_map: Dict[str, pd.Series] = {}
+    board_code_set = set(board_codes)
+
+    for trade_date in sorted(set(trade_dates)):
+        daily_df = _fetch_dc_daily_trade_date(trade_date, idx_type=idx_type, token=token)
+        if daily_df.empty:
+            continue
+        filtered_df = daily_df[daily_df['ts_code'].isin(board_code_set)].copy()
+        if filtered_df.empty:
+            continue
+        snapshot_map[trade_date] = filtered_df.drop_duplicates(subset=['ts_code']).set_index('ts_code')['close']
+
+    return snapshot_map
 def _apply_rps(values: pd.Series) -> pd.Series:
     """计算 RPS = (1 - rank/total) * 100。"""
     ranks = values.rank(ascending=False, method='min')
@@ -283,37 +278,38 @@ def compute_board_rps(
         errors.append(f'计算交易日起始区间失败: {str(e)}')
         return None, errors
 
-    earliest_start_date = min(period_start_dates.values())
-    daily_df = _fetch_dc_daily_range(earliest_start_date, end_date, idx_type=idx_type, token=token)
-    if daily_df.empty:
-        errors.append(f'dc_daily返回空数据: {earliest_start_date}-{end_date}')
+    snapshot_dates = [end_date] + list(period_start_dates.values())
+    close_snapshot_map = _build_close_snapshot_map(
+        trade_dates=snapshot_dates,
+        idx_type=idx_type,
+        token=token,
+        board_codes=list(board_map.keys()),
+    )
+    if end_date not in close_snapshot_map:
+        errors.append(f'dc_daily返回空数据: trade_date={end_date}')
         return None, errors
 
-    daily_df = daily_df[daily_df['ts_code'].isin(board_map.keys())].copy()
-    if daily_df.empty:
-        errors.append(f'dc_daily无匹配板块数据: {earliest_start_date}-{end_date}')
-        return None, errors
-
-    daily_df = daily_df.sort_values(['ts_code', 'trade_date'])
+    end_close_map = close_snapshot_map[end_date]
+    result_df['close_end'] = result_df['ts_code'].map(end_close_map)
 
     for p in normalized_periods:
         try:
             start_date = period_start_dates[p]
-            period_df = daily_df[daily_df['trade_date'] >= start_date]
-            if period_df.empty:
-                errors.append(f'dc_daily返回空数据: period={p}, {start_date}-{end_date}')
+            start_close_map = close_snapshot_map.get(start_date)
+            if start_close_map is None or start_close_map.empty:
+                errors.append(f'dc_daily返回空数据: period={p}, trade_date={start_date}')
                 continue
 
-            rets = _compute_period_return(period_df, end_date)
-            if rets.empty:
-                errors.append(f'计算区间收益为空: period={p}, {start_date}-{end_date}')
-                continue
-
-            return_map = rets.set_index('ts_code')['return_pct']
-            result_df[f'return_{p}'] = result_df['ts_code'].map(return_map)
+            result_df[f'close_{p}'] = result_df['ts_code'].map(start_close_map)
+            result_df[f'return_{p}'] = (
+                (result_df['close_end'] / result_df[f'close_{p}'] - 1.0) * 100.0
+            )
             result_df[f'RPS_{p}'] = _apply_rps(result_df[f'return_{p}'].fillna(-999))
         except Exception as e:
             errors.append(f'计算周期{p}失败: {str(e)}')
+
+    drop_columns = ['close_end'] + [f'close_{p}' for p in normalized_periods if f'close_{p}' in result_df.columns]
+    result_df = result_df.drop(columns=drop_columns, errors='ignore')
 
     # 排序：优先第一个周期，其次其他周期之和
     sort_cols = [f'RPS_{normalized_periods[0]}'] if normalized_periods else []
