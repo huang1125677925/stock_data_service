@@ -565,10 +565,12 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
     """
 
     @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.get_open_trade_dates")
     @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
     def test_get_industry_ma_breadth_uses_precomputed_ma_fields_for_supported_windows(
         self,
         mock_call_tushare,
+        mock_get_open_trade_dates,
         mock_cache,
     ):
         """
@@ -585,18 +587,18 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
         - 断言失败时由测试框架抛出异常。
         """
         mock_cache.get.return_value = None
+        mock_get_open_trade_dates.return_value = ["20260102", "20260103"]
 
         def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
             _ = (token, use_query)
             params = params or {}
             if interface == "dc_index":
                 self.assertEqual(params["idx_type"], "行业板块")
+                self.assertEqual(params["trade_date"], "20260103")
                 return {
                     "code": 200,
                     "data": {
                         "records": [
-                            {"ts_code": "BK001.DC", "trade_date": "20260102", "name": "行业A"},
-                            {"ts_code": "BK002.DC", "trade_date": "20260102", "name": "行业B"},
                             {"ts_code": "BK001.DC", "trade_date": "20260103", "name": "行业A"},
                             {"ts_code": "BK002.DC", "trade_date": "20260103", "name": "行业B"},
                         ]
@@ -604,15 +606,28 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
                 }
             if interface == "dc_member":
                 self.assertEqual(params["trade_date"], "20260103")
+                if params["ts_code"] == "BK001.DC":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
+                                {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000002.SZ"},
+                            ]
+                        },
+                    }
+                if params["ts_code"] == "BK002.DC":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"trade_date": "20260103", "ts_code": "BK002.DC", "con_code": "000003.SZ"},
+                            ]
+                        },
+                    }
                 return {
-                    "code": 200,
-                    "data": {
-                        "records": [
-                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
-                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000002.SZ"},
-                            {"trade_date": "20260103", "ts_code": "BK002.DC", "con_code": "000003.SZ"},
-                        ]
-                    },
+                    "code": 500,
+                    "data": {"records": []},
                 }
             if interface == "stk_factor_pro":
                 self.assertEqual(fields, "ts_code,trade_date,close,ma_bfq_20")
@@ -687,10 +702,12 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
         mock_cache.set.assert_called_once()
 
     @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.get_open_trade_dates")
     @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
     def test_get_industry_ma_breadth_computes_rolling_ma_for_custom_window(
         self,
         mock_call_tushare,
+        mock_get_open_trade_dates,
         mock_cache,
     ):
         """
@@ -707,6 +724,10 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
         - 断言失败时由测试框架抛出异常。
         """
         mock_cache.get.return_value = None
+        mock_get_open_trade_dates.side_effect = [
+            ["20260102", "20260105"],
+            ["20251230", "20251231", "20260102", "20260105"],
+        ]
 
         def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
             _ = (token, use_query)
@@ -716,15 +737,13 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
                     "code": 200,
                     "data": {
                         "records": [
-                            {"ts_code": "BK001.DC", "trade_date": "20251230", "name": "行业A"},
-                            {"ts_code": "BK001.DC", "trade_date": "20251231", "name": "行业A"},
-                            {"ts_code": "BK001.DC", "trade_date": "20260102", "name": "行业A"},
                             {"ts_code": "BK001.DC", "trade_date": "20260105", "name": "行业A"},
                         ]
                     },
                 }
             if interface == "dc_member":
                 self.assertEqual(params["trade_date"], "20260105")
+                self.assertEqual(params["ts_code"], "BK001.DC")
                 return {
                     "code": 200,
                     "data": {
@@ -796,10 +815,12 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
         mock_cache.set.assert_called_once()
 
     @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.get_open_trade_dates")
     @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
     def test_get_industry_ma_breadth_filters_by_dc_industry_level(
         self,
         mock_call_tushare,
+        mock_get_open_trade_dates,
         mock_cache,
     ):
         """
@@ -816,12 +837,14 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
         - 断言失败时由测试框架抛出异常。
         """
         mock_cache.get.return_value = None
+        mock_get_open_trade_dates.return_value = ["20260103"]
 
         def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
             _ = (fields, token, use_query)
             params = params or {}
             if interface == "dc_index":
                 self.assertEqual(params["idx_type"], "行业板块")
+                self.assertEqual(params["trade_date"], "20260103")
                 return {
                     "code": 200,
                     "data": {
@@ -844,14 +867,19 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
                     },
                 }
             if interface == "dc_member":
+                self.assertEqual(params["trade_date"], "20260103")
+                if params["ts_code"] == "BK001.DC":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
+                            ]
+                        },
+                    }
                 return {
                     "code": 200,
-                    "data": {
-                        "records": [
-                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
-                            {"trade_date": "20260103", "ts_code": "BK002.DC", "con_code": "000002.SZ"},
-                        ]
-                    },
+                    "data": {"records": []},
                 }
             if interface == "stk_factor_pro":
                 return {

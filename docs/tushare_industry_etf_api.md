@@ -207,12 +207,14 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 **功能说明**：
 
-- 使用东方财富 `dc_index` 获取板块列表与交易日
-- 使用 `dc_member` 获取最新交易日的板块成分
+- 使用 `trade_cal` 获取区间内交易日
+- 使用东方财富 `dc_index` 获取最新交易日板块列表
+- 使用 `dc_member` 获取最新交易日板块成分
 - 使用 `stk_factor_pro` 计算各板块中收盘价高于 N 日均线的股票占比
 
 **Tushare数据源**：
 
+- `trade_cal`
 - `dc_index`
 - `dc_member`
 - `stk_factor_pro`
@@ -492,7 +494,7 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | ----- | ---- |
 | `/django/api/etf/daily/latest/` | `trade_cal` + `fund_daily` + `index_basic` |
 | `/django/api/strategy/industry-turnover-percentile/` | `index_classify` + `sw_daily` |
-| `/django/api/strategy/industry-ma-breadth/` | `dc_index` + `dc_member` + `stk_factor_pro` |
+| `/django/api/strategy/industry-ma-breadth/` | `trade_cal` + `dc_index` + `dc_member` + `stk_factor_pro` |
 | `/django/api/strategy/industry-scale-breadth/` | `bak_daily` + `index_classify` |
 | `/django/api/strategy/industry-actual-output/` | `bak_daily` + `index_classify` + `income_vip` |
 | `/django/api/stock/industry/heatmap-data/` | `bak_daily` + `index_classify` + `income_vip` + `fina_indicator_vip` |

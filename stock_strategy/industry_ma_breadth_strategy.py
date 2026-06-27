@@ -3,7 +3,8 @@
 行业 MA 市场宽度策略模块
 
 功能：
-- 基于东方财富行业板块 `dc_index` 获取行业列表与交易日
+- 基于交易日历获取区间交易日
+- 基于东方财富行业板块 `dc_index` 获取最新交易日的板块列表
 - 基于 `dc_member` 获取最新交易日的行业成分映射
 - 基于 `stk_factor_pro` 获取股票技术指标快照，计算指定日期范围内的行业 MA 宽度
 
@@ -31,6 +32,7 @@ import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
 
+from common.tushare_industry import get_open_trade_dates
 from common.tushare_proxy import call_tushare
 
 logger = logging.getLogger(__name__)
@@ -124,15 +126,13 @@ class IndustryMABreadthStrategy:
 
     def _fetch_dc_index_rows(
         self,
-        start_date: str,
-        end_date: str,
+        trade_date: str,
         idx_type: Optional[str] = None,
     ) -> List[Dict]:
-        """拉取东方财富行业板块区间数据。
+        """拉取指定交易日的东方财富板块列表。
 
         参数：
-        - start_date (str): 开始日期，格式 YYYYMMDD。
-        - end_date (str): 结束日期，格式 YYYYMMDD。
+        - trade_date (str): 交易日期，格式 YYYYMMDD。
         - idx_type (Optional[str]): 东方财富板块类型，例如行业板块、概念板块、地域板块。
 
         返回值：
@@ -141,10 +141,7 @@ class IndustryMABreadthStrategy:
         异常：
         - 无。内部异常会记录日志并返回空列表。
         """
-        params = {
-            "start_date": start_date,
-            "end_date": end_date,
-        }
+        params = {"trade_date": trade_date}
         if idx_type:
             params["idx_type"] = idx_type
 
@@ -156,37 +153,7 @@ class IndustryMABreadthStrategy:
         )
         if not isinstance(resp, dict) or resp.get("code") != 200:
             logger.warning(
-                "Tushare dc_index 调用失败: start=%s end=%s message=%s",
-                start_date,
-                end_date,
-                resp.get("message") if isinstance(resp, dict) else resp,
-            )
-            return []
-        data = resp.get("data", {})
-        records = data.get("records", []) if isinstance(data, dict) else []
-        return [item for item in records if isinstance(item, dict)]
-
-    def _fetch_dc_member_rows(self, trade_date: str) -> List[Dict]:
-        """拉取指定交易日的行业板块成分映射。
-
-        参数：
-        - trade_date (str): 交易日期，格式 YYYYMMDD。
-
-        返回值：
-        - List[Dict]: `dc_member` 记录列表；失败时返回空列表。
-
-        异常：
-        - 无。内部异常会记录日志并返回空列表。
-        """
-        resp = call_tushare(
-            "dc_member",
-            params={"trade_date": trade_date},
-            fields="trade_date,ts_code,con_code,name",
-            use_query=False,
-        )
-        if not isinstance(resp, dict) or resp.get("code") != 200:
-            logger.warning(
-                "Tushare dc_member 调用失败: trade_date=%s message=%s",
+                "Tushare dc_index 调用失败: trade_date=%s message=%s",
                 trade_date,
                 resp.get("message") if isinstance(resp, dict) else resp,
             )
@@ -194,6 +161,62 @@ class IndustryMABreadthStrategy:
         data = resp.get("data", {})
         records = data.get("records", []) if isinstance(data, dict) else []
         return [item for item in records if isinstance(item, dict)]
+
+    def _fetch_dc_member_rows(self, trade_date: str, sector_codes: List[str]) -> List[Dict]:
+        """拉取指定交易日、目标板块集合的成分映射。
+
+        参数：
+        - trade_date (str): 交易日期，格式 YYYYMMDD。
+        - sector_codes (List[str]): 目标板块代码列表。
+
+        返回值：
+        - List[Dict]: `dc_member` 记录列表；失败时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        member_records: List[Dict] = []
+        for sector_code in sector_codes:
+            resp = call_tushare(
+                "dc_member",
+                params={"trade_date": trade_date, "ts_code": sector_code},
+                fields="trade_date,ts_code,con_code,name",
+                use_query=False,
+            )
+            if not isinstance(resp, dict) or resp.get("code") != 200:
+                logger.warning(
+                    "Tushare dc_member 调用失败: trade_date=%s sector_code=%s message=%s",
+                    trade_date,
+                    sector_code,
+                    resp.get("message") if isinstance(resp, dict) else resp,
+                )
+                continue
+            data = resp.get("data", {})
+            records = data.get("records", []) if isinstance(data, dict) else []
+            member_records.extend(item for item in records if isinstance(item, dict))
+        return member_records
+
+    def _get_trade_dates(self, start_date: str, end_date: str) -> List[str]:
+        """获取指定自然日期区间内的实际交易日列表。
+
+        参数：
+        - start_date (str): 开始日期，格式 YYYY-MM-DD。
+        - end_date (str): 结束日期，格式 YYYY-MM-DD。
+
+        返回值：
+        - List[str]: 交易日列表，格式 YYYYMMDD。
+
+        异常：
+        - 无。交易日历获取失败时返回空列表。
+        """
+        try:
+            return get_open_trade_dates(
+                self._normalize_trade_date(start_date),
+                self._normalize_trade_date(end_date),
+            )
+        except Exception as exc:
+            logger.warning("获取交易日历失败: %s", exc)
+            return []
 
     def _resolve_target_sectors(
         self,
@@ -372,7 +395,7 @@ class IndustryMABreadthStrategy:
 
             start_date, end_date = self._get_default_dates(start_date, end_date)
             cache_key = (
-                "industry_ma_breadth_dc_"
+                "industry_ma_breadth_dc_v2_"
                 f"{start_date}_{end_date}_{ma_window}_{effective_idx_type}_{effective_level or 'all-level'}_"
                 "all"
             )
@@ -389,14 +412,22 @@ class IndustryMABreadthStrategy:
             use_precomputed_ma = ma_window in SUPPORTED_PRECOMPUTED_WINDOWS
             extended_start_dt = start_dt if use_precomputed_ma else start_dt - timedelta(days=ma_window * 2)
 
-            start_trade_date = self._normalize_trade_date(extended_start_dt.strftime("%Y-%m-%d"))
-            end_trade_date = self._normalize_trade_date(end_date)
-            requested_start_trade_date = self._normalize_trade_date(start_date)
-            requested_end_trade_date = self._normalize_trade_date(end_date)
+            output_trade_dates = self._get_trade_dates(start_date, end_date)
+            if not output_trade_dates:
+                logger.warning("指定区间内未获取到有效交易日")
+                return []
+            all_trade_dates = (
+                output_trade_dates
+                if use_precomputed_ma
+                else self._get_trade_dates(extended_start_dt.strftime("%Y-%m-%d"), end_date)
+            )
+            if not all_trade_dates:
+                logger.warning("未获取到计算均线所需的交易日")
+                return []
 
+            latest_trade_date = output_trade_dates[-1]
             dc_index_rows = self._fetch_dc_index_rows(
-                start_trade_date,
-                end_trade_date,
+                latest_trade_date,
                 idx_type=effective_idx_type,
             )
             if not dc_index_rows:
@@ -415,17 +446,6 @@ class IndustryMABreadthStrategy:
                 index_df["level"] = index_df["level"].astype(str).str.strip()
             else:
                 index_df["level"] = ""
-            all_trade_dates = sorted(index_df["trade_date"].dropna().unique().tolist())
-            output_trade_dates = [
-                item
-                for item in all_trade_dates
-                if requested_start_trade_date <= item <= requested_end_trade_date
-            ]
-            if not output_trade_dates:
-                logger.warning("指定区间内未获取到有效交易日")
-                return []
-
-            latest_trade_date = output_trade_dates[-1]
             latest_sector_df = (
                 index_df[index_df["trade_date"] == latest_trade_date][["sector_code", "sector_name", "level"]]
                 .drop_duplicates()
@@ -440,7 +460,10 @@ class IndustryMABreadthStrategy:
                 return []
 
             target_sector_codes = set(target_sector_df["sector_code"].tolist())
-            dc_member_rows = self._fetch_dc_member_rows(latest_trade_date)
+            dc_member_rows = self._fetch_dc_member_rows(
+                latest_trade_date,
+                sorted(target_sector_codes),
+            )
             if not dc_member_rows:
                 logger.warning("未获取到东方财富行业板块成分数据")
                 return []

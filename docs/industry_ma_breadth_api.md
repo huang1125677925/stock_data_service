@@ -9,6 +9,7 @@
 - 功能：返回指定日期范围内，各东方财富板块中“收盘价高于 N 日均线”的股票占比。
 - 响应格式：统一使用 `success_response` / `error_response` 封装。
 - 当前实现基于以下 Tushare 接口：
+  - `trade_cal`
   - `dc_index`
   - `dc_member`
   - `stk_factor_pro`
@@ -95,15 +96,17 @@ GET /django/api/strategy/industry-ma-breadth/?start_date=2026-06-20&end_date=202
 
 ### 1. 板块与交易日获取
 
-- 调用 `dc_index` 获取 `start_date ~ end_date` 区间内的板块数据。
+- 调用 `trade_cal` 获取 `start_date ~ end_date` 区间内的实际交易日。
+- 使用区间内最新交易日调用 `dc_index` 获取最新板块清单。
 - 根据 `idx_type` 过滤板块类型。
 - 如果传入 `level`，则在 `idx_type=行业板块` 的前提下进一步过滤东财行业层级。
-- 区间内实际可返回的日期，以 `dc_index` 返回的交易日为准。
+- 区间内可返回的日期，以交易日历返回的交易日为准。
 
 ### 2. 板块成分获取
 
-- 使用区间内最新交易日调用一次 `dc_member`，获取该交易日全部板块成分。
-- 区间内历史日期统一复用这份最新成分映射。
+- 仅使用区间内最新交易日的板块成分。
+- 为避免单次结果被 5000 条上限截断，按目标板块代码在同一最新交易日逐个调用 `dc_member` 获取成分。
+- 区间内历史日期统一复用这份最新成分映射，不再按天查询成分。
 
 ### 3. 技术指标获取
 
