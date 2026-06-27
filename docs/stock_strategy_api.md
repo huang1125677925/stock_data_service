@@ -123,6 +123,34 @@
 
 - 参见 `docs/dc_board_member_rps_api.md`
 
+### 获取国内+国际大盘指数RPS排名
+
+**接口地址**: `/django/api/strategy/major-index-rps/`
+
+**请求方式**: GET
+
+**数据来源**: Tushare `index_daily` + `index_global`
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+| ----- | --- | ---- | ----- | ---- |
+| `periods` | string | 否 | `5,20,60,120,250` | 回看交易日周期，多个周期用逗号分隔 |
+| `trade_date` | string | 否 | 当前日期 | 目标截止日期，格式 `YYYYMMDD` |
+| `token` | string | 否 | 环境变量 | Tushare Token，传入时覆盖环境变量 |
+
+**响应字段摘要**:
+
+- `data[].ts_code`: 指数代码
+- `data[].name`: 指数名称
+- `data[].market`: 市场类型，`国内` 或 `国际`
+- `data[].source`: 行情来源，`index_daily` 或 `index_global`
+- `data[].trade_date`: 该指数截至目标日期最近可用的交易日
+- `data[].pct_change`: 该指数最近可用交易日的当日涨跌幅
+- `data[].RPS_today`: 按当天涨跌幅计算的横向 RPS
+- `data[].return_{period}`: 该指数按自身交易序列回看 `period` 根K线的区间收益率
+- `data[].RPS_{period}`: 对应周期区间收益率的 RPS
+
 ### 获取历史RPS数据
 
 **接口地址**: `/api/strategy/historical-rps/`

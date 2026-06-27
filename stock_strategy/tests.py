@@ -8,6 +8,7 @@ from .industry_ma_breadth_strategy import IndustryMABreadthStrategy
 from .limit_board_service import LimitBoardDataService
 from scheduled_tasks.stock_data_query_tasks import dc_board_rps
 from scheduled_tasks.stock_data_query_tasks import dc_board_member_rps
+from scheduled_tasks.stock_data_query_tasks import major_index_rps
 
 
 class FakeTusharePro:
@@ -624,6 +625,192 @@ class DcBoardMemberRpsTests(unittest.TestCase):
         self.assertGreater(result_map.loc["000001.SZ", "RPS_5"], result_map.loc["000002.SZ", "RPS_5"])
         self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
+
+
+class MajorIndexRpsTests(unittest.TestCase):
+    """
+    组件：国内+国际大盘指数 RPS 测试。
+
+    功能：
+    - 验证 `compute_major_index_rps` 会综合国内 `index_daily` 与国际 `index_global` 行情，
+      按各指数自身交易序列计算多周期收益率与 RPS。
+
+    参数：
+    - 无。
+
+    返回值：
+    - 无。
+
+    事件：
+    - 使用 mock 隔离 Tushare 行情接口与缓存依赖。
+    """
+
+    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.cache")
+    @patch.dict(
+        "scheduled_tasks.stock_data_query_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
+        {"000001.SH": "上证综指", "399001.SZ": "深证成指"},
+        clear=True,
+    )
+    @patch.dict(
+        "scheduled_tasks.stock_data_query_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
+        {"SPX": "标普500指数", "IXIC": "纳斯达克指数"},
+        clear=True,
+    )
+    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.call_tushare")
+    def test_compute_major_index_rps_combines_domestic_and_global_histories(
+        self,
+        mock_call_tushare,
+        mock_cache,
+    ):
+        """
+        功能：验证综合指数 RPS 会同时使用国内与国际指数行情，并输出统一的多周期 RPS 结果。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+
+        histories = {
+            ("index_daily", "000001.SH"): [
+                {"ts_code": "000001.SH", "trade_date": "20251212", "close": 100.0, "pct_chg": 0.0},
+                {"ts_code": "000001.SH", "trade_date": "20251219", "close": 102.0, "pct_chg": 0.0},
+                {"ts_code": "000001.SH", "trade_date": "20260102", "close": 105.0, "pct_chg": 0.0},
+                {"ts_code": "000001.SH", "trade_date": "20260106", "close": 108.0, "pct_chg": 0.0},
+                {"ts_code": "000001.SH", "trade_date": "20260109", "close": 110.0, "pct_chg": 5.0},
+            ],
+            ("index_daily", "399001.SZ"): [
+                {"ts_code": "399001.SZ", "trade_date": "20251212", "close": 100.0, "pct_chg": 0.0},
+                {"ts_code": "399001.SZ", "trade_date": "20251219", "close": 101.0, "pct_chg": 0.0},
+                {"ts_code": "399001.SZ", "trade_date": "20260102", "close": 102.0, "pct_chg": 0.0},
+                {"ts_code": "399001.SZ", "trade_date": "20260106", "close": 103.0, "pct_chg": 0.0},
+                {"ts_code": "399001.SZ", "trade_date": "20260109", "close": 104.0, "pct_chg": 1.5},
+            ],
+            ("index_global", "SPX"): [
+                {"ts_code": "SPX", "trade_date": "20251212", "close": 100.0, "pct_chg": 0.0},
+                {"ts_code": "SPX", "trade_date": "20251219", "close": 103.0, "pct_chg": 0.0},
+                {"ts_code": "SPX", "trade_date": "20260102", "close": 106.0, "pct_chg": 0.0},
+                {"ts_code": "SPX", "trade_date": "20260106", "close": 109.0, "pct_chg": 0.0},
+                {"ts_code": "SPX", "trade_date": "20260109", "close": 112.0, "pct_chg": 4.0},
+            ],
+            ("index_global", "IXIC"): [
+                {"ts_code": "IXIC", "trade_date": "20251212", "close": 100.0, "pct_chg": 0.0},
+                {"ts_code": "IXIC", "trade_date": "20251219", "close": 100.5, "pct_chg": 0.0},
+                {"ts_code": "IXIC", "trade_date": "20260102", "close": 101.0, "pct_chg": 0.0},
+                {"ts_code": "IXIC", "trade_date": "20260106", "close": 101.5, "pct_chg": 0.0},
+                {"ts_code": "IXIC", "trade_date": "20260109", "close": 102.0, "pct_chg": 1.0},
+            ],
+        }
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (fields, token, use_query)
+            params = params or {}
+            records = histories.get((interface, params.get("ts_code")))
+            if records is None:
+                raise AssertionError(f"unexpected request: {interface}, {params}")
+            return {"code": 200, "data": {"records": records}}
+
+        mock_call_tushare.side_effect = _side_effect
+
+        result_df, errors = major_index_rps.compute_major_index_rps(
+            periods=[3, 5],
+            trade_date="20260109",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        self.assertEqual(result_df.attrs.get("trade_date"), "20260109")
+        self.assertIn("market", result_df.columns)
+        self.assertIn("source", result_df.columns)
+        self.assertIn("RPS_today", result_df.columns)
+        self.assertIn("RPS_3", result_df.columns)
+        self.assertIn("RPS_5", result_df.columns)
+        result_map = result_df.set_index("ts_code")
+        self.assertEqual(result_map.loc["000001.SH", "market"], "国内")
+        self.assertEqual(result_map.loc["SPX", "market"], "国际")
+        self.assertEqual(result_map.loc["000001.SH", "source"], "index_daily")
+        self.assertEqual(result_map.loc["SPX", "source"], "index_global")
+        self.assertGreater(result_map.loc["SPX", "RPS_3"], result_map.loc["IXIC", "RPS_3"])
+        self.assertGreater(result_map.loc["000001.SH", "RPS_today"], result_map.loc["399001.SZ", "RPS_today"])
+        mock_cache.set.assert_called_once()
+
+    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.cache")
+    @patch.dict(
+        "scheduled_tasks.stock_data_query_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
+        {"000001.SH": "上证综指"},
+        clear=True,
+    )
+    @patch.dict(
+        "scheduled_tasks.stock_data_query_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
+        {"SPX": "标普500指数"},
+        clear=True,
+    )
+    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.call_tushare")
+    def test_compute_major_index_rps_uses_latest_available_bar_before_anchor_date(
+        self,
+        mock_call_tushare,
+        mock_cache,
+    ):
+        """
+        功能：验证当目标日期不是对应市场的交易日时，会自动使用该指数在目标日期之前最近的可用行情。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (fields, token, use_query)
+            params = params or {}
+            if interface == "index_daily":
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "000001.SH", "trade_date": "20260102", "close": 100.0, "pct_chg": 0.0},
+                            {"ts_code": "000001.SH", "trade_date": "20260108", "close": 105.0, "pct_chg": 2.0},
+                        ]
+                    },
+                }
+            if interface == "index_global":
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "SPX", "trade_date": "20260102", "close": 100.0, "pct_chg": 0.0},
+                            {"ts_code": "SPX", "trade_date": "20260109", "close": 108.0, "pct_chg": 1.0},
+                        ]
+                    },
+                }
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+
+        result_df, errors = major_index_rps.compute_major_index_rps(
+            periods=[1],
+            trade_date="20260110",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        result_map = result_df.set_index("ts_code")
+        self.assertEqual(result_map.loc["000001.SH", "trade_date"], "20260108")
+        self.assertEqual(result_map.loc["SPX", "trade_date"], "20260109")
+        self.assertAlmostEqual(result_map.loc["000001.SH", "return_1"], 5.0)
+        self.assertAlmostEqual(result_map.loc["SPX", "return_1"], 8.0)
 
 
 class IndustryMABreadthStrategyTests(unittest.TestCase):

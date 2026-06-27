@@ -5,6 +5,7 @@ from .market_analysis.views import get_market_adr, get_market_adl, get_market_nh
 
 urlpatterns = [
     path('index-rps/', views.get_index_rps, name='get_index_rps'),
+    path('major-index-rps/', views.get_major_index_rps, name='get_major_index_rps'),
     path('dc-board-member-rps/', views.get_dc_board_member_rps, name='get_dc_board_member_rps'),
     path('historical-rps/', views.get_historical_rps, name='get_historical_rps'),
     path('industry-turnover-percentile/', views.get_industry_turnover_percentile, name='get_industry_turnover_percentile'),
