@@ -207,16 +207,15 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 **功能说明**：
 
-- 只从 Tushare `daily` 获取个股日线
-- 使用申万一级行业分类和行业成分股映射
-- 计算各行业中收盘价高于 N 日均线的股票占比
+- 使用东方财富 `dc_index` 获取板块列表与交易日
+- 使用 `dc_member` 获取最新交易日的板块成分
+- 使用 `stk_factor_pro` 计算各板块中收盘价高于 N 日均线的股票占比
 
 **Tushare数据源**：
 
-- `trade_cal`
-- `index_classify`
-- `index_member_all`
-- `daily`
+- `dc_index`
+- `dc_member`
+- `stk_factor_pro`
 
 **请求参数**：
 
@@ -225,7 +224,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | start_date | string | 否 | 开始日期，格式 `YYYY-MM-DD`，默认过去90天 |
 | end_date | string | 否 | 结束日期，格式 `YYYY-MM-DD`，默认当天 |
 | ma_window | integer | 否 | 均线窗口，默认 `20` |
-| sector_codes | string | 否 | 行业代码列表，逗号分隔；当前实现也兼容传行业名称 |
+| idx_type | string | 否 | 东方财富板块类型，支持 `行业板块`、`概念板块`、`地域板块`，默认 `行业板块` |
+| level | string | 否 | 东财行业层级，仅 `idx_type=行业板块` 时生效，支持 `东财一级行业`、`东财二级行业`、`东财三级行业` |
 
 **响应示例**：
 
@@ -239,8 +239,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
     "data": [
       {
         "date": "2026-05-15",
-        "sector_code": "801080.SI",
-        "sector_name": "电子",
+        "sector_code": "BK0420.DC",
+        "sector_name": "消费电子",
         "count_above_ma": 87,
         "eligible_count": 142,
         "breadth_ratio": 0.6127
@@ -249,7 +249,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
     "start_date": "2026-03-01",
     "end_date": "2026-05-15",
     "ma_window": 20,
-    "sector_codes": ["801080.SI"],
+    "idx_type": "行业板块",
+    "level": "东财一级行业",
     "query_time": "2026-05-16T10:00:00"
   }
 }
@@ -491,7 +492,7 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | ----- | ---- |
 | `/django/api/etf/daily/latest/` | `trade_cal` + `fund_daily` + `index_basic` |
 | `/django/api/strategy/industry-turnover-percentile/` | `index_classify` + `sw_daily` |
-| `/django/api/strategy/industry-ma-breadth/` | `trade_cal` + `index_classify` + `index_member_all` + `daily` |
+| `/django/api/strategy/industry-ma-breadth/` | `dc_index` + `dc_member` + `stk_factor_pro` |
 | `/django/api/strategy/industry-scale-breadth/` | `bak_daily` + `index_classify` |
 | `/django/api/strategy/industry-actual-output/` | `bak_daily` + `index_classify` + `income_vip` |
 | `/django/api/stock/industry/heatmap-data/` | `bak_daily` + `index_classify` + `income_vip` + `fina_indicator_vip` |

@@ -647,7 +647,8 @@ def get_industry_ma_breadth(request):
     - start_date(str): 开始日期，格式YYYY-MM-DD，默认过去90天
     - end_date(str): 结束日期，格式YYYY-MM-DD，默认当天
     - ma_window(int): 移动平均窗口大小（交易日），默认20
-    - sector_codes(str): 行业板块代码列表（逗号分隔），可选；若为空则计算所有板块
+    - idx_type(str): 东方财富板块类型，支持：行业板块、概念板块、地域板块；默认行业板块
+    - level(str): 东财行业层级，仅 idx_type=行业板块 时生效，支持：东财一级行业、东财二级行业、东财三级行业
     返回值：
     - 成功：返回包含各行业每日宽度数据的JSON（total, data, query_time, 参数回显）
     - 失败：返回错误信息JSON
@@ -660,16 +661,19 @@ def get_industry_ma_breadth(request):
         start_date = request.GET.get('start_date', None)
         end_date = request.GET.get('end_date', None)
         ma_window = int(request.GET.get('ma_window', 20))
-        sector_codes_str = request.GET.get('sector_codes', None)
-        sector_codes = None
-        if sector_codes_str:
-            sector_codes = [code.strip() for code in sector_codes_str.split(',') if code.strip()]
+        idx_type = request.GET.get('idx_type', '行业板块')
+        level = request.GET.get('level')
+        allowed_levels = {'东财一级行业', '东财二级行业', '东财三级行业'}
+        effective_level = level if idx_type == '行业板块' else None
+        if effective_level and effective_level not in allowed_levels:
+            return error_response('level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业', 400)
         # 计算行业MA市场宽度
         result = industry_ma_breadth_strategy.get_industry_ma_breadth(
             start_date=start_date,
             end_date=end_date,
             ma_window=ma_window,
-            sector_codes=sector_codes
+            idx_type=idx_type,
+            level=effective_level,
         )
         if result is None:
             return error_response('获取行业MA市场宽度数据失败', 500)
@@ -679,7 +683,8 @@ def get_industry_ma_breadth(request):
             'start_date': start_date,
             'end_date': end_date,
             'ma_window': ma_window,
-            'sector_codes': sector_codes,
+            'idx_type': idx_type,
+            'level': effective_level,
             'query_time': datetime.now().isoformat()
         })
     except ValueError:

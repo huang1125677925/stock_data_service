@@ -240,15 +240,15 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
         description=(
             "行业 MA 市场宽度（与 GET /django/api/strategy/industry-ma-breadth/ 同源，非 HTTP）。"
             "统计各行业内收盘价高于 N 日均线的股票占比；日期为 YYYY-MM-DD。"
-            "建议缩短 start_date/end_date 区间（如近 7 天），或传 sector_codes 只查目标行业，"
-            "避免全量 90 天×全行业数据超出模型 token 上限；也可用 limit 直接限制返回条数。"
+            "支持 idx_type 与 level 参数筛选东财行业层级；也可用 limit 直接限制返回条数。"
         ),
     )
     def industry_ma_breadth(
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         ma_window: int = 20,
-        sector_codes: Optional[str] = None,
+        idx_type: str = "行业板块",
+        level: Optional[str] = None,
         limit: int = 300,
     ) -> Dict[str, Any]:
         """
@@ -258,13 +258,10 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
             start_date: 开始日期 YYYY-MM-DD；空则策略内默认约过去 90 天
             end_date: 结束日期 YYYY-MM-DD；空则默认当天
             ma_window: 移动平均窗口（交易日），默认 20
-            sector_codes: 可选，逗号分隔板块代码；空则全部板块
+            idx_type: 东方财富板块类型，默认行业板块
+            level: 东财行业层级，仅 idx_type=行业板块 时生效
             limit: 返回明细条数上限（默认 300，最大 2000）；total 仍反映全量记录数。
         """
-        parsed: Optional[List[str]] = None
-        if sector_codes and str(sector_codes).strip():
-            parsed = [c.strip() for c in str(sector_codes).split(",") if c.strip()]
-
         try:
             ma_w = int(ma_window)
         except (TypeError, ValueError):
@@ -277,14 +274,23 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
             limit = max(1, min(int(limit), 2000))
         except (TypeError, ValueError):
             limit = 300
+        effective_idx_type = str(idx_type or "行业板块").strip() or "行业板块"
+        allowed_levels = {"东财一级行业", "东财二级行业", "东财三级行业"}
+        effective_level = level if effective_idx_type == "行业板块" else None
+        if effective_level and effective_level not in allowed_levels:
+            return error_payload(
+                "level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业",
+                400,
+                interface="industry_ma_breadth",
+            )
 
-        http_params: Dict[str, str] = {"ma_window": str(ma_w)}
+        http_params: Dict[str, str] = {"ma_window": str(ma_w), "idx_type": effective_idx_type}
         if start_date and str(start_date).strip():
             http_params["start_date"] = str(start_date).strip()
         if end_date and str(end_date).strip():
             http_params["end_date"] = str(end_date).strip()
-        if parsed:
-            http_params["sector_codes"] = ",".join(parsed)
+        if effective_level:
+            http_params["level"] = effective_level
         http_body = _fetch_strategy_via_http(
             "/django/api/strategy/industry-ma-breadth/",
             http_params,
@@ -320,7 +326,8 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
                     "start_date": inner.get("start_date") if isinstance(inner, dict) else start_date,
                     "end_date": inner.get("end_date") if isinstance(inner, dict) else end_date,
                     "ma_window": ma_w,
-                    "sector_codes": parsed,
+                    "idx_type": inner.get("idx_type", effective_idx_type) if isinstance(inner, dict) else effective_idx_type,
+                    "level": inner.get("level", effective_level) if isinstance(inner, dict) else effective_level,
                     "query_time": now,
                 },
             }
@@ -350,7 +357,8 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
                 start_date=start_date,
                 end_date=end_date,
                 ma_window=ma_w,
-                sector_codes=parsed,
+                idx_type=effective_idx_type,
+                level=effective_level,
             )
         except Exception as e:
             return error_payload(
@@ -392,7 +400,8 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
                 "start_date": start_date,
                 "end_date": end_date,
                 "ma_window": ma_w,
-                "sector_codes": parsed,
+                "idx_type": effective_idx_type,
+                "level": effective_level,
                 "query_time": now,
             },
         }

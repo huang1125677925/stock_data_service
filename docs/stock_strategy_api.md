@@ -194,7 +194,8 @@
 | start_date | string | 否 | - | 开始日期，格式YYYY-MM-DD，默认过去90天 |
 | end_date | string | 否 | - | 结束日期，格式YYYY-MM-DD，默认当天 |
 | ma_window | integer | 否 | 20 | 移动平均窗口大小（交易日），建议≥2 |
-| sector_codes | string | 否 | - | 行业板块代码列表，逗号分隔；为空则计算所有板块 |
+| idx_type | string | 否 | 行业板块 | 东方财富板块类型，支持：行业板块、概念板块、地域板块 |
+| level | string | 否 | - | 东财行业层级，仅`idx_type=行业板块`时生效，支持：东财一级行业、东财二级行业、东财三级行业 |
 
 **响应示例**:
 
@@ -207,92 +208,39 @@
     "total": 2,
     "data": [
       {
-        "date": "2024-05-17",
-        "sector_code": "BK001",
-        "sector_name": "电子信息",
+        "date": "2026-06-26",
+        "sector_code": "BK0420.DC",
+        "sector_name": "消费电子",
         "count_above_ma": 56,
         "eligible_count": 100,
         "breadth_ratio": 0.56
       },
       {
-        "date": "2024-05-18",
-        "sector_code": "BK001",
-        "sector_name": "电子信息",
+        "date": "2026-06-26",
+        "sector_code": "BK0475.DC",
+        "sector_name": "半导体",
         "count_above_ma": 60,
         "eligible_count": 102,
         "breadth_ratio": 0.5882
       }
     ],
-    "start_date": "2024-05-10",
-    "end_date": "2024-05-18",
+    "start_date": "2026-06-01",
+    "end_date": "2026-06-27",
     "ma_window": 20,
-    "sector_codes": ["BK001"],
-    "query_time": "2024-05-20T12:00:00"
+    "idx_type": "行业板块",
+    "level": "东财一级行业",
+    "query_time": "2026-06-27T12:00:00"
   }
 }
 ```
 
-**字段含义说明（patterns项）**:
+**字段说明**:
 - date: 交易日期，格式 YYYY-MM-DD。
-- hammer（TA-Lib: CDLHAMMER）: 锤子线，常见于下跌末期的看涨反转形态；信号取值：100=识别到锤子线，0=无信号。
-- morning_star（TA-Lib: CDLMORNINGSTAR）: 早晨之星，三根K线构成的看涨反转形态；信号取值：100=识别到，0=无信号。
-- piercing（TA-Lib: CDLPIERCING）: 刺透形态，两根K线构成的看涨反转；信号取值：100=识别到，0=无信号。
-- kicking（TA-Lib: CDLKICKING）: 踢击形态，由两根跳空实体K线构成；信号取值：100=看涨踢击，-100=看跌踢击，0=无信号。
-- inverted_hammer（TA-Lib: CDLINVERTEDHAMMER）: 倒锤头，常见于下跌末期的看涨反转提示；信号取值：100=识别到，0=无信号。
-- engulfing（TA-Lib: CDLENGULFING）: 吞没形态，两根K线构成；信号取值：100=看涨吞没，-100=看跌吞没，0=无信号。
-- harami（TA-Lib: CDLHARAMI）: 孕线，两根K线构成；信号取值：100=看涨孕线，-100=看跌孕线，0=无信号。
-- hanging_man（TA-Lib: CDLHANGINGMAN）: 上吊线，常见于上涨末期的看跌反转提示；信号取值：-100=识别到，0=无信号。
-- evening_star（TA-Lib: CDLEVENINGSTAR）: 黄昏之星，三根K线构成的看跌反转形态；信号取值：-100=识别到，0=无信号。
-- dark_cloud_cover（TA-Lib: CDLDARKCLOUDCOVER）: 乌云盖顶，两根K线构成的看跌反转；信号取值：-100=识别到，0=无信号。
-- three_black_crows（TA-Lib: CDL3BLACKCROWS）: 三只黑乌鸦，连续三根阴线的看跌延续/反转信号；信号取值：-100=识别到，0=无信号。
-- identical_three_crows（TA-Lib: CDLIDENTICAL3CROWS）: 同样三乌鸦，三根近似实体的阴线；信号取值：-100=识别到，0=无信号。
-- doji（TA-Lib: CDLDOJI）: 十字星，开收盘几乎相等的中性形态；信号取值：100=识别到，0=无信号。
-- long_legged_doji（TA-Lib: CDLLONGLEGGEDDOJI）: 长脚十字星，影线很长、实体极小的十字星；信号取值：100=识别到，0=无信号。
-- gravestone_doji（TA-Lib: CDLGRAVESTONEDOJI）: 墓碑十字星，上影线长、下影线短或无的十字星；信号取值：100=识别到，0=无信号。
-- two_crows（TA-Lib: CDL2CROWS）: 两只乌鸦，连续两根阴线的看跌延续/反转；信号取值：-100=识别到，0=无信号。
-- three_inside（TA-Lib: CDL3INSIDE）: 三内部上涨/下跌，孕线组合的延续/反转形态；信号取值：±100，0=无信号。
-- three_line_strike（TA-Lib: CDL3LINESTRIKE）: 三线打击，三根同向K线后出现反向强实体；信号取值：±100，0=无信号。
-- three_outside（TA-Lib: CDL3OUTSIDE）: 三外部上涨/下跌，孕线的外部扩展；信号取值：±100，0=无信号。
-- three_stars_in_south（TA-Lib: CDL3STARSINSOUTH）: 南方三星，低位三根星线形态；信号取值：±100，0=无信号。
-- three_white_soldiers（TA-Lib: CDL3WHITESOLDIERS）: 三个白兵，连续三根阳线的看涨延续；信号取值：100=识别到，0=无信号。
-- abandoned_baby（TA-Lib: CDLABANDONEDBABY）: 弃婴，跳空的三烛线反转形态；信号取值：±100，0=无信号。
-- advance_block（TA-Lib: CDLADVANCEBLOCK）: 大敌当前，多头推进但力度衰减的形态；信号取值：-100=识别到，0=无信号。
-- belt_hold（TA-Lib: CDLBELTHOLD）: 捉腰带线，开盘即为实体端的长实体；信号取值：±100，0=无信号。
-- breakaway（TA-Lib: CDLBREAKAWAY）: 脱离形态，五根K线的趋势脱离；信号取值：±100，0=无信号。
-- closing_marubozu（TA-Lib: CDLCLOSINGMARUBOZU）: 收盘秃线，收盘在极端的秃线；信号取值：±100，0=无信号。
-- conceal_baby_swallow（TA-Lib: CDLCONCEALBABYSWALL）: 藏婴吞没，影线与实体组合的吞没；信号取值：-100=识别到，0=无信号。
-- counterattack（TA-Lib: CDLCOUNTERATTACK）: 反击线，收盘价相同的对立实体；信号取值：±100，0=无信号。
-- doji_star（TA-Lib: CDLDOJISTAR）: 十字星形态，星位的十字线；信号取值：±100，0=无信号。
-- dragonfly_doji（TA-Lib: CDLDRAGONFLYDOJI）: 蜻蜓十字，下影线很长的十字；信号取值：100=识别到，0=无信号。
-- evening_doji_star（TA-Lib: CDLEVENINGDOJISTAR）: 十字暮星，三烛线看跌反转；信号取值：-100=识别到，0=无信号。
-- gap_side_by_side_white（TA-Lib: CDLGAPSIDESIDEWHITE）: 并列阳线，上/下跳空并列阳线；信号取值：±100，0=无信号。
-- homing_pigeon（TA-Lib: CDLHOMINGPIGEON）: 家鸽，小实体包裹的看涨组合；信号取值：100=识别到，0=无信号。
-- in_neck（TA-Lib: CDLINNECK）: 颈内线，阴线后次日收盘接近前日最低；信号取值：-100=识别到，0=无信号。
-- kicking_by_length（TA-Lib: CDLKICKINGBYLENGTH）: 由较长秃线决定的反冲；信号取值：±100，0=无信号。
-- ladder_bottom（TA-Lib: CDLLADDERBOTTOM）: 梯底，低位多头反攻形态；信号取值：100=识别到，0=无信号。
-- long_line（TA-Lib: CDLLONGLINE）: 长线，极长实体的K线；信号取值：±100，0=无信号。
-- marubozu（TA-Lib: CDLMARUBOZU）: 秃线/缺影线，实体无影线；信号取值：±100，0=无信号。
-- matching_low（TA-Lib: CDLMATCHINGLOW）: 相同低价，连续两根最低价相同的看涨形态；信号取值：100=识别到，0=无信号。
-- mat_hold（TA-Lib: CDLMATHOLD）: 垫脚石，五根K线的看涨延续形态；信号取值：100=识别到，0=无信号。
-- morning_doji_star（TA-Lib: CDLMORNINGDOJISTAR）: 十字晨星，三烛线看涨反转；信号取值：100=识别到，0=无信号。
-- on_neck（TA-Lib: CDLONNECK）: 颈上线，阴线后次日收盘与前日最低相同；信号取值：-100=识别到，0=无信号。
-- rickshaw_man（TA-Lib: CDLRICKSHAWMAN）: 黄包车夫，带长影线的十字；信号取值：100=识别到，0=无信号。
-- rise_fall_three_methods（TA-Lib: CDLRISEFALL3METHODS）: 上升/下降三法，中继形态；信号取值：±100，0=无信号。
-- separating_lines（TA-Lib: CDLSEPARATINGLINES）: 分离线，趋势延续形态；信号取值：±100，0=无信号。
-- shooting_star（TA-Lib: CDLSHOOTINGSTAR）: 射击之星，高位看跌反转；信号取值：-100=识别到，0=无信号。
-- short_line（TA-Lib: CDLSHORTLINE）: 短线，极短实体的K线；信号取值：±100，0=无信号。
-- spinning_top（TA-Lib: CDLSPINNINGTOP）: 纺锤线，小实体上下影线均较长；信号取值：±100，0=无信号。
-- stalled_pattern（TA-Lib: CDLSTALLEDPATTERN）: 停顿形态，上涨趋势中的停顿；信号取值：-100=识别到，0=无信号。
-- stick_sandwich（TA-Lib: CDLSTICKSANDWICH）: 条形三明治，三根K线构成的看涨反转；信号取值：100=识别到，0=无信号。
-- takuri（TA-Lib: CDLTAKURI）: 探水杆，极长下影线的反转提示；信号取值：100=识别到，0=无信号。
-- tasuki_gap（TA-Lib: CDLTASUKIGAP）: 跳空并列线，跳空后的并列线；信号取值：±100，0=无信号。
-- thrusting（TA-Lib: CDLTHRUSTING）: 插入形态，下跌中的弱反弹；信号取值：-100=识别到，0=无信号。
-- tristar（TA-Lib: CDLTRISTAR）: 三星，三根十字线的反转形态；信号取值：±100，0=无信号。
-- unique_three_river（TA-Lib: CDLUNIQUE3RIVER）: 独特三河，低位三烛线形态；信号取值：100=识别到，0=无信号。
-- upside_gap_two_crows（TA-Lib: CDLUPSIDEGAP2CROWS）: 向上跳空两只乌鸦，看跌延续/反转；信号取值：-100=识别到，0=无信号。
-- xside_gap_three_methods（TA-Lib: CDLXSIDEGAP3METHODS）: 向上/向下跳空三法，中继形态；信号取值：±100，0=无信号。
-
-> 通用说明：TA-Lib CDL 系列的信号取值统一为 +100（看涨）、-100（看跌）、0（无信号）。部分形态仅有正向或负向信号（如 CDLHAMMER 仅有 +100，CDLDARKCLOUDCOVER 仅有 -100）。
+- sector_code: 东方财富板块代码。
+- sector_name: 东方财富板块名称。
+- count_above_ma: 当日板块内收盘价高于 MA_N 的股票数量。
+- eligible_count: 当日有有效 MA_N 值、可参与统计的股票数量。
+- breadth_ratio: `count_above_ma / eligible_count`，范围 `[0,1]`，保留 4 位小数。
 
 **错误响应示例**:
 
@@ -306,7 +254,7 @@
 
 **说明**:
 - 宽度定义为“收盘价高于MA_N”的股票在行业内的占比，breadth_ratio范围为[0,1]，结果四舍五入到4位小数。
-- 行业与个股映射通过 IndividualStock.industry 与 IndustrySector.name 对应，仅使用数据库数据。
+- 当前实现基于 Tushare `dc_index`、`dc_member`、`stk_factor_pro` 计算，并支持按 `idx_type`、`level` 查看指定东方财富板块层级。
 - 接口返回统一使用 success_response/error_response 封装。
 
 ---

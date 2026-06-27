@@ -1,269 +1,537 @@
 #!/usr/bin/env python3
 """
-行业MA市场宽度策略模块
+行业 MA 市场宽度策略模块
 
 功能：
-- 计算指定日期范围内，每个行业内“收盘价高于其N日移动平均线(MA)”的股票占比（市场宽度）
-- 行情数据仅通过 Tushare `daily` 获取
-- 面向扩展设计，支持窗口大小、行业板块筛选等参数化
+- 基于东方财富行业板块 `dc_index` 获取行业列表与交易日
+- 基于 `dc_member` 获取最新交易日的行业成分映射
+- 基于 `stk_factor_pro` 获取股票技术指标快照，计算指定日期范围内的行业 MA 宽度
 
 参数：
-- start_date(str): 开始日期，YYYY-MM-DD；默认取过去90天
+- start_date(str): 开始日期，YYYY-MM-DD；默认取过去 90 天
 - end_date(str): 结束日期，YYYY-MM-DD；默认取当天
-- ma_window(int): 移动平均窗口（交易日），默认20
-- sector_codes(List[str]): 行业板块代码列表；为空时计算所有板块
+- ma_window(int): 移动平均窗口（交易日），默认 20
+- idx_type(str): 东方财富板块类型，默认行业板块
+- level(str): 东财行业层级，仅 idx_type=行业板块 时生效
 
 返回值：
-- List[Dict]: 每日每行业的宽度数据列表，包含日期、板块代码/名称、当日高于MA的股票数量、可计算MA的股票数量、宽度比例
+- List[Dict]: 每日每行业的宽度数据列表，包含日期、板块代码/名称、当日高于 MA 的股票数量、可计算 MA 的股票数量、宽度比例
 
 事件：
 - 参数校验与默认化
-- 从 Tushare 读取个股日频数据
-- 计算个股MA并聚合到行业维度
-- 缓存结果以提升性能
+- 调用 Tushare `dc_index`、`dc_member`、`stk_factor_pro`
+- 聚合行业宽度结果并写入缓存
 """
 
 import logging
-from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
-from django.core.cache import cache
 from django.conf import settings
+from django.core.cache import cache
+
 from common.tushare_proxy import call_tushare
-from common.tushare_industry import get_open_trade_dates, get_sw_l1_members, get_sw_l1_sectors
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_PRECOMPUTED_WINDOWS = {5, 10, 20, 30, 60, 90, 250}
+DC_INDUSTRY_LEVELS = {"东财一级行业", "东财二级行业", "东财三级行业"}
+
 
 class IndustryMABreadthStrategy:
-    """行业MA市场宽度策略类
-    
-    功能：提供“行业内收盘价高于N日均线占比”的计算能力
-    参数：通过方法入参传递
-    返回值：列表结构，便于API直接返回
+    """行业 MA 市场宽度策略类。
+
+    功能：
+    - 提供“行业内收盘价高于 N 日均线占比”的计算能力。
+
+    参数：
+    - 通过方法入参传递。
+
+    返回值：
+    - 列表结构，便于 API 直接返回。
+
     事件：
-    - get_industry_ma_breadth: 执行核心计算并缓存
+    - `get_industry_ma_breadth` 执行核心计算并缓存。
     """
 
     def __init__(self):
-        # 缓存超时时间，默认5分钟，可通过settings.STOCK_CACHE_TIMEOUT覆盖
-        self.cache_timeout = getattr(settings, 'STOCK_CACHE_TIMEOUT', 3600 * 12)
+        """初始化行业 MA 市场宽度策略。
 
-    def _get_default_dates(self, start_date: Optional[str], end_date: Optional[str]) -> (str, str):
-        """内部工具：提供默认日期范围
-        
-        Args:
-            start_date: 开始日期字符串
-            end_date: 结束日期字符串
-        Returns:
-            (start_date, end_date) 字符串元组
+        参数：
+        - 无。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 无。
+        """
+        self.cache_timeout = getattr(settings, "STOCK_CACHE_TIMEOUT", 3600 * 12)
+
+    def _get_default_dates(self, start_date: Optional[str], end_date: Optional[str]) -> Tuple[str, str]:
+        """提供默认日期范围。
+
+        参数：
+        - start_date (Optional[str]): 开始日期字符串。
+        - end_date (Optional[str]): 结束日期字符串。
+
+        返回值：
+        - Tuple[str, str]: 标准化后的开始日期与结束日期，格式为 YYYY-MM-DD。
+
+        异常：
+        - 无。
         """
         if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
+            end_date = datetime.now().strftime("%Y-%m-%d")
         if not start_date:
-            start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         return start_date, end_date
 
-    def _get_target_sectors(self, sector_codes: Optional[List[str]]) -> List[Dict]:
-        """内部工具：获取目标行业板块列表
-        
-        Args:
-            sector_codes: 指定板块代码列表
-        Returns:
-            板块字典列表 [{'code','name',...}]
-        """
-        try:
-            all_sectors = get_sw_l1_sectors()
-            sectors = [
-                {"code": item["sector_code"], "name": item["sector_name"]}
-                for item in all_sectors
-                if item.get("sector_code") and item.get("sector_name")
-            ]
-            if sector_codes:
-                sector_keys = {str(item).strip() for item in sector_codes if str(item).strip()}
-                sectors = [
-                    item for item in sectors
-                    if item["code"] in sector_keys or item["name"] in sector_keys
-                ]
-            return sectors
-        except Exception as e:
-            logger.error(f"获取行业板块列表失败: {str(e)}")
-            return []
+    def _normalize_trade_date(self, date_str: str) -> str:
+        """标准化交易日格式。
 
-    def _daily_rows_from_tushare(self, extended_start_dt, end_dt) -> List[Dict]:
-        tus_records: List[Dict] = []
-        trade_dates = get_open_trade_dates(
-            extended_start_dt.strftime("%Y%m%d"),
-            end_dt.strftime("%Y%m%d"),
+        参数：
+        - date_str (str): 输入日期，支持 YYYY-MM-DD 或 YYYYMMDD。
+
+        返回值：
+        - str: 去掉分隔符后的 YYYYMMDD 字符串；空值返回空字符串。
+
+        异常：
+        - 无。
+        """
+        value = str(date_str or "").strip()
+        if not value:
+            return ""
+        return value.replace("-", "")
+
+    def _display_trade_date(self, trade_date: str) -> str:
+        """将交易日转换为接口展示格式。
+
+        参数：
+        - trade_date (str): 交易日，格式 YYYYMMDD 或 YYYY-MM-DD。
+
+        返回值：
+        - str: 格式化后的 YYYY-MM-DD 字符串。
+
+        异常：
+        - 无。
+        """
+        normalized = self._normalize_trade_date(trade_date)
+        if len(normalized) == 8:
+            return f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:]}"
+        return str(trade_date or "")
+
+    def _fetch_dc_index_rows(
+        self,
+        start_date: str,
+        end_date: str,
+        idx_type: Optional[str] = None,
+    ) -> List[Dict]:
+        """拉取东方财富行业板块区间数据。
+
+        参数：
+        - start_date (str): 开始日期，格式 YYYYMMDD。
+        - end_date (str): 结束日期，格式 YYYYMMDD。
+        - idx_type (Optional[str]): 东方财富板块类型，例如行业板块、概念板块、地域板块。
+
+        返回值：
+        - List[Dict]: `dc_index` 记录列表；失败时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        params = {
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        if idx_type:
+            params["idx_type"] = idx_type
+
+        resp = call_tushare(
+            "dc_index",
+            params=params,
+            fields="ts_code,trade_date,name,idx_type,level",
+            use_query=False,
         )
+        if not isinstance(resp, dict) or resp.get("code") != 200:
+            logger.warning(
+                "Tushare dc_index 调用失败: start=%s end=%s message=%s",
+                start_date,
+                end_date,
+                resp.get("message") if isinstance(resp, dict) else resp,
+            )
+            return []
+        data = resp.get("data", {})
+        records = data.get("records", []) if isinstance(data, dict) else []
+        return [item for item in records if isinstance(item, dict)]
+
+    def _fetch_dc_member_rows(self, trade_date: str) -> List[Dict]:
+        """拉取指定交易日的行业板块成分映射。
+
+        参数：
+        - trade_date (str): 交易日期，格式 YYYYMMDD。
+
+        返回值：
+        - List[Dict]: `dc_member` 记录列表；失败时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        resp = call_tushare(
+            "dc_member",
+            params={"trade_date": trade_date},
+            fields="trade_date,ts_code,con_code,name",
+            use_query=False,
+        )
+        if not isinstance(resp, dict) or resp.get("code") != 200:
+            logger.warning(
+                "Tushare dc_member 调用失败: trade_date=%s message=%s",
+                trade_date,
+                resp.get("message") if isinstance(resp, dict) else resp,
+            )
+            return []
+        data = resp.get("data", {})
+        records = data.get("records", []) if isinstance(data, dict) else []
+        return [item for item in records if isinstance(item, dict)]
+
+    def _resolve_target_sectors(
+        self,
+        latest_sector_df: pd.DataFrame,
+        level: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """解析目标行业板块列表。
+
+        参数：
+        - latest_sector_df (pd.DataFrame): 最新交易日行业板块数据，需包含 `sector_code`、`sector_name`。
+        - level (Optional[str]): 东财行业层级，仅行业板块时生效。
+
+        返回值：
+        - pd.DataFrame: 过滤后的目标行业板块列表。
+
+        异常：
+        - 无。
+        """
+        if latest_sector_df.empty:
+            return latest_sector_df
+
+        filtered_df = latest_sector_df.copy()
+        if level and "level" in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df["level"].astype(str).str.strip() == level].copy()
+
+        return filtered_df
+
+    def _fetch_factor_rows(
+        self,
+        trade_dates: List[str],
+        fields: str,
+        target_codes: Set[str],
+    ) -> List[Dict]:
+        """按交易日拉取股票技术指标快照。
+
+        参数：
+        - trade_dates (List[str]): 待请求的交易日列表，格式 YYYYMMDD。
+        - fields (str): `stk_factor_pro` 请求字段列表。
+        - target_codes (Set[str]): 目标股票代码集合，用于在本地过滤记录。
+
+        返回值：
+        - List[Dict]: 满足目标股票范围的因子记录列表。
+
+        异常：
+        - 无。内部异常会记录日志并跳过异常日期。
+        """
+        factor_records: List[Dict] = []
         for trade_date in trade_dates:
             resp = call_tushare(
-                "daily",
+                "stk_factor_pro",
                 params={"trade_date": trade_date},
-                fields="ts_code,trade_date,close",
+                fields=fields,
+                use_query=False,
             )
-            if isinstance(resp, dict) and resp.get("code") == 200:
-                data = resp.get("data", {})
-                recs = data.get("records", []) if isinstance(data, dict) else []
-                if recs:
-                    tus_records.extend(item for item in recs if isinstance(item, dict))
-            else:
+            if not isinstance(resp, dict) or resp.get("code") != 200:
                 logger.warning(
-                    "Tushare daily 调用失败或为空: date=%s, message=%s",
+                    "Tushare stk_factor_pro 调用失败: trade_date=%s message=%s",
                     trade_date,
                     resp.get("message") if isinstance(resp, dict) else resp,
                 )
-        return tus_records
+                continue
+
+            data = resp.get("data", {})
+            records = data.get("records", []) if isinstance(data, dict) else []
+            if not records:
+                continue
+
+            filtered_records = [
+                item
+                for item in records
+                if isinstance(item, dict) and str(item.get("ts_code") or "").strip() in target_codes
+            ]
+            factor_records.extend(filtered_records)
+
+        return factor_records
+
+    def _build_supported_window_frame(
+        self,
+        factor_records: List[Dict],
+        ma_window: int,
+        output_trade_dates: Set[str],
+    ) -> pd.DataFrame:
+        """基于预计算均线字段构建行情数据框。
+
+        参数：
+        - factor_records (List[Dict]): `stk_factor_pro` 返回的原始记录。
+        - ma_window (int): 均线窗口。
+        - output_trade_dates (Set[str]): 需要输出的交易日集合。
+
+        返回值：
+        - pd.DataFrame: 包含 `stock_id`、`trade_date`、`close_price`、`ma_close` 的数据框。
+
+        异常：
+        - 无。
+        """
+        ma_field = f"ma_bfq_{ma_window}"
+        factor_df = pd.DataFrame(factor_records)
+        if factor_df.empty or ma_field not in factor_df.columns:
+            return pd.DataFrame()
+
+        factor_df["stock_id"] = factor_df["ts_code"].astype(str).str.strip()
+        factor_df["trade_date"] = factor_df["trade_date"].astype(str).map(self._normalize_trade_date)
+        factor_df["close_price"] = pd.to_numeric(factor_df["close"], errors="coerce")
+        factor_df["ma_close"] = pd.to_numeric(factor_df[ma_field], errors="coerce")
+        factor_df = factor_df[factor_df["trade_date"].isin(output_trade_dates)].copy()
+        return factor_df[["stock_id", "trade_date", "close_price", "ma_close"]]
+
+    def _build_rolling_window_frame(
+        self,
+        factor_records: List[Dict],
+        ma_window: int,
+        output_trade_dates: Set[str],
+    ) -> pd.DataFrame:
+        """基于收盘价本地滚动计算任意窗口均线。
+
+        参数：
+        - factor_records (List[Dict]): `stk_factor_pro` 返回的原始记录。
+        - ma_window (int): 均线窗口。
+        - output_trade_dates (Set[str]): 需要输出的交易日集合。
+
+        返回值：
+        - pd.DataFrame: 包含 `stock_id`、`trade_date`、`close_price`、`ma_close` 的数据框。
+
+        异常：
+        - 无。
+        """
+        factor_df = pd.DataFrame(factor_records)
+        if factor_df.empty:
+            return pd.DataFrame()
+
+        factor_df["stock_id"] = factor_df["ts_code"].astype(str).str.strip()
+        factor_df["trade_date"] = factor_df["trade_date"].astype(str).map(self._normalize_trade_date)
+        factor_df["close_price"] = pd.to_numeric(factor_df["close"], errors="coerce")
+        factor_df["trade_dt"] = pd.to_datetime(factor_df["trade_date"], format="%Y%m%d", errors="coerce")
+        factor_df = factor_df.dropna(subset=["trade_dt"]).sort_values(["stock_id", "trade_dt"])
+        factor_df["ma_close"] = (
+            factor_df.groupby("stock_id")["close_price"]
+            .transform(lambda series: series.rolling(window=ma_window, min_periods=ma_window).mean())
+        )
+        factor_df = factor_df[factor_df["trade_date"].isin(output_trade_dates)].copy()
+        return factor_df[["stock_id", "trade_date", "close_price", "ma_close"]]
 
     def get_industry_ma_breadth(
         self,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         ma_window: int = 20,
-        sector_codes: Optional[List[str]] = None,
+        idx_type: str = "行业板块",
+        level: Optional[str] = None,
     ) -> Optional[List[Dict]]:
-        """计算行业MA市场宽度
-        
-        功能：在指定日期范围内，计算每个行业“收盘价高于MA_N”的股票占比
-        Args:
-            start_date: 开始日期，YYYY-MM-DD
-            end_date: 结束日期，YYYY-MM-DD
-            ma_window: 移动平均窗口大小（交易日）
-            sector_codes: 行业板块代码列表（可选）
-        Returns:
-            每日每行业的宽度结果列表；失败返回None
-        事件：
-            - 参数默认化与校验
-            - 从 Tushare 读取个股日频数据
-            - 逐个股票计算滚动均线并比较收盘价
-            - 聚合到行业维度并缓存
+        """计算行业 MA 市场宽度。
+
+        功能：
+        - 在指定日期范围内，计算每个行业“收盘价高于 MA_N”的股票占比。
+
+        参数：
+        - start_date (Optional[str]): 开始日期，格式 YYYY-MM-DD。
+        - end_date (Optional[str]): 结束日期，格式 YYYY-MM-DD。
+        - ma_window (int): 移动平均窗口大小（交易日）。
+        - idx_type (str): 东方财富板块类型，支持行业板块、概念板块、地域板块。
+        - level (Optional[str]): 东财行业层级，仅 `idx_type=行业板块` 时生效。
+
+        返回值：
+        - Optional[List[Dict]]: 每日每行业的宽度结果列表；失败返回 `None`。
+
+        异常：
+        - 无。内部异常会记录日志并返回 `None`。
         """
         try:
-            # 基本参数校验与默认化
             if ma_window <= 1:
                 ma_window = 2
-            start_date, end_date = self._get_default_dates(start_date, end_date)
+            effective_idx_type = str(idx_type or "行业板块").strip() or "行业板块"
+            effective_level = level if effective_idx_type == "行业板块" else None
+            if effective_level and effective_level not in DC_INDUSTRY_LEVELS:
+                raise ValueError("level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业")
 
-            # 缓存键
-            cache_key = f"industry_ma_breadth_{start_date}_{end_date}_{ma_window}_{','.join(sector_codes) if sector_codes else 'all'}"
+            start_date, end_date = self._get_default_dates(start_date, end_date)
+            cache_key = (
+                "industry_ma_breadth_dc_"
+                f"{start_date}_{end_date}_{ma_window}_{effective_idx_type}_{effective_level or 'all-level'}_"
+                "all"
+            )
             try:
                 cached = cache.get(cache_key)
                 if cached is not None and isinstance(cached, list):
-                    logger.info("从缓存获取行业MA市场宽度数据")
+                    logger.info("从缓存获取行业 MA 市场宽度数据")
                     return cached
-            except Exception as e:
-                logger.warning("读取行业MA市场宽度缓存失败，将直接计算: %s", e)
+            except Exception as exc:
+                logger.warning("读取行业 MA 市场宽度缓存失败，将直接计算: %s", exc)
 
-            # 解析日期对象并扩展窗口起始（为计算MA需要向前取 ma_window-1 天）
-            start_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
-            end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
-            extended_start_dt = start_dt - timedelta(days=ma_window * 2)
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+            use_precomputed_ma = ma_window in SUPPORTED_PRECOMPUTED_WINDOWS
+            extended_start_dt = start_dt if use_precomputed_ma else start_dt - timedelta(days=ma_window * 2)
 
-            # 获取目标板块及成分映射
-            sectors = self._get_target_sectors(sector_codes)
-            if not sectors:
-                logger.warning("未获取到行业板块数据")
-                return []
-            member_records = get_sw_l1_members()
-            if not member_records:
-                logger.warning("未获取到申万一级行业成分股数据")
-                return []
-            sector_code_set = {item["code"] for item in sectors}
-            stocks_df = pd.DataFrame(
-                [
-                    {
-                        "stock_id": item["ts_code"],
-                        "code": item["ts_code"].split(".")[0],
-                        "sector_code": item["sector_code"],
-                        "sector_name": item["sector_name"],
-                    }
-                    for item in member_records
-                    if item.get("sector_code") in sector_code_set and item.get("ts_code")
-                ]
+            start_trade_date = self._normalize_trade_date(extended_start_dt.strftime("%Y-%m-%d"))
+            end_trade_date = self._normalize_trade_date(end_date)
+            requested_start_trade_date = self._normalize_trade_date(start_date)
+            requested_end_trade_date = self._normalize_trade_date(end_date)
+
+            dc_index_rows = self._fetch_dc_index_rows(
+                start_trade_date,
+                end_trade_date,
+                idx_type=effective_idx_type,
             )
-
-            if stocks_df.empty:
-                logger.warning("申万一级行业成分股为空")
-                return []
-            map_cols = stocks_df[["stock_id", "code", "sector_code", "sector_name"]].drop_duplicates()
-
-            tus_records = self._daily_rows_from_tushare(extended_start_dt, end_dt)
-            if not tus_records:
-                logger.warning("Tushare daily 未返回可用个股日线数据，请检查 TUSHARE_TOKEN 或日期范围")
+            if not dc_index_rows:
+                logger.warning("未获取到东方财富行业板块数据")
                 return []
 
-            ts_df = pd.DataFrame(tus_records)
-            if (
-                "ts_code" not in ts_df.columns
-                or "trade_date" not in ts_df.columns
-                or "close" not in ts_df.columns
-            ):
-                logger.warning("Tushare 返回数据缺少必要字段(ts_code, trade_date, close)")
+            index_df = pd.DataFrame(dc_index_rows)
+            if index_df.empty or not {"ts_code", "trade_date", "name"}.issubset(index_df.columns):
+                logger.warning("dc_index 返回数据缺少必要字段(ts_code, trade_date, name)")
                 return []
 
-            ts_df["code"] = ts_df["ts_code"].astype(str).str.split(".").str[0]
-            ts_df["date"] = pd.to_datetime(ts_df["trade_date"])
-            ts_df["close_price"] = pd.to_numeric(ts_df["close"], errors="coerce")
-            daily_df: pd.DataFrame = ts_df.merge(map_cols, on="code", how="inner")
-            daily_df = daily_df[
-                ["stock_id", "date", "close_price", "sector_code", "sector_name"]
+            index_df["trade_date"] = index_df["trade_date"].astype(str).map(self._normalize_trade_date)
+            index_df["sector_code"] = index_df["ts_code"].astype(str).str.strip()
+            index_df["sector_name"] = index_df["name"].astype(str).str.strip()
+            if "level" in index_df.columns:
+                index_df["level"] = index_df["level"].astype(str).str.strip()
+            else:
+                index_df["level"] = ""
+            all_trade_dates = sorted(index_df["trade_date"].dropna().unique().tolist())
+            output_trade_dates = [
+                item
+                for item in all_trade_dates
+                if requested_start_trade_date <= item <= requested_end_trade_date
             ]
-            logger.info(
-                "行业MA宽度：使用 Tushare daily %s 条（行业成分股数=%s）",
-                len(daily_df),
-                len(map_cols),
-            )
-
-            if daily_df.empty:
-                logger.warning("合并行业成分后日线为空")
+            if not output_trade_dates:
+                logger.warning("指定区间内未获取到有效交易日")
                 return []
 
-            # 分股票计算滚动MA
-            daily_df = daily_df.sort_values(['stock_id', 'date'])
-            daily_df['ma_close'] = (
-                daily_df.groupby('stock_id')['close_price']
-                .transform(lambda s: s.rolling(window=ma_window, min_periods=ma_window).mean())
+            latest_trade_date = output_trade_dates[-1]
+            latest_sector_df = (
+                index_df[index_df["trade_date"] == latest_trade_date][["sector_code", "sector_name", "level"]]
+                .drop_duplicates()
+                .reset_index(drop=True)
             )
+            target_sector_df = self._resolve_target_sectors(
+                latest_sector_df,
+                level=effective_level,
+            )
+            if target_sector_df.empty:
+                logger.warning("未匹配到目标行业板块")
+                return []
 
-            # 标记收盘价是否高于MA
-            daily_df['above_ma'] = (daily_df['close_price'] > daily_df['ma_close'])
+            target_sector_codes = set(target_sector_df["sector_code"].tolist())
+            dc_member_rows = self._fetch_dc_member_rows(latest_trade_date)
+            if not dc_member_rows:
+                logger.warning("未获取到东方财富行业板块成分数据")
+                return []
 
-            # 仅聚合目标日期范围（start_date ~ end_date），排除前置扩展段
-            mask_range = (daily_df['date'] >= pd.to_datetime(start_dt)) & (daily_df['date'] <= pd.to_datetime(end_dt))
-            range_df = daily_df.loc[mask_range].copy()
+            member_df = pd.DataFrame(dc_member_rows)
+            if member_df.empty or not {"ts_code", "con_code"}.issubset(member_df.columns):
+                logger.warning("dc_member 返回数据缺少必要字段(ts_code, con_code)")
+                return []
 
-            # 统计每日每行业的数量与比例
-            # eligible_count: 当日能计算MA（ma_close非空）的股票数量
+            member_df["sector_code"] = member_df["ts_code"].astype(str).str.strip()
+            member_df["stock_id"] = member_df["con_code"].astype(str).str.strip()
+            member_df = member_df[member_df["sector_code"].isin(target_sector_codes)].copy()
+            member_df = member_df.merge(target_sector_df, on="sector_code", how="left")
+            member_df = member_df[["stock_id", "sector_code", "sector_name"]].drop_duplicates()
+            if member_df.empty:
+                logger.warning("目标行业板块成分股为空")
+                return []
+
+            target_codes = set(member_df["stock_id"].tolist())
+            factor_request_dates = output_trade_dates if use_precomputed_ma else all_trade_dates
+            factor_fields = (
+                f"ts_code,trade_date,close,ma_bfq_{ma_window}"
+                if use_precomputed_ma
+                else "ts_code,trade_date,close"
+            )
+            factor_rows = self._fetch_factor_rows(factor_request_dates, factor_fields, target_codes)
+            if not factor_rows:
+                logger.warning("stk_factor_pro 未返回可用技术指标数据")
+                return []
+
+            if use_precomputed_ma:
+                factor_df = self._build_supported_window_frame(
+                    factor_rows,
+                    ma_window,
+                    set(output_trade_dates),
+                )
+            else:
+                factor_df = self._build_rolling_window_frame(
+                    factor_rows,
+                    ma_window,
+                    set(output_trade_dates),
+                )
+
+            if factor_df.empty:
+                logger.warning("未构建出可用的股票 MA 数据")
+                return []
+
+            factor_df = factor_df.merge(member_df, on="stock_id", how="inner")
+            if factor_df.empty:
+                logger.warning("技术指标数据与行业成分映射合并后为空")
+                return []
+
+            factor_df["above_ma"] = factor_df["close_price"] > factor_df["ma_close"]
             agg_df = (
-                range_df.groupby(['date', 'sector_code', 'sector_name'])
+                factor_df.groupby(["trade_date", "sector_code", "sector_name"])
                 .agg(
-                    count_above_ma=('above_ma', lambda x: int(x.fillna(False).sum())),
-                    eligible_count=('ma_close', lambda x: int(x.notna().sum()))
+                    count_above_ma=("above_ma", lambda values: int(values.fillna(False).sum())),
+                    eligible_count=("ma_close", lambda values: int(values.notna().sum())),
                 )
                 .reset_index()
             )
-            # 计算比例
-            agg_df['breadth_ratio'] = agg_df.apply(
-                lambda r: (r['count_above_ma'] / r['eligible_count']) if r['eligible_count'] > 0 else 0,
-                axis=1
+            agg_df["breadth_ratio"] = agg_df.apply(
+                lambda row: (row["count_above_ma"] / row["eligible_count"]) if row["eligible_count"] > 0 else 0,
+                axis=1,
             )
+            agg_df["date"] = agg_df["trade_date"].map(self._display_trade_date)
+            agg_df["breadth_ratio"] = agg_df["breadth_ratio"].round(4)
 
-            # 整理输出
-            agg_df['date'] = agg_df['date'].dt.strftime('%Y-%m-%d')
-            agg_df['breadth_ratio'] = agg_df['breadth_ratio'].round(4)
-
-            result = agg_df.sort_values(["date", "sector_code"]).to_dict("records")
+            result = agg_df[
+                ["date", "sector_code", "sector_name", "count_above_ma", "eligible_count", "breadth_ratio"]
+            ].sort_values(["date", "sector_code"]).to_dict("records")
 
             try:
                 cache.set(cache_key, result, self.cache_timeout)
-            except Exception as e:
-                logger.warning("写入行业MA市场宽度缓存失败: %s", e)
+            except Exception as exc:
+                logger.warning("写入行业 MA 市场宽度缓存失败: %s", exc)
+
+            logger.info(
+                "行业 MA 宽度计算完成: idx_type=%s level=%s sectors=%s factor_trade_dates=%s result_rows=%s",
+                effective_idx_type,
+                effective_level or "",
+                len(target_sector_df),
+                len(factor_request_dates),
+                len(result),
+            )
             return result
-        except Exception as e:
-            logger.error(f"计算行业MA市场宽度失败: {str(e)}")
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.error("计算行业 MA 市场宽度失败: %s", exc)
             return None
 
 
-# 创建策略实例，供视图层调用
 industry_ma_breadth_strategy = IndustryMABreadthStrategy()

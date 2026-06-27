@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from .auction_selection_strategy import AuctionSelectionStrategyService
+from .industry_ma_breadth_strategy import IndustryMABreadthStrategy
 from .limit_board_service import LimitBoardDataService
 from scheduled_tasks.stock_data_query_tasks import dc_board_rps
 from scheduled_tasks.stock_data_query_tasks import dc_board_member_rps
@@ -544,3 +545,347 @@ class DcBoardMemberRpsTests(unittest.TestCase):
         self.assertGreater(result_map.loc["000001.SZ", "RPS_5"], result_map.loc["000002.SZ", "RPS_5"])
         self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
+
+
+class IndustryMABreadthStrategyTests(unittest.TestCase):
+    """
+    组件：行业 MA 市场宽度策略测试。
+
+    功能：
+    - 验证行业宽度改为基于 `dc_index`、`dc_member`、`stk_factor_pro` 计算后，仍能输出正确的每日行业宽度结果。
+
+    参数：
+    - 无。
+
+    返回值：
+    - 无。
+
+    事件：
+    - 使用 mock 隔离 Tushare 调用与缓存依赖。
+    """
+
+    @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
+    def test_get_industry_ma_breadth_uses_precomputed_ma_fields_for_supported_windows(
+        self,
+        mock_call_tushare,
+        mock_cache,
+    ):
+        """
+        功能：验证内置均线窗口会直接使用 `stk_factor_pro` 的预计算均线字段。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (token, use_query)
+            params = params or {}
+            if interface == "dc_index":
+                self.assertEqual(params["idx_type"], "行业板块")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "BK001.DC", "trade_date": "20260102", "name": "行业A"},
+                            {"ts_code": "BK002.DC", "trade_date": "20260102", "name": "行业B"},
+                            {"ts_code": "BK001.DC", "trade_date": "20260103", "name": "行业A"},
+                            {"ts_code": "BK002.DC", "trade_date": "20260103", "name": "行业B"},
+                        ]
+                    },
+                }
+            if interface == "dc_member":
+                self.assertEqual(params["trade_date"], "20260103")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
+                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000002.SZ"},
+                            {"trade_date": "20260103", "ts_code": "BK002.DC", "con_code": "000003.SZ"},
+                        ]
+                    },
+                }
+            if interface == "stk_factor_pro":
+                self.assertEqual(fields, "ts_code,trade_date,close,ma_bfq_20")
+                records_by_date = {
+                    "20260102": [
+                        {"ts_code": "000001.SZ", "trade_date": "20260102", "close": 10.0, "ma_bfq_20": 9.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20260102", "close": 8.0, "ma_bfq_20": 8.0},
+                        {"ts_code": "000003.SZ", "trade_date": "20260102", "close": 7.0, "ma_bfq_20": 10.0},
+                    ],
+                    "20260103": [
+                        {"ts_code": "000001.SZ", "trade_date": "20260103", "close": 11.0, "ma_bfq_20": 10.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20260103", "close": 9.0, "ma_bfq_20": 8.0},
+                        {"ts_code": "000003.SZ", "trade_date": "20260103", "close": 11.0, "ma_bfq_20": 10.0},
+                    ],
+                }
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": records_by_date[params["trade_date"]]
+                    },
+                }
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+        strategy = IndustryMABreadthStrategy()
+
+        result = strategy.get_industry_ma_breadth(
+            start_date="2026-01-02",
+            end_date="2026-01-03",
+            ma_window=20,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(
+            result,
+            [
+                {
+                    "date": "2026-01-02",
+                    "sector_code": "BK001.DC",
+                    "sector_name": "行业A",
+                    "count_above_ma": 1,
+                    "eligible_count": 2,
+                    "breadth_ratio": 0.5,
+                },
+                {
+                    "date": "2026-01-02",
+                    "sector_code": "BK002.DC",
+                    "sector_name": "行业B",
+                    "count_above_ma": 0,
+                    "eligible_count": 1,
+                    "breadth_ratio": 0.0,
+                },
+                {
+                    "date": "2026-01-03",
+                    "sector_code": "BK001.DC",
+                    "sector_name": "行业A",
+                    "count_above_ma": 2,
+                    "eligible_count": 2,
+                    "breadth_ratio": 1.0,
+                },
+                {
+                    "date": "2026-01-03",
+                    "sector_code": "BK002.DC",
+                    "sector_name": "行业B",
+                    "count_above_ma": 1,
+                    "eligible_count": 1,
+                    "breadth_ratio": 1.0,
+                },
+            ],
+        )
+        mock_cache.set.assert_called_once()
+
+    @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
+    def test_get_industry_ma_breadth_computes_rolling_ma_for_custom_window(
+        self,
+        mock_call_tushare,
+        mock_cache,
+    ):
+        """
+        功能：验证非内置均线窗口会基于 `stk_factor_pro` 的收盘价快照本地滚动计算均线。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (token, use_query)
+            params = params or {}
+            if interface == "dc_index":
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "BK001.DC", "trade_date": "20251230", "name": "行业A"},
+                            {"ts_code": "BK001.DC", "trade_date": "20251231", "name": "行业A"},
+                            {"ts_code": "BK001.DC", "trade_date": "20260102", "name": "行业A"},
+                            {"ts_code": "BK001.DC", "trade_date": "20260105", "name": "行业A"},
+                        ]
+                    },
+                }
+            if interface == "dc_member":
+                self.assertEqual(params["trade_date"], "20260105")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"trade_date": "20260105", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
+                            {"trade_date": "20260105", "ts_code": "BK001.DC", "con_code": "000002.SZ"},
+                        ]
+                    },
+                }
+            if interface == "stk_factor_pro":
+                self.assertEqual(fields, "ts_code,trade_date,close")
+                records_by_date = {
+                    "20251230": [
+                        {"ts_code": "000001.SZ", "trade_date": "20251230", "close": 1.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20251230", "close": 3.0},
+                    ],
+                    "20251231": [
+                        {"ts_code": "000001.SZ", "trade_date": "20251231", "close": 2.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20251231", "close": 2.0},
+                    ],
+                    "20260102": [
+                        {"ts_code": "000001.SZ", "trade_date": "20260102", "close": 3.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20260102", "close": 1.0},
+                    ],
+                    "20260105": [
+                        {"ts_code": "000001.SZ", "trade_date": "20260105", "close": 4.0},
+                        {"ts_code": "000002.SZ", "trade_date": "20260105", "close": 1.0},
+                    ],
+                }
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": records_by_date[params["trade_date"]]
+                    },
+                }
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+        strategy = IndustryMABreadthStrategy()
+
+        result = strategy.get_industry_ma_breadth(
+            start_date="2026-01-02",
+            end_date="2026-01-05",
+            ma_window=3,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            result,
+            [
+                {
+                    "date": "2026-01-02",
+                    "sector_code": "BK001.DC",
+                    "sector_name": "行业A",
+                    "count_above_ma": 1,
+                    "eligible_count": 2,
+                    "breadth_ratio": 0.5,
+                },
+                {
+                    "date": "2026-01-05",
+                    "sector_code": "BK001.DC",
+                    "sector_name": "行业A",
+                    "count_above_ma": 1,
+                    "eligible_count": 2,
+                    "breadth_ratio": 0.5,
+                },
+            ],
+        )
+        mock_cache.set.assert_called_once()
+
+    @patch("stock_strategy.industry_ma_breadth_strategy.cache")
+    @patch("stock_strategy.industry_ma_breadth_strategy.call_tushare")
+    def test_get_industry_ma_breadth_filters_by_dc_industry_level(
+        self,
+        mock_call_tushare,
+        mock_cache,
+    ):
+        """
+        功能：验证当传入东财行业层级时，只返回指定 level 的板块宽度结果。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (fields, token, use_query)
+            params = params or {}
+            if interface == "dc_index":
+                self.assertEqual(params["idx_type"], "行业板块")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {
+                                "ts_code": "BK001.DC",
+                                "trade_date": "20260103",
+                                "name": "一级行业A",
+                                "idx_type": "行业板块",
+                                "level": "东财一级行业",
+                            },
+                            {
+                                "ts_code": "BK002.DC",
+                                "trade_date": "20260103",
+                                "name": "二级行业B",
+                                "idx_type": "行业板块",
+                                "level": "东财二级行业",
+                            },
+                        ]
+                    },
+                }
+            if interface == "dc_member":
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"trade_date": "20260103", "ts_code": "BK001.DC", "con_code": "000001.SZ"},
+                            {"trade_date": "20260103", "ts_code": "BK002.DC", "con_code": "000002.SZ"},
+                        ]
+                    },
+                }
+            if interface == "stk_factor_pro":
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "000001.SZ", "trade_date": "20260103", "close": 11.0, "ma_bfq_20": 10.0},
+                            {"ts_code": "000002.SZ", "trade_date": "20260103", "close": 8.0, "ma_bfq_20": 10.0},
+                        ]
+                    },
+                }
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+        strategy = IndustryMABreadthStrategy()
+
+        result = strategy.get_industry_ma_breadth(
+            start_date="2026-01-03",
+            end_date="2026-01-03",
+            ma_window=20,
+            idx_type="行业板块",
+            level="东财一级行业",
+        )
+
+        self.assertEqual(
+            result,
+            [
+                {
+                    "date": "2026-01-03",
+                    "sector_code": "BK001.DC",
+                    "sector_name": "一级行业A",
+                    "count_above_ma": 1,
+                    "eligible_count": 1,
+                    "breadth_ratio": 1.0,
+                }
+            ],
+        )
