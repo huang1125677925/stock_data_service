@@ -8,7 +8,11 @@
 
 - 功能：返回指定日期范围内，各东方财富板块中“收盘价高于 N 日均线”的股票占比。
 - 响应格式：统一使用 `success_response` / `error_response` 封装。
-- 当前实现基于以下 Tushare 接口：
+- 当前实现优先读取本地板块成分快照文件：
+  - `data/dc_board_members_snapshot.json`
+- 查询阶段优先只依赖以下 Tushare 接口：
+  - `stk_factor_pro`
+- 当本地快照缺失时，才会回退到在线模式：
   - `trade_cal`
   - `dc_index`
   - `dc_member`
@@ -96,17 +100,16 @@ GET /django/api/strategy/industry-ma-breadth/?start_date=2026-06-20&end_date=202
 
 ### 1. 板块与交易日获取
 
-- 调用 `trade_cal` 获取 `start_date ~ end_date` 区间内的实际交易日。
-- 使用区间内最新交易日调用 `dc_index` 获取最新板块清单。
+- 优先从本地快照文件加载板块列表和成分数据。
 - 根据 `idx_type` 过滤板块类型。
 - 如果传入 `level`，则在 `idx_type=行业板块` 的前提下进一步过滤东财行业层级。
-- 区间内可返回的日期，以交易日历返回的交易日为准。
+- 查询阶段按自然日遍历请求 `stk_factor_pro`，仅保留有返回数据的交易日结果。
 
 ### 2. 板块成分获取
 
-- 仅使用区间内最新交易日的板块成分。
-- 为避免单次结果被 5000 条上限截断，按目标板块代码在同一最新交易日逐个调用 `dc_member` 获取成分。
-- 区间内历史日期统一复用这份最新成分映射，不再按天查询成分。
+- 板块成分来自本地快照文件中的 `members` 数组。
+- 快照生成时会使用最新交易日的 `dc_index` 与 `dc_member` 导出全量板块及成分。
+- 查询阶段不再实时调用 `dc_member`。
 
 ### 3. 技术指标获取
 

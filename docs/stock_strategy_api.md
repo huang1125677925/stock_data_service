@@ -254,8 +254,8 @@
 
 **说明**:
 - 宽度定义为“收盘价高于MA_N”的股票在行业内的占比，breadth_ratio范围为[0,1]，结果四舍五入到4位小数。
-- 当前实现基于 Tushare `trade_cal`、`dc_index`、`dc_member`、`stk_factor_pro` 计算，并支持按 `idx_type`、`level` 查看指定东方财富板块层级。
-- 交易日期按实际交易日历计算；`dc_index` 与 `dc_member` 仅使用区间内最新交易日的数据，其中板块成分会在最新交易日按目标板块逐个获取后复用到整个区间。
+- 当前实现优先使用本地快照文件 `data/dc_board_members_snapshot.json` 提供板块与成分映射，查询阶段主要依赖 Tushare `stk_factor_pro`。
+- 当本地快照缺失时，才会回退为 Tushare 在线模式：`trade_cal`、`dc_index`、`dc_member`、`stk_factor_pro`。
 - 接口返回统一使用 success_response/error_response 封装。
 
 ---

@@ -207,13 +207,15 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 **功能说明**：
 
-- 使用 `trade_cal` 获取区间内交易日
-- 使用东方财富 `dc_index` 获取最新交易日板块列表
-- 使用 `dc_member` 获取最新交易日板块成分
-- 使用 `stk_factor_pro` 计算各板块中收盘价高于 N 日均线的股票占比
+- 优先使用本地 JSON 快照文件提供东方财富板块与成分数据
+- 查询阶段主要使用 `stk_factor_pro` 计算各板块中收盘价高于 N 日均线的股票占比
+- 当本地快照缺失时，再回退到 `trade_cal` + `dc_index` + `dc_member` + `stk_factor_pro`
 
 **Tushare数据源**：
 
+- 查询主链路：`stk_factor_pro`
+- 快照导出：`dc_index` + `dc_member`
+- 回退链路：
 - `trade_cal`
 - `dc_index`
 - `dc_member`

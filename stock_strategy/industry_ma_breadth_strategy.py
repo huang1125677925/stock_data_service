@@ -3,6 +3,7 @@
 行业 MA 市场宽度策略模块
 
 功能：
+- 优先基于本地 JSON 快照加载东方财富板块与成分数据
 - 基于交易日历获取区间交易日
 - 基于东方财富行业板块 `dc_index` 获取最新交易日的板块列表
 - 基于 `dc_member` 获取最新交易日的行业成分映射
@@ -24,8 +25,10 @@
 - 聚合行业宽度结果并写入缓存
 """
 
+import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
@@ -39,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_PRECOMPUTED_WINDOWS = {5, 10, 20, 30, 60, 90, 250}
 DC_INDUSTRY_LEVELS = {"东财一级行业", "东财二级行业", "东财三级行业"}
+DC_BOARD_SNAPSHOT_FILE = (
+    Path(__file__).resolve().parent.parent / "data" / "dc_board_members_snapshot.json"
+)
 
 
 class IndustryMABreadthStrategy:
@@ -123,6 +129,116 @@ class IndustryMABreadthStrategy:
         if len(normalized) == 8:
             return f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:]}"
         return str(trade_date or "")
+
+    def _iter_calendar_dates(self, start_date: str, end_date: str) -> List[str]:
+        """返回自然日序列，用于仅依赖 stk_factor_pro 请求时的日期遍历。
+
+        参数：
+        - start_date (str): 开始日期，格式 YYYY-MM-DD。
+        - end_date (str): 结束日期，格式 YYYY-MM-DD。
+
+        返回值：
+        - List[str]: 自然日列表，格式 YYYYMMDD。
+
+        异常：
+        - 无。
+        """
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+        current_dt = start_dt
+        dates: List[str] = []
+        while current_dt <= end_dt:
+            dates.append(current_dt.strftime("%Y%m%d"))
+            current_dt += timedelta(days=1)
+        return dates
+
+    def _load_local_board_snapshot(self) -> List[Dict]:
+        """加载本地东方财富板块成分快照。
+
+        参数：
+        - 无。
+
+        返回值：
+        - List[Dict]: 快照中的板块列表；文件缺失或解析失败时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        try:
+            if not DC_BOARD_SNAPSHOT_FILE.exists():
+                logger.warning("本地板块成分快照不存在: %s", DC_BOARD_SNAPSHOT_FILE)
+                return []
+            with DC_BOARD_SNAPSHOT_FILE.open("r", encoding="utf-8") as file_obj:
+                payload = json.load(file_obj)
+            boards = payload.get("boards", []) if isinstance(payload, dict) else []
+            return [item for item in boards if isinstance(item, dict)]
+        except Exception as exc:
+            logger.warning("读取本地板块成分快照失败: %s", exc)
+            return []
+
+    def _resolve_snapshot_boards(
+        self,
+        snapshot_boards: List[Dict],
+        idx_type: str,
+        level: Optional[str],
+    ) -> List[Dict]:
+        """从本地快照中过滤目标板块。
+
+        参数：
+        - snapshot_boards (List[Dict]): 快照板块列表。
+        - idx_type (str): 东方财富板块类型。
+        - level (Optional[str]): 东财行业层级。
+
+        返回值：
+        - List[Dict]: 命中的目标板块列表。
+
+        异常：
+        - 无。
+        """
+        filtered_boards = [
+            item for item in snapshot_boards
+            if str(item.get("idx_type") or "").strip() == idx_type
+        ]
+        if level:
+            filtered_boards = [
+                item for item in filtered_boards
+                if str(item.get("level") or "").strip() == level
+            ]
+        return filtered_boards
+
+    def _build_member_df_from_snapshot(self, boards: List[Dict]) -> pd.DataFrame:
+        """将本地快照板块列表转换为板块成分映射数据框。
+
+        参数：
+        - boards (List[Dict]): 目标板块快照列表。
+
+        返回值：
+        - pd.DataFrame: 包含 `stock_id`、`sector_code`、`sector_name` 的数据框。
+
+        异常：
+        - 无。
+        """
+        member_rows: List[Dict] = []
+        for board in boards:
+            sector_code = str(board.get("sector_code") or "").strip()
+            sector_name = str(board.get("sector_name") or "").strip()
+            members = board.get("members") or []
+            if not sector_code or not members:
+                continue
+            for stock_id in members:
+                normalized_stock_id = str(stock_id or "").strip()
+                if not normalized_stock_id:
+                    continue
+                member_rows.append(
+                    {
+                        "stock_id": normalized_stock_id,
+                        "sector_code": sector_code,
+                        "sector_name": sector_name,
+                    }
+                )
+        if not member_rows:
+            return pd.DataFrame(columns=["stock_id", "sector_code", "sector_name"])
+        return pd.DataFrame(member_rows).drop_duplicates()
 
     def _fetch_dc_index_rows(
         self,
@@ -359,6 +475,101 @@ class IndustryMABreadthStrategy:
         factor_df = factor_df[factor_df["trade_date"].isin(output_trade_dates)].copy()
         return factor_df[["stock_id", "trade_date", "close_price", "ma_close"]]
 
+    def _compute_from_snapshot(
+        self,
+        start_date: str,
+        end_date: str,
+        ma_window: int,
+        idx_type: str,
+        level: Optional[str],
+    ) -> Optional[List[Dict]]:
+        """基于本地 JSON 快照与 stk_factor_pro 计算行业宽度。
+
+        参数：
+        - start_date (str): 开始日期，格式 YYYY-MM-DD。
+        - end_date (str): 结束日期，格式 YYYY-MM-DD。
+        - ma_window (int): 均线窗口。
+        - idx_type (str): 东方财富板块类型。
+        - level (Optional[str]): 东财行业层级。
+
+        返回值：
+        - Optional[List[Dict]]: 成功返回结果列表；快照不可用时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回 `None`。
+        """
+        try:
+            snapshot_boards = self._load_local_board_snapshot()
+            if not snapshot_boards:
+                return []
+
+            target_boards = self._resolve_snapshot_boards(snapshot_boards, idx_type=idx_type, level=level)
+            if not target_boards:
+                logger.warning("本地快照未匹配到目标板块: idx_type=%s level=%s", idx_type, level or "")
+                return []
+
+            member_df = self._build_member_df_from_snapshot(target_boards)
+            if member_df.empty:
+                logger.warning("本地快照中目标板块没有成分股数据")
+                return []
+
+            use_precomputed_ma = ma_window in SUPPORTED_PRECOMPUTED_WINDOWS
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            extended_start_dt = start_dt if use_precomputed_ma else start_dt - timedelta(days=ma_window * 2)
+            output_dates = set(self._iter_calendar_dates(start_date, end_date))
+            factor_request_dates = (
+                self._iter_calendar_dates(start_date, end_date)
+                if use_precomputed_ma
+                else self._iter_calendar_dates(extended_start_dt.strftime("%Y-%m-%d"), end_date)
+            )
+
+            target_codes = set(member_df["stock_id"].tolist())
+            factor_fields = (
+                f"ts_code,trade_date,close,ma_bfq_{ma_window}"
+                if use_precomputed_ma
+                else "ts_code,trade_date,close"
+            )
+            factor_rows = self._fetch_factor_rows(factor_request_dates, factor_fields, target_codes)
+            if not factor_rows:
+                logger.warning("基于本地快照计算时，stk_factor_pro 未返回可用技术指标数据")
+                return []
+
+            if use_precomputed_ma:
+                factor_df = self._build_supported_window_frame(factor_rows, ma_window, output_dates)
+            else:
+                factor_df = self._build_rolling_window_frame(factor_rows, ma_window, output_dates)
+
+            if factor_df.empty:
+                logger.warning("基于本地快照计算时，未构建出可用的股票 MA 数据")
+                return []
+
+            factor_df = factor_df.merge(member_df, on="stock_id", how="inner")
+            if factor_df.empty:
+                logger.warning("基于本地快照计算时，技术指标数据与本地成分快照合并后为空")
+                return []
+
+            factor_df["above_ma"] = factor_df["close_price"] > factor_df["ma_close"]
+            agg_df = (
+                factor_df.groupby(["trade_date", "sector_code", "sector_name"])
+                .agg(
+                    count_above_ma=("above_ma", lambda values: int(values.fillna(False).sum())),
+                    eligible_count=("ma_close", lambda values: int(values.notna().sum())),
+                )
+                .reset_index()
+            )
+            agg_df["breadth_ratio"] = agg_df.apply(
+                lambda row: (row["count_above_ma"] / row["eligible_count"]) if row["eligible_count"] > 0 else 0,
+                axis=1,
+            )
+            agg_df["date"] = agg_df["trade_date"].map(self._display_trade_date)
+            agg_df["breadth_ratio"] = agg_df["breadth_ratio"].round(4)
+            return agg_df[
+                ["date", "sector_code", "sector_name", "count_above_ma", "eligible_count", "breadth_ratio"]
+            ].sort_values(["date", "sector_code"]).to_dict("records")
+        except Exception as exc:
+            logger.error("基于本地快照计算行业 MA 宽度失败: %s", exc)
+            return None
+
     def get_industry_ma_breadth(
         self,
         start_date: Optional[str] = None,
@@ -395,7 +606,7 @@ class IndustryMABreadthStrategy:
 
             start_date, end_date = self._get_default_dates(start_date, end_date)
             cache_key = (
-                "industry_ma_breadth_dc_v2_"
+                "industry_ma_breadth_dc_v3_"
                 f"{start_date}_{end_date}_{ma_window}_{effective_idx_type}_{effective_level or 'all-level'}_"
                 "all"
             )
@@ -406,6 +617,28 @@ class IndustryMABreadthStrategy:
                     return cached
             except Exception as exc:
                 logger.warning("读取行业 MA 市场宽度缓存失败，将直接计算: %s", exc)
+
+            snapshot_result = self._compute_from_snapshot(
+                start_date=start_date,
+                end_date=end_date,
+                ma_window=ma_window,
+                idx_type=effective_idx_type,
+                level=effective_level,
+            )
+            if snapshot_result is None:
+                return None
+            if snapshot_result:
+                try:
+                    cache.set(cache_key, snapshot_result, self.cache_timeout)
+                except Exception as exc:
+                    logger.warning("写入行业 MA 市场宽度缓存失败: %s", exc)
+                logger.info(
+                    "行业 MA 宽度计算完成（本地快照模式）: idx_type=%s level=%s result_rows=%s",
+                    effective_idx_type,
+                    effective_level or "",
+                    len(snapshot_result),
+                )
+                return snapshot_result
 
             start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
             end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
