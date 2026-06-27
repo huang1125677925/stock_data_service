@@ -12,29 +12,146 @@ from typing import List, Optional, Dict, Tuple
 from django.core.cache import cache
 
 from common.tushare_proxy import call_tushare
-from common.tushare_industry import get_open_trade_dates
+from common.tushare_industry import (
+    get_latest_trade_date as get_latest_open_trade_date,
+    get_open_trade_dates,
+)
 
 
 def _ensure_date_str(date: Optional[str]) -> str:
-    """返回 YYYYMMDD 格式的日期字符串，默认使用今天。"""
+    """
+    功能：将传入日期标准化为 YYYYMMDD 字符串，未传时默认返回今天日期。
+
+    Args:
+        date: 原始日期字符串，支持 YYYYMMDD 或 YYYY-MM-DD；为空时使用当前系统日期。
+
+    Returns:
+        str: 标准化后的 YYYYMMDD 格式日期字符串。
+
+    Raises:
+        无。函数内部不会主动抛出异常。
+    """
     if date:
         return date.replace('-', '')
     return datetime.now().strftime('%Y%m%d')
 
 
 def _get_latest_trade_date(token: Optional[str] = None) -> Optional[str]:
-    """通过 dc_index 获取最新的交易日（取返回记录中的最大 trade_date）。"""
-    resp = call_tushare('dc_index', params={}, token=token, fields='ts_code,name,trade_date', use_query=False)
-    if resp.get('code') != 200:
-        return None
-    records = (resp.get('data') or {}).get('records') or []
-    if not records:
-        return None
+    """
+    功能：获取截至当前日期最近一个开市日。
+
+    Args:
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+
+    Returns:
+        Optional[str]: 最近开市日，格式为 YYYYMMDD；若无法获取则返回 None。
+
+    Raises:
+        无。函数内部异常时统一返回 None。
+    """
     try:
-        dates = [r.get('trade_date') for r in records if r.get('trade_date')]
-        return max(dates) if dates else None
+        return get_latest_open_trade_date(token=token)
     except Exception:
         return None
+
+
+def _get_recent_trade_dates(
+    end_date: str,
+    token: Optional[str] = None,
+    max_count: int = 5,
+) -> List[str]:
+    """
+    功能：获取截止指定日期向前最近若干个开市日，用于可用行情日期回退。
+
+    Args:
+        end_date: 截止日期，格式为 YYYYMMDD。
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+        max_count: 需要返回的最近开市日数量，默认 5。
+
+    Returns:
+        List[str]: 按日期从近到远排序的开市日列表；无法获取时返回空列表。
+
+    Raises:
+        无。函数内部异常时统一返回空列表。
+    """
+    if max_count <= 0:
+        return []
+
+    try:
+        end_dt = datetime.strptime(end_date, '%Y%m%d')
+    except ValueError:
+        return []
+
+    window_days = max(max_count * 7, 14)
+    for _ in range(6):
+        start_dt = end_dt - timedelta(days=window_days)
+        trade_dates = get_open_trade_dates(
+            start_dt.strftime('%Y%m%d'),
+            end_date,
+            token=token,
+        )
+        if trade_dates:
+            return sorted(trade_dates, reverse=True)[:max_count]
+        window_days *= 2
+    return []
+
+
+def _resolve_latest_available_board_trade_date(
+    preferred_date: str,
+    idx_type: Optional[str],
+    level: Optional[str],
+    token: Optional[str],
+    max_fallback_count: int = 5,
+) -> Tuple[Optional[str], Dict[str, Dict[str, str]], List[str]]:
+    """
+    功能：解析 `index-rps` 应使用的实际截止交易日，并在最新开市日无板块行情时回退到最近可用交易日。
+
+    Args:
+        preferred_date: 优先使用的截止日期，格式为 YYYYMMDD。
+        idx_type: 板块类型，如概念板块、行业板块、地域板块。
+        level: 东财行业层级，仅在行业板块场景下生效。
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+        max_fallback_count: 最多向前回退检查的开市日数量，默认 5。
+
+    Returns:
+        Tuple[Optional[str], Dict[str, Dict[str, str]], List[str]]:
+        - 第一个返回值：实际可用的截止交易日；未命中时返回 None。
+        - 第二个返回值：该交易日对应的板块映射。
+        - 第三个返回值：回退过程中的提示信息列表。
+
+    Raises:
+        无。函数内部不会主动抛出异常，异常场景通过空结果返回。
+    """
+    warnings: List[str] = []
+    candidate_dates = _get_recent_trade_dates(preferred_date, token=token, max_count=max_fallback_count)
+    if not candidate_dates:
+        candidate_dates = [preferred_date]
+
+    for candidate_date in candidate_dates:
+        board_map = _get_board_map_by_date(candidate_date, token, idx_type=idx_type, level=level)
+        if not board_map:
+            continue
+
+        daily_df = _fetch_dc_daily_trade_date(candidate_date, idx_type=idx_type, token=token)
+        if daily_df.empty:
+            continue
+
+        available_codes = set(daily_df['ts_code'].astype(str))
+        matched_board_map = {
+            code: meta
+            for code, meta in board_map.items()
+            if code in available_codes
+        }
+        if not matched_board_map:
+            continue
+
+        if candidate_date != preferred_date:
+            warnings.append(
+                f'dc_daily在{preferred_date}无可用数据，已自动回退至最近可用交易日{candidate_date}'
+            )
+        return candidate_date, matched_board_map, warnings
+
+    return None, {}, warnings
 DC_INDUSTRY_LEVELS = {'东财一级行业', '东财二级行业', '东财三级行业'}
 
 
@@ -234,17 +351,23 @@ def compute_board_rps(
     token: Optional[str] = None,
 ) -> Tuple[Optional[pd.DataFrame], List[str]]:
     """
-    使用 Tushare dc_index/dc_daily 计算东方财富板块的 RPS 排名。
+    功能：使用 Tushare `dc_index` 和 `dc_daily` 计算东方财富板块的多周期 RPS 排名。
 
     Args:
-        periods: 周期列表（单位：交易日），例如 [5, 20, 60]
-        idx_type: 板块类型（dc_daily 的 idx_type 参数），如：概念板块、行业板块、地域板块
-        trade_date: 计算截止交易日（YYYYMMDD），为空时自动获取最新交易日
-        level: 东财行业层级，仅在 idx_type=行业板块 时使用
-        token: 传递给 Tushare 的 token
+        periods: 周期列表（单位：交易日），例如 [5, 20, 60]。
+        idx_type: 板块类型（`dc_daily` 的 `idx_type` 参数），如概念板块、行业板块、地域板块。
+        trade_date: 计算截止交易日，格式为 YYYYMMDD；为空时自动解析最近可用交易日。
+        level: 东财行业层级，仅在 `idx_type=行业板块` 时使用。
+        token: 传递给 Tushare 的 Token，可选。
 
     Returns:
-        (df, errors): df 包含 ts_code、name、pct_change、RPS_today 及各周期的 return_{p} 与 RPS_{p} 列；errors 为错误信息列表
+        Tuple[Optional[pandas.DataFrame], List[str]]:
+        - 第一个返回值：结果 DataFrame，包含 `ts_code`、`name`、`pct_change`、`RPS_today`
+          以及各周期的 `return_{p}` 与 `RPS_{p}` 列；失败时返回 None。
+        - 第二个返回值：错误与提示信息列表。
+
+    Raises:
+        无。函数内部捕获异常并通过 `errors` 返回错误信息。
     """
     errors: List[str] = []
     normalized_periods = [int(period) for period in periods]
@@ -264,6 +387,25 @@ def compute_board_rps(
         if latest:
             end_date = latest
 
+    # 获取板块映射，并在未显式指定 trade_date 时回退到最近可用行情交易日。
+    if trade_date is None:
+        resolved_end_date, board_map, fallback_warnings = _resolve_latest_available_board_trade_date(
+            end_date,
+            idx_type=idx_type,
+            level=effective_level,
+            token=token,
+        )
+        errors.extend(fallback_warnings)
+        if not resolved_end_date or not board_map:
+            errors.append('未获取到板块列表或 trade_date 无数据')
+            return None, errors
+        end_date = resolved_end_date
+    else:
+        board_map = _get_board_map_by_date(end_date, token, idx_type=idx_type, level=effective_level)
+        if not board_map:
+            errors.append('未获取到板块列表或 trade_date 无数据')
+            return None, errors
+
     cache_key = (
         f'board_rps:v2:{end_date}:{idx_type or ""}:{effective_level or ""}:'
         f'{",".join(map(str, normalized_periods))}'
@@ -271,12 +413,6 @@ def compute_board_rps(
     cached_result = cache.get(cache_key)
     if cached_result:
         return cached_result
-
-    # 获取板块映射
-    board_map = _get_board_map_by_date(end_date, token, idx_type=idx_type, level=effective_level)
-    if not board_map:
-        errors.append('未获取到板块列表或 trade_date 无数据')
-        return None, errors
 
     result_df = pd.DataFrame({
         'ts_code': list(board_map.keys()),
@@ -324,6 +460,7 @@ def compute_board_rps(
 
     drop_columns = ['close_end'] + [f'close_{p}' for p in normalized_periods if f'close_{p}' in result_df.columns]
     result_df = result_df.drop(columns=drop_columns, errors='ignore')
+    result_df.attrs['trade_date'] = end_date
 
     # 排序：优先第一个周期，其次其他周期之和
     sort_cols = [f'RPS_{normalized_periods[0]}'] if normalized_periods else []

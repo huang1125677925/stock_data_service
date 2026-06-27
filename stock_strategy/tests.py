@@ -436,6 +436,85 @@ class BoardRpsTradeDayTests(unittest.TestCase):
         self.assertGreater(result_map.loc["BK001", "RPS_today"], result_map.loc["BK002", "RPS_today"])
         mock_cache.set.assert_called_once()
 
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.cache")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._fetch_dc_daily_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_recent_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_board_map_by_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_latest_trade_date")
+    def test_compute_board_rps_falls_back_to_previous_trade_date_when_latest_snapshot_missing(
+        self,
+        mock_get_latest_trade_date,
+        mock_get_board_map_by_date,
+        mock_get_recent_trade_dates,
+        mock_get_period_start_trade_dates,
+        mock_fetch_dc_daily_trade_date,
+        mock_cache,
+    ):
+        """
+        功能：验证未显式传入 trade_date 时，若最新开市日无 dc_daily 快照，会自动回退到最近可用交易日。
+
+        参数：
+        - mock_get_latest_trade_date: 模拟最近开市日查询结果。
+        - mock_get_board_map_by_date: 模拟板块列表查询结果。
+        - mock_get_recent_trade_dates: 模拟最近交易日候选列表。
+        - mock_get_period_start_trade_dates: 模拟周期起始交易日映射。
+        - mock_fetch_dc_daily_trade_date: 模拟单日板块快照数据。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        board_map = {
+            "BK001": {"name": "机器人", "level": ""},
+            "BK002": {"name": "算力", "level": ""},
+        }
+        mock_get_latest_trade_date.return_value = "20260109"
+        mock_get_recent_trade_dates.return_value = ["20260109", "20260108"]
+        mock_get_board_map_by_date.side_effect = [board_map, board_map]
+        mock_get_period_start_trade_dates.return_value = {5: "20260102"}
+        mock_fetch_dc_daily_trade_date.side_effect = [
+            pd.DataFrame(columns=["ts_code", "trade_date", "close", "pct_change"]),
+            pd.DataFrame(
+                [
+                    {"ts_code": "BK001", "trade_date": "20260108", "close": 110, "pct_change": 5.0},
+                    {"ts_code": "BK002", "trade_date": "20260108", "close": 104, "pct_change": 1.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "BK001", "trade_date": "20260102", "close": 100, "pct_change": 0.0},
+                    {"ts_code": "BK002", "trade_date": "20260102", "close": 100, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "BK001", "trade_date": "20260108", "close": 110, "pct_change": 5.0},
+                    {"ts_code": "BK002", "trade_date": "20260108", "close": 104, "pct_change": 1.0},
+                ]
+            ),
+        ]
+        mock_cache.get.return_value = None
+
+        result_df, errors = dc_board_rps.compute_board_rps(
+            periods=[5],
+            idx_type="行业板块",
+            level="东财一级行业",
+            trade_date=None,
+        )
+
+        self.assertIsNotNone(result_df)
+        self.assertTrue(
+            any("已自动回退至最近可用交易日20260108" in error for error in errors),
+            msg=f"unexpected errors: {errors}",
+        )
+        mock_get_period_start_trade_dates.assert_called_once_with("20260108", [5], token=None)
+        self.assertEqual(result_df.attrs.get("trade_date"), "20260108")
+        mock_cache.set.assert_called_once()
+
 
 class DcBoardMemberRpsTests(unittest.TestCase):
     """
