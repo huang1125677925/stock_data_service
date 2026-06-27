@@ -10,22 +10,94 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from datetime import datetime
 
-def validate_stock_symbol(symbol: str) -> bool:
+def _infer_stock_market(code: str) -> Optional[str]:
     """
-    验证股票代码格式
-    
-    Args:
-        symbol: 股票代码
-    
-    Returns:
-        是否有效
+    功能：根据 A 股数字代码推断交易所后缀。
+    参数：
+    - code(str): 六位数字股票代码。
+    返回值：
+    - Optional[str]: 识别成功时返回 `SH`、`SZ` 或 `BJ`，否则返回 None。
+    异常情况：
+    - 本函数不抛出异常；当输入为空、格式不合法或无法识别时返回 None。
+    """
+    if not code or not re.fullmatch(r'\d{6}', code):
+        return None
+
+    if code.startswith(('6', '9')):
+        return 'SH'
+    if code.startswith(('0', '2', '3')):
+        return 'SZ'
+    if code.startswith(('4', '8')):
+        return 'BJ'
+    return None
+
+def normalize_stock_symbol(symbol: str, output_format: str = 'plain') -> Optional[str]:
+    """
+    功能：规范化股票代码，兼容 plain、前缀式与 Tushare ts_code 格式。
+    参数：
+    - symbol(str): 原始股票代码，支持 `600909`、`sh600909`、`600909.SH` 等格式。
+    - output_format(str): 输出格式，`plain` 返回纯六位代码，`ts` 返回 Tushare `ts_code` 格式。
+    返回值：
+    - Optional[str]: 规范化后的股票代码；无法识别时返回 None。
+    异常情况：
+    - 当 `output_format` 非法时抛出 ValueError。
+    - 其他非法输入不抛出异常，统一返回 None。
+    """
+    if output_format not in {'plain', 'ts'}:
+        raise ValueError(f'不支持的股票代码输出格式: {output_format}')
+
+    if not symbol or not isinstance(symbol, str):
+        return None
+
+    normalized = symbol.strip().upper()
+    if not normalized:
+        return None
+
+    ts_match = re.fullmatch(r'(\d{6})\.(SH|SZ|BJ)', normalized)
+    if ts_match:
+        code, market = ts_match.groups()
+        return code if output_format == 'plain' else f'{code}.{market}'
+
+    prefixed_match = re.fullmatch(r'(SH|SZ|BJ)(\d{6})', normalized)
+    if prefixed_match:
+        market, code = prefixed_match.groups()
+        return code if output_format == 'plain' else f'{code}.{market}'
+
+    if re.fullmatch(r'\d{6}', normalized):
+        market = _infer_stock_market(normalized)
+        if market is None:
+            return None
+        return normalized if output_format == 'plain' else f'{normalized}.{market}'
+
+    if re.fullmatch(r'[A-Z]{1,6}', normalized):
+        return normalized
+
+    return None
+
+def validate_stock_symbol(symbol: str, allow_market_suffix: bool = False) -> bool:
+    """
+    功能：验证股票代码格式，并按需放行 Tushare `ts_code` 格式。
+    参数：
+    - symbol(str): 待验证的股票代码。
+    - allow_market_suffix(bool): 是否允许 `600909.SH` 这类带交易所后缀的格式。
+    返回值：
+    - bool: 股票代码格式是否有效。
+    异常情况：
+    - 本函数不抛出异常；任意非法输入均返回 False。
     """
     if not symbol or not isinstance(symbol, str):
         return False
-    
-    # 支持A股和美股格式，包括sz000001、sh600000等格式
-    pattern = r'^[A-Z]{1,6}$|^\d{6}$|^[a-zA-Z]{2}\d{6}$'
-    return bool(re.match(pattern, symbol.upper()))
+
+    normalized = symbol.strip().upper()
+    if not normalized:
+        return False
+
+    if allow_market_suffix and normalize_stock_symbol(normalized, output_format='ts'):
+        return True
+
+    # 默认保持原有兼容性，仅接受纯字母代码、六位数字代码与前缀式代码。
+    pattern = r'^[A-Z]{1,6}$|^\d{6}$|^(SH|SZ|BJ)\d{6}$'
+    return bool(re.fullmatch(pattern, normalized))
 
 def validate_date_range(start_date: str, end_date: str) -> bool:
     """

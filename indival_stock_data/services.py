@@ -15,7 +15,7 @@ from django.conf import settings
 from django.db import transaction
 from .models import IndividualStock, IndividualStockDaily, IndividualStockWeekly, IndividualStockRealtime, PerformanceReport
 from common.tushare_proxy import call_tushare, call_tushare_pro_bar
-from common.validators import validate_stock_symbol
+from common.validators import validate_stock_symbol, normalize_stock_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -277,21 +277,27 @@ class IndividualStockService:
         Returns:
             股票历史行情数据列表
         """
-        if not validate_stock_symbol(stock_code):
+        normalized_ts_code = normalize_stock_symbol(stock_code, output_format='ts')
+        if not normalized_ts_code:
             logger.warning(f"无效的股票代码: {stock_code}")
             return None
-        
+
         # 设置默认日期
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
         if not start_date:
             start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
-        
+
         try:
-            ts_code = self._to_ts_code(stock_code)
             freq = (frequency or "daily").lower()
-            ts_freq = 'W' if freq in ("weekly", "week", "w") else 'D'
             adjust = (adjust or '').lower()
+            if freq not in {"daily", "weekly", "week", "w"}:
+                raise ValueError(f"不支持的数据频率: {frequency}")
+            if adjust not in {'', 'qfq', 'hfq'}:
+                raise ValueError(f"不支持的复权类型: {adjust}")
+
+            ts_code = self._to_ts_code(normalized_ts_code)
+            ts_freq = 'W' if freq in ("weekly", "week", "w") else 'D'
 
             fields = 'ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount'
             if adjust in {'qfq', 'hfq'}:
@@ -333,20 +339,26 @@ class IndividualStockService:
             history_list.sort(key=lambda row: row.get('date') or '')
             logger.info(f"从 Tushare 获取股票{stock_code}历史行情数据，共 {len(history_list)} 条")
             return history_list
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"获取股票{stock_code}历史行情数据失败: {str(e)}")
             return None
 
     def _to_ts_code(self, stock_code: str) -> str:
-        if '.' in stock_code:
-            return stock_code.upper()
-        if stock_code.startswith(('6', '9')):
-            return f'{stock_code}.SH'
-        if stock_code.startswith(('0', '2', '3')):
-            return f'{stock_code}.SZ'
-        if stock_code.startswith(('4', '8')):
-            return f'{stock_code}.BJ'
-        return f'{stock_code}.SZ'
+        """
+        功能：将股票代码统一转换为 Tushare `ts_code` 格式。
+        参数：
+        - stock_code(str): 原始股票代码，支持 plain、前缀式与 `ts_code` 格式。
+        返回值：
+        - str: 标准化后的 `ts_code`，例如 `600909.SH`。
+        异常情况：
+        - 当股票代码无法识别时抛出 ValueError。
+        """
+        normalized_ts_code = normalize_stock_symbol(stock_code, output_format='ts')
+        if normalized_ts_code is None:
+            raise ValueError(f'无效的股票代码: {stock_code}')
+        return normalized_ts_code
 
     def _normalize_tushare_history_record(self, row: Dict) -> Optional[Dict]:
         raw_trade_date = str(row.get('trade_date') or '')

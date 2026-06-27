@@ -13,7 +13,7 @@ from rest_framework.permissions import AllowAny
 from django.http import JsonResponse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from .services import individual_stock_service, stock_tag_service
-from common.validators import validate_stock_symbol
+from common.validators import validate_stock_symbol, normalize_stock_symbol
 from common.response import success_response, error_response
 from .models import IndividualStock, StrategyResult, BalanceSheet, IncomeStatement, CashFlowStatement, StockTag
 from .serializers import (
@@ -240,23 +240,33 @@ class StockHistoryView(APIView):
           - end_date(str, 可选): 结束日期，格式：YYYYMMDD，默认今天
           - adjust(str, 可选): 复权类型，""为不复权，"qfq"前复权，"hfq"后复权
           - frequency(str, 可选): 数据频率，"daily"(默认) 或 "weekly"（周频）
-        - stock_code(str): 股票代码
+        - stock_code(str): 股票代码，支持 `600909`、`sh600909`、`600909.SH` 等格式
         返回值：
         - JsonResponse: 使用success_response返回历史数据列表；参数错误或服务异常使用error_response返回错误信息。
         事件：
         - 当股票代码无效或参数格式错误时，记录日志并返回错误响应；当查询无数据时返回空列表。
         """
         try:
-            if not validate_stock_symbol(stock_code):
+            if not validate_stock_symbol(stock_code, allow_market_suffix=True):
                 return error_response(f"无效的股票代码: {stock_code}", 400)
-            
+
+            normalized_stock_code = normalize_stock_symbol(stock_code, output_format='ts')
+            if normalized_stock_code is None:
+                return error_response(f"无效的股票代码: {stock_code}", 400)
+
             # 获取查询参数
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             adjust = request.query_params.get('adjust', "")
             frequency = request.query_params.get('frequency', 'daily')
-            
-            history = individual_stock_service.get_stock_history(stock_code, start_date, end_date, adjust, frequency)
+
+            history = individual_stock_service.get_stock_history(
+                normalized_stock_code,
+                start_date,
+                end_date,
+                adjust,
+                frequency,
+            )
             return success_response(history)
         except ValueError as e:
             logger.error(f"参数格式错误: {str(e)}")
