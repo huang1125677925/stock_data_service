@@ -1510,3 +1510,124 @@ class IndustryTurnoverStrategyTests(unittest.TestCase):
         self.assertEqual(result[-1]["date"], "2026-01-04")
         self.assertEqual(result[-1]["amount_percentile"], 100)
         self.assertNotIn("2026-01-05", [item["date"] for item in result])
+
+    @patch("stock_strategy.industry_turnover_strategy.cache")
+    @patch("stock_strategy.industry_turnover_strategy.get_open_trade_dates")
+    @patch("stock_strategy.industry_turnover_strategy.call_tushare")
+    def test_get_industry_turnover_percentile_uses_recent_board_snapshot_for_history(
+        self,
+        mock_call_tushare,
+        mock_get_open_trade_dates,
+        mock_cache,
+    ):
+        """
+        功能：验证历史日期缺少同日 dc_index 时，会回退使用最近可用板块清单映射历史 dc_daily。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_get_open_trade_dates: 模拟交易日历返回。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+        mock_get_open_trade_dates.side_effect = [
+            ["20200612", "20200611", "20200610"],
+            ["20200610", "20200611", "20200612"],
+        ]
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (fields, token, use_query)
+            params = params or {}
+            if interface == "dc_index":
+                trade_date = params.get("trade_date")
+                if trade_date:
+                    return {"code": 200, "data": {"records": []}}
+                self.assertEqual(params["idx_type"], "行业板块")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {
+                                "ts_code": "BK001.DC",
+                                "trade_date": "20250530",
+                                "name": "一级行业A",
+                                "idx_type": "行业板块",
+                                "level": "东财一级行业",
+                            },
+                            {
+                                "ts_code": "BK002.DC",
+                                "trade_date": "20250530",
+                                "name": "一级行业B",
+                                "idx_type": "行业板块",
+                                "level": "东财一级行业",
+                            },
+                            {
+                                "ts_code": "BK003.DC",
+                                "trade_date": "20250530",
+                                "name": "二级行业C",
+                                "idx_type": "行业板块",
+                                "level": "东财二级行业",
+                            },
+                        ]
+                    },
+                }
+            if interface == "dc_daily":
+                trade_date = params["trade_date"]
+                if trade_date == "20200612":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"ts_code": "BK001.DC", "trade_date": "20200612", "amount": 100.0},
+                                {"ts_code": "BK002.DC", "trade_date": "20200612", "amount": 300.0},
+                                {"ts_code": "BK099.DC", "trade_date": "20200612", "amount": 900.0},
+                            ]
+                        },
+                    }
+                if trade_date == "20200611":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"ts_code": "BK001.DC", "trade_date": "20200611", "amount": 200.0},
+                                {"ts_code": "BK002.DC", "trade_date": "20200611", "amount": 600.0},
+                            ]
+                        },
+                    }
+                if trade_date == "20200610":
+                    return {
+                        "code": 200,
+                        "data": {
+                            "records": [
+                                {"ts_code": "BK001.DC", "trade_date": "20200610", "amount": 150.0},
+                                {"ts_code": "BK002.DC", "trade_date": "20200610", "amount": 450.0},
+                            ]
+                        },
+                    }
+                raise AssertionError(f"unexpected trade_date: {trade_date}")
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+        strategy = IndustryTurnoverStrategy()
+
+        result = strategy.get_industry_turnover_percentile(
+            start_date="2020-06-10",
+            end_date="2020-06-12",
+            idx_type="行业板块",
+            level="东财一级行业",
+        )
+
+        self.assertEqual(len(result), 6)
+        self.assertEqual(result[0]["date"], "2020-06-10")
+        self.assertEqual(result[-1]["date"], "2020-06-12")
+        self.assertEqual(
+            {item["sector_code"] for item in result},
+            {"BK001.DC", "BK002.DC"},
+        )
+        self.assertEqual(result[-1]["daily_total_amount"], 400.0)
+        self.assertEqual(result[-1]["amount_percentile"], 100)

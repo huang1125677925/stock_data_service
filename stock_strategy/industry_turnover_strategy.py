@@ -239,6 +239,67 @@ class IndustryTurnoverStrategy:
             filtered_rows.append(item)
         return filtered_rows
 
+    def _fetch_latest_dc_index_rows(
+        self,
+        idx_type: str,
+        level: Optional[str],
+    ) -> Tuple[Optional[str], List[Dict]]:
+        """拉取最近可用的东方财富板块清单。
+
+        参数：
+        - idx_type (str): 东方财富板块类型。
+        - level (Optional[str]): 东财行业层级，仅行业板块时生效。
+
+        返回值：
+        - Tuple[Optional[str], List[Dict]]: 最近板块清单对应的交易日与过滤后的记录列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空结果。
+        """
+        resp = call_tushare(
+            "dc_index",
+            params={"idx_type": idx_type},
+            fields="ts_code,trade_date,name,idx_type,level",
+            use_query=False,
+        )
+        if not isinstance(resp, dict) or resp.get("code") != 200:
+            logger.warning(
+                "Tushare dc_index 最新快照调用失败: idx_type=%s message=%s",
+                idx_type,
+                resp.get("message") if isinstance(resp, dict) else resp,
+            )
+            return None, []
+
+        data = resp.get("data", {})
+        records = data.get("records", []) if isinstance(data, dict) else []
+        if not records:
+            return None, []
+
+        latest_trade_date = ""
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            trade_date = self._normalize_trade_date(item.get("trade_date"))
+            if trade_date and trade_date > latest_trade_date:
+                latest_trade_date = trade_date
+        if not latest_trade_date:
+            return None, []
+
+        filtered_rows: List[Dict] = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            if self._normalize_trade_date(item.get("trade_date")) != latest_trade_date:
+                continue
+            if level and str(item.get("level") or "").strip() != level:
+                continue
+            code = str(item.get("ts_code") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not code or not name:
+                continue
+            filtered_rows.append(item)
+        return latest_trade_date, filtered_rows
+
     def _build_board_map(self, rows: List[Dict]) -> Dict[str, Dict[str, str]]:
         """将板块列表转换为板块映射。
 
@@ -262,6 +323,54 @@ class IndustryTurnoverStrategy:
                 "level": str(item.get("level") or "").strip(),
             }
         return board_map
+
+    def _resolve_reference_board_map(
+        self,
+        preferred_date: str,
+        idx_type: str,
+        level: Optional[str],
+        max_fallback_count: int = 5,
+    ) -> Tuple[Dict[str, Dict[str, str]], Optional[str]]:
+        """解析可用于映射历史行情的板块清单。
+
+        参数：
+        - preferred_date (str): 优先使用的参考日期，格式 YYYYMMDD。
+        - idx_type (str): 东方财富板块类型。
+        - level (Optional[str]): 东财行业层级，仅行业板块时生效。
+        - max_fallback_count (int): 优先回退检查的最近开市日数量。
+
+        返回值：
+        - Tuple[Dict[str, Dict[str, str]], Optional[str]]: 板块映射与实际命中的板块快照日期。
+
+        异常：
+        - 无。内部异常场景通过空结果返回。
+        """
+        candidate_dates = self._get_recent_trade_dates(preferred_date, max_count=max_fallback_count)
+        if not candidate_dates:
+            candidate_dates = [preferred_date]
+
+        for candidate_date in candidate_dates:
+            board_rows = self._fetch_dc_index_rows(candidate_date, idx_type=idx_type, level=level)
+            board_map = self._build_board_map(board_rows)
+            if board_map:
+                return board_map, candidate_date
+
+        latest_trade_date, latest_rows = self._fetch_latest_dc_index_rows(
+            idx_type=idx_type,
+            level=level,
+        )
+        latest_board_map = self._build_board_map(latest_rows)
+        if latest_board_map:
+            logger.info(
+                "未命中同日板块清单，改用最近可用dc_index快照映射历史行情: preferred_date=%s board_trade_date=%s idx_type=%s level=%s",
+                preferred_date,
+                latest_trade_date or "",
+                idx_type,
+                level or "",
+            )
+            return latest_board_map, latest_trade_date
+
+        return {}, None
 
     def _fetch_dc_daily_trade_date(self, trade_date: str, idx_type: str) -> pd.DataFrame:
         """按单个交易日获取东方财富板块成交额快照。
@@ -312,7 +421,7 @@ class IndustryTurnoverStrategy:
         idx_type: str,
         level: Optional[str],
         max_fallback_count: int = 5,
-    ) -> Tuple[Optional[str], Dict[str, Dict[str, str]]]:
+    ) -> Tuple[Optional[str], Dict[str, Dict[str, str]], Optional[str]]:
         """解析实际可用的截止交易日与目标板块集合。
 
         参数：
@@ -322,25 +431,26 @@ class IndustryTurnoverStrategy:
         - max_fallback_count (int): 最多向前回退检查的开市日数量。
 
         返回值：
-        - Tuple[Optional[str], Dict[str, Dict[str, str]]]:
-          第一个值为实际可用交易日，第二个值为命中的板块映射。
+        - Tuple[Optional[str], Dict[str, Dict[str, str]], Optional[str]]:
+          第一个值为实际可用交易日，第二个值为命中的板块映射，第三个值为板块清单参考日期。
 
         异常：
         - 无。内部异常场景通过空结果返回。
         """
+        board_map, board_trade_date = self._resolve_reference_board_map(
+            preferred_date=preferred_date,
+            idx_type=idx_type,
+            level=level,
+            max_fallback_count=max_fallback_count,
+        )
+        if not board_map:
+            return None, {}, board_trade_date
+
         candidate_dates = self._get_recent_trade_dates(preferred_date, max_count=max_fallback_count)
         if not candidate_dates:
             candidate_dates = [preferred_date]
 
         for candidate_date in candidate_dates:
-            board_rows = self._fetch_dc_index_rows(candidate_date, idx_type=idx_type, level=level)
-            if not board_rows:
-                continue
-
-            board_map = self._build_board_map(board_rows)
-            if not board_map:
-                continue
-
             daily_df = self._fetch_dc_daily_trade_date(candidate_date, idx_type=idx_type)
             if daily_df.empty:
                 continue
@@ -353,8 +463,8 @@ class IndustryTurnoverStrategy:
             }
             if not matched_board_map:
                 continue
-            return candidate_date, matched_board_map
-        return None, {}
+            return candidate_date, matched_board_map, board_trade_date
+        return None, {}, board_trade_date
 
     def _build_turnover_frame(
         self,
@@ -509,17 +619,18 @@ class IndustryTurnoverStrategy:
 
         try:
             preferred_end_trade_date = self._normalize_trade_date(end_date)
-            actual_end_trade_date, board_map = self._resolve_latest_available_trade_date(
+            actual_end_trade_date, board_map, board_trade_date = self._resolve_latest_available_trade_date(
                 preferred_end_trade_date,
                 idx_type=effective_idx_type,
                 level=effective_level,
             )
             if not actual_end_trade_date or not board_map:
                 logger.warning(
-                    "未解析到可用的东财板块成交额数据: end_date=%s idx_type=%s level=%s",
+                    "未解析到可用的东财板块成交额数据: end_date=%s idx_type=%s level=%s board_trade_date=%s",
                     end_date,
                     effective_idx_type,
                     effective_level or "",
+                    board_trade_date or "",
                 )
                 return []
 
