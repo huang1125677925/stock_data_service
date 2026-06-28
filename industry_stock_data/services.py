@@ -1465,6 +1465,8 @@ class IndustrySectorService:
         异常：
             无。内部异常会记录日志并返回空列表。
         """
+        from common.tushare_proxy import call_tushare
+
         flow_fields = (
             "ts_code,trade_date,name,net_amount,net_amount_rate,"
             "buy_elg_amount,buy_elg_amount_rate,"
