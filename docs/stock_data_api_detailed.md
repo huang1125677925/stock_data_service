@@ -1268,6 +1268,9 @@
 | ------ | ---- | ---- | ---- |
 | start_date | string | 否 | 开始日期，格式：YYYY-MM-DD，默认为30天前 |
 | end_date | string | 否 | 结束日期，格式：YYYY-MM-DD，默认为当前日期 |
+| week_flag | boolean | 否 | 是否按周聚合，默认 `false` |
+| idx_type | string | 否 | 东方财富板块类型，支持 `行业板块`、`概念板块`、`地域板块`，默认 `行业板块` |
+| level | string | 否 | 东财行业层级，仅 `idx_type=行业板块` 时生效，支持 `东财一级行业`、`东财二级行业`、`东财三级行业` |
 
 **返回示例**：
 ```json
@@ -1319,6 +1322,12 @@
 | medium_net_inflow_ratio | float | 中单净流入占比（%） |
 | small_net_inflow_amount | float | 小单净流入金额（元） |
 | small_net_inflow_ratio | float | 小单净流入占比（%） |
+
+补充说明：
+
+- 接口会参考最新交易日的 `dc_index` 快照锁定目标板块，再按交易日拉取 `moneyflow_ind_dc` 数据。
+- 当 `week_flag=true` 时，`dates` 将返回 `YYYY-Www` 格式的周序列，`congestions` 中对应值为周平均结果。
+- `level` 仅在 `idx_type=行业板块` 时参与过滤。
 
 ### 25. 获取行业板块资金流排行榜
 

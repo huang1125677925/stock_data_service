@@ -465,40 +465,60 @@ def get_historical_rps(request):
 @require_http_methods(["GET"])
 def get_industry_turnover_percentile(request):
     """
-    获取行业换手率百分位数据
-    
-    Query Parameters:
-        date (str): 查询日期，格式YYYY-MM-DD，默认为最新日期
-        percentile (float): 百分位数，0-100之间，默认80
-    
-    Returns:
-        JSON响应
+    板块成交额百分位查询接口
+
+    功能：
+    - 基于东方财富板块日频行情 `dc_daily`，返回目标板块的成交额、占总额百分比与成交额百分位。
+
+    参数（Query Parameters）：
+    - start_date(str): 开始日期，格式 YYYY-MM-DD，默认过去 90 天
+    - end_date(str): 结束日期，格式 YYYY-MM-DD，默认当天
+    - idx_type(str): 东方财富板块类型，支持：行业板块、概念板块、地域板块；默认行业板块
+    - level(str): 东财行业层级，仅 idx_type=行业板块 时生效，支持：东财一级行业、东财二级行业、东财三级行业
+
+    返回值：
+    - 成功：返回包含板块成交额、占总额比例、成交额百分位的 JSON 数据
+    - 失败：返回错误信息 JSON
+
+    事件：
+    - 参数解析与校验
+    - 调用成交额百分位策略
+    - 统一响应封装 success_response/error_response
     """
     try:
-        # 获取查询参数
         start_date = request.GET.get('start_date', None)
         end_date = request.GET.get('end_date', None)
-        use_cache = request.GET.get('use_cache', 'true').lower() == 'true'
-        
-        # 获取行业成交额占比分位数数据
+        idx_type = request.GET.get('idx_type', '行业板块')
+        level = request.GET.get('level')
+        allowed_levels = {'东财一级行业', '东财二级行业', '东财三级行业'}
+        effective_level = level if idx_type == '行业板块' else None
+        if effective_level and effective_level not in allowed_levels:
+            return error_response('level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业', 400)
+
         result = industry_turnover_strategy.get_industry_turnover_percentile(
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            idx_type=idx_type,
+            level=effective_level,
         )
-        
         if result is None:
-            return error_response('获取行业成交额占比分位数数据失败', 500)
-        
+            return error_response('获取板块成交额百分位数据失败', 500)
+
+        actual_end_date = result[-1]['date'] if result else None
         return success_response({
             'total': len(result),
             'data': result,
             'start_date': start_date,
             'end_date': end_date,
+            'actual_end_date': actual_end_date,
+            'idx_type': idx_type,
+            'level': effective_level,
             'query_time': datetime.now().isoformat()
         })
-        
+    except ValueError as e:
+        return error_response(f'参数错误: {str(e)}', 400)
     except Exception as e:
-        return error_response(f'获取行业成交额占比分位数数据失败: {str(e)}', 500)
+        return error_response(f'获取板块成交额百分位数据失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])

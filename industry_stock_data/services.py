@@ -6,7 +6,8 @@ Django股票数据服务
 
 import logging
 import json
-from typing import Dict, List, Optional
+from collections import defaultdict
+from typing import Dict, List, Optional, Set, Tuple
 import pandas as pd
 import akshare as ak
 from datetime import datetime, timedelta
@@ -19,6 +20,12 @@ from indival_stock_data.models import IndividualStock
 
 
 logger = logging.getLogger(__name__)
+DC_INDUSTRY_LEVELS = {"东财一级行业", "东财二级行业", "东财三级行业"}
+DC_CONTENT_TYPE_MAP = {
+    "行业板块": "行业",
+    "概念板块": "概念",
+    "地域板块": "地域",
+}
 
 class StockDataService:
     """股票数据服务类"""
@@ -1232,6 +1239,301 @@ class IndustrySectorService:
         self.max_retries = getattr(settings, 'STOCK_MAX_RETRIES', 3)
         
         logger.info(f"行业板块数据服务初始化: cache_timeout={self.cache_timeout}s")
+
+    def _normalize_trade_date(self, date_str: Optional[str]) -> str:
+        """
+        标准化交易日字符串。
+
+        参数：
+            date_str: 输入日期，支持 YYYY-MM-DD 或 YYYYMMDD。
+
+        返回值：
+            去掉分隔符后的 YYYYMMDD 字符串；空值时返回空字符串。
+
+        异常：
+            无。内部仅做字符串清洗。
+        """
+        value = str(date_str or "").strip()
+        if not value:
+            return ""
+        return value.replace("-", "")
+
+    def _display_trade_date(self, trade_date: str) -> str:
+        """
+        将交易日转换为接口展示格式。
+
+        参数：
+            trade_date: 交易日，格式 YYYYMMDD 或 YYYY-MM-DD。
+
+        返回值：
+            YYYY-MM-DD 格式的日期字符串。
+
+        异常：
+            无。无法识别时返回原始字符串。
+        """
+        normalized = self._normalize_trade_date(trade_date)
+        if len(normalized) == 8:
+            return f"{normalized[:4]}-{normalized[4:6]}-{normalized[6:8]}"
+        return str(trade_date or "")
+
+    def _get_default_fund_flow_dates(
+        self,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        weekly_flag: bool,
+    ) -> Tuple[str, str]:
+        """
+        生成行业资金流接口的默认日期范围。
+
+        参数：
+            start_date: 开始日期，格式 YYYY-MM-DD。
+            end_date: 结束日期，格式 YYYY-MM-DD。
+            weekly_flag: 是否按周聚合。
+
+        返回值：
+            标准化后的开始日期和结束日期元组，格式均为 YYYY-MM-DD。
+
+        异常：
+            无。默认值由当前时间推导。
+        """
+        if not end_date:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+        if not start_date:
+            delta = timedelta(weeks=20) if weekly_flag else timedelta(days=30)
+            start_date = (datetime.now() - delta).strftime('%Y-%m-%d')
+        return start_date, end_date
+
+    def _get_trade_dates(self, start_date: str, end_date: str) -> List[str]:
+        """
+        获取指定自然日区间内的实际交易日列表。
+
+        参数：
+            start_date: 开始日期，格式 YYYY-MM-DD。
+            end_date: 结束日期，格式 YYYY-MM-DD。
+
+        返回值：
+            交易日列表，格式 YYYYMMDD。
+
+        异常：
+            无。底层异常向上抛出，由调用方统一处理。
+        """
+        from common.tushare_industry import get_open_trade_dates
+
+        return get_open_trade_dates(
+            self._normalize_trade_date(start_date),
+            self._normalize_trade_date(end_date),
+        )
+
+    def _fetch_dc_index_rows(self, trade_date: str, idx_type: Optional[str] = None) -> List[Dict]:
+        """
+        拉取指定交易日的东方财富板块列表。
+
+        参数：
+            trade_date: 交易日，格式 YYYYMMDD。
+            idx_type: 东方财富板块类型，例如行业板块、概念板块、地域板块。
+
+        返回值：
+            dc_index 记录列表；调用失败时返回空列表。
+
+        异常：
+            无。内部异常会记录日志并返回空列表。
+        """
+        from common.tushare_proxy import call_tushare
+
+        params = {"trade_date": trade_date}
+        if idx_type:
+            params["idx_type"] = idx_type
+
+        resp = call_tushare(
+            "dc_index",
+            params=params,
+            fields="ts_code,trade_date,name,idx_type,level",
+            use_query=False,
+        )
+        if not isinstance(resp, dict) or resp.get("code") != 200:
+            logger.warning(
+                "Tushare dc_index 调用失败: trade_date=%s idx_type=%s message=%s",
+                trade_date,
+                idx_type or "",
+                resp.get("message") if isinstance(resp, dict) else resp,
+            )
+            return []
+
+        data = resp.get("data", {})
+        records = data.get("records", []) if isinstance(data, dict) else []
+        return [item for item in records if isinstance(item, dict)]
+
+    def _resolve_target_sector_df(
+        self,
+        trade_date: str,
+        idx_type: str,
+        level: Optional[str],
+    ) -> pd.DataFrame:
+        """
+        解析目标板块清单。
+
+        参数：
+            trade_date: 最新交易日，格式 YYYYMMDD。
+            idx_type: 东方财富板块类型。
+            level: 东财行业层级，仅行业板块时生效。
+
+        返回值：
+            包含 sector_code、sector_name、level 的目标板块数据框。
+
+        异常：
+            无。数据缺失时返回空 DataFrame。
+        """
+        dc_index_rows = self._fetch_dc_index_rows(trade_date, idx_type=idx_type)
+        if not dc_index_rows:
+            return pd.DataFrame(columns=["sector_code", "sector_name", "level"])
+
+        index_df = pd.DataFrame(dc_index_rows)
+        if index_df.empty or not {"ts_code", "trade_date", "name"}.issubset(index_df.columns):
+            logger.warning("dc_index 返回数据缺少必要字段(ts_code, trade_date, name)")
+            return pd.DataFrame(columns=["sector_code", "sector_name", "level"])
+
+        index_df["trade_date"] = index_df["trade_date"].astype(str).map(self._normalize_trade_date)
+        index_df["sector_code"] = index_df["ts_code"].astype(str).str.strip()
+        index_df["sector_name"] = index_df["name"].astype(str).str.strip()
+        if "level" in index_df.columns:
+            index_df["level"] = index_df["level"].astype(str).str.strip()
+        else:
+            index_df["level"] = ""
+
+        target_sector_df = (
+            index_df[index_df["trade_date"] == trade_date][["sector_code", "sector_name", "level"]]
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+        if level:
+            target_sector_df = target_sector_df[target_sector_df["level"] == level].copy()
+
+        return target_sector_df
+
+    def _build_daily_fund_flow_payload(self, item: Dict) -> Dict:
+        """
+        构建单个交易日的资金流指标对象。
+
+        参数：
+            item: moneyflow_ind_dc 返回的单条记录。
+
+        返回值：
+            标准化后的资金流指标字典，包含主力及各档净流入金额、占比和合计字段。
+
+        异常：
+            无。字段缺失时按 0 处理。
+        """
+        payload = {
+            "main_net_inflow_amount": round(float(item.get("net_amount") or 0), 4),
+            "main_net_inflow_ratio": round(float(item.get("net_amount_rate") or 0), 4),
+            "super_large_net_inflow_amount": round(float(item.get("buy_elg_amount") or 0), 4),
+            "super_large_net_inflow_ratio": round(float(item.get("buy_elg_amount_rate") or 0), 4),
+            "large_net_inflow_amount": round(float(item.get("buy_lg_amount") or 0), 4),
+            "large_net_inflow_ratio": round(float(item.get("buy_lg_amount_rate") or 0), 4),
+            "medium_net_inflow_amount": round(float(item.get("buy_md_amount") or 0), 4),
+            "medium_net_inflow_ratio": round(float(item.get("buy_md_amount_rate") or 0), 4),
+            "small_net_inflow_amount": round(float(item.get("buy_sm_amount") or 0), 4),
+            "small_net_inflow_ratio": round(float(item.get("buy_sm_amount_rate") or 0), 4),
+        }
+        payload["total_net_inflow_amount"] = round(
+            payload["main_net_inflow_amount"]
+            + payload["super_large_net_inflow_amount"]
+            + payload["large_net_inflow_amount"]
+            + payload["medium_net_inflow_amount"]
+            + payload["small_net_inflow_amount"],
+            4,
+        )
+        payload["total_net_inflow_ratio"] = round(
+            payload["main_net_inflow_ratio"]
+            + payload["super_large_net_inflow_ratio"]
+            + payload["large_net_inflow_ratio"]
+            + payload["medium_net_inflow_ratio"]
+            + payload["small_net_inflow_ratio"],
+            4,
+        )
+        return payload
+
+    def _empty_industry_fund_flow_response(self) -> Dict:
+        """
+        构造空的行业资金流响应体。
+
+        参数：
+            无。
+
+        返回值：
+            包含空 dates、swCodeNames 和 congestions 的字典。
+
+        异常：
+            无。
+        """
+        return {"dates": [], "swCodeNames": [], "congestions": {}}
+
+    def _build_weekly_fund_flow_payload(
+        self,
+        trade_dates: List[str],
+        sector_codes: List[str],
+        per_code_rows: Dict[str, Dict[str, Dict]],
+    ) -> Dict:
+        """
+        按周汇总行业资金流数据。
+
+        参数：
+            trade_dates: 交易日列表，格式 YYYYMMDD。
+            sector_codes: 目标板块代码列表。
+            per_code_rows: 按板块代码和交易日组织的资金流数据。
+
+        返回值：
+            接口响应字典，dates 为周序列，congestions 为每周均值序列。
+
+        异常：
+            无。缺失周数据时使用空对象占位。
+        """
+        weekly_dates = sorted({
+            datetime.strptime(trade_date, "%Y%m%d").date().strftime("%Y-W%W")
+            for trade_date in trade_dates
+        })
+        weekly_congestions: Dict[str, List[Dict]] = {}
+        metric_keys = [
+            "main_net_inflow_amount",
+            "main_net_inflow_ratio",
+            "super_large_net_inflow_amount",
+            "super_large_net_inflow_ratio",
+            "large_net_inflow_amount",
+            "large_net_inflow_ratio",
+            "medium_net_inflow_amount",
+            "medium_net_inflow_ratio",
+            "small_net_inflow_amount",
+            "small_net_inflow_ratio",
+            "total_net_inflow_amount",
+            "total_net_inflow_ratio",
+        ]
+
+        for sector_code in sector_codes:
+            bucket: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+            count_map: Dict[str, int] = defaultdict(int)
+            for trade_date, payload in per_code_rows.get(sector_code, {}).items():
+                week_key = datetime.strptime(trade_date, "%Y%m%d").date().strftime("%Y-W%W")
+                count_map[week_key] += 1
+                for key in metric_keys:
+                    bucket[week_key][key] += float(payload.get(key, 0))
+
+            weekly_series: List[Dict] = []
+            for week_key in weekly_dates:
+                if not count_map.get(week_key):
+                    weekly_series.append({})
+                    continue
+                weekly_series.append(
+                    {
+                        key: round(bucket[week_key][key] / count_map[week_key], 4)
+                        for key in metric_keys
+                    }
+                )
+            weekly_congestions[sector_code] = weekly_series
+
+        return {
+            "dates": weekly_dates,
+            "congestions": weekly_congestions,
+        }
     
     def get_industry_sectors(self) -> Optional[List[Dict]]:
         """获取所有行业板块列表
@@ -1573,171 +1875,155 @@ class IndustrySectorService:
             logger.error(f"获取{date}日行业板块资金流排行榜失败: {str(e)}")
             return None
 
-    def get_industry_fund_flow_data(self, start_date: str = None, end_date: str = None, weekly_flag: bool = False) -> Optional[Dict]:
+    def get_industry_fund_flow_data(
+        self,
+        start_date: str = None,
+        end_date: str = None,
+        weekly_flag: bool = False,
+        idx_type: str = "行业板块",
+        level: Optional[str] = None,
+    ) -> Optional[Dict]:
         """
-        获取行业资金流向数据
-        
-        Args:
-            start_date: 开始日期，格式YYYY-MM-DD
-            end_date: 结束日期，格式YYYY-MM-DD
-            weekly_flag: 是否按周汇聚数据，为True时获取最近20周的周平均值
-            
-        Returns:
-            包含日期、行业代码名称和资金流向数据的字典
+        获取行业板块资金流向数据。
+
+        参数：
+            start_date: 开始日期，格式 YYYY-MM-DD。
+            end_date: 结束日期，格式 YYYY-MM-DD。
+            weekly_flag: 是否按周汇聚数据，为 True 时返回周均值序列。
+            idx_type: 东方财富板块类型，支持行业板块、概念板块、地域板块。
+            level: 东财行业层级，仅 idx_type=行业板块 时生效。
+
+        返回值：
+            包含 dates、swCodeNames 和 congestions 的字典；失败时返回 None。
+
+        异常：
+            ValueError: 当 level 参数不在允许范围内时抛出。
+            其他异常：内部记录日志并返回 None。
         """
         try:
-            from collections import defaultdict
-            from common.tushare_industry import get_open_trade_dates
             from common.tushare_proxy import call_tushare
-            
-            # 设置默认日期范围
-            if weekly_flag:
-                # 按周汇聚时，获取最近20周的数据（约140天）
-                if not end_date:
-                    end_date = datetime.now().strftime('%Y-%m-%d')
-                if not start_date:
-                    start_date = (datetime.now() - timedelta(weeks=20)).strftime('%Y-%m-%d')
-            else:
-                # 默认最近30天
-                if not end_date:
-                    end_date = datetime.now().strftime('%Y-%m-%d')
-                if not start_date:
-                    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            
-            logger.info(f"获取行业资金流向数据，日期范围: {start_date} 到 {end_date}，按周汇聚: {weekly_flag}")
 
-            trade_dates = get_open_trade_dates(start_date, end_date)
+            effective_idx_type = str(idx_type or "行业板块").strip() or "行业板块"
+            effective_level = level if effective_idx_type == "行业板块" else None
+            if effective_level and effective_level not in DC_INDUSTRY_LEVELS:
+                raise ValueError("level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业")
+
+            start_date, end_date = self._get_default_fund_flow_dates(start_date, end_date, weekly_flag)
+            cache_key = (
+                "industry_fund_flow_dc_v2_"
+                f"{start_date}_{end_date}_{int(weekly_flag)}_{effective_idx_type}_{effective_level or 'all-level'}"
+            )
+            cached_data = cache.get(cache_key)
+            if cached_data is not None and isinstance(cached_data, dict):
+                logger.info("从缓存获取行业资金流向数据")
+                return cached_data
+
+            logger.info(
+                "获取行业资金流向数据，日期范围: %s 到 %s，按周汇聚: %s，idx_type: %s，level: %s",
+                start_date,
+                end_date,
+                weekly_flag,
+                effective_idx_type,
+                effective_level or "",
+            )
+
+            trade_dates = self._get_trade_dates(start_date, end_date)
             if not trade_dates:
-                return {"dates": [], "swCodeNames": [], "congestions": {}}
+                return self._empty_industry_fund_flow_response()
 
-            per_code_rows: Dict[str, List[Dict]] = defaultdict(list)
-            code_name_map: Dict[str, str] = {}
+            latest_trade_date = trade_dates[-1]
+            target_sector_df = self._resolve_target_sector_df(
+                trade_date=latest_trade_date,
+                idx_type=effective_idx_type,
+                level=effective_level,
+            )
+            if target_sector_df.empty:
+                logger.warning(
+                    "未匹配到目标板块: latest_trade_date=%s idx_type=%s level=%s",
+                    latest_trade_date,
+                    effective_idx_type,
+                    effective_level or "",
+                )
+                return self._empty_industry_fund_flow_response()
+
+            sector_codes = sorted(target_sector_df["sector_code"].tolist())
+            target_code_set: Set[str] = set(sector_codes)
+            code_name_map: Dict[str, str] = {
+                str(row["sector_code"]).strip(): str(row["sector_name"]).strip()
+                for row in target_sector_df.to_dict("records")
+            }
+            name_code_map: Dict[str, str] = {
+                sector_name: sector_code for sector_code, sector_name in code_name_map.items()
+            }
+            content_type = DC_CONTENT_TYPE_MAP.get(effective_idx_type, "行业")
+            per_code_rows: Dict[str, Dict[str, Dict]] = defaultdict(dict)
+
+            flow_fields = (
+                "ts_code,trade_date,name,net_amount,net_amount_rate,"
+                "buy_elg_amount,buy_elg_amount_rate,"
+                "buy_lg_amount,buy_lg_amount_rate,"
+                "buy_md_amount,buy_md_amount_rate,"
+                "buy_sm_amount,buy_sm_amount_rate"
+            )
 
             for trade_date in trade_dates:
-                dc_resp = call_tushare(
-                    "dc_index",
-                    params={"trade_date": trade_date, "idx_type": "行业板块"},
-                    fields="ts_code,name,trade_date,level",
-                    use_query=False,
-                )
-                dc_records = [
-                    item for item in ((dc_resp.get("data") or {}).get("records") or [])
-                    if isinstance(item, dict)
-                    and "一级行业" in str(item.get("level") or "").strip()
-                    and "二级" not in str(item.get("level") or "").strip()
-                    and "三级" not in str(item.get("level") or "").strip()
-                ] if isinstance(dc_resp, dict) else []
-                name_to_code = {
-                    str(item.get("name") or "").strip(): str(item.get("ts_code") or "").strip()
-                    for item in dc_records
-                    if item.get("name") and item.get("ts_code")
-                }
-                allowed_names = set(name_to_code.keys())
-
                 flow_resp = call_tushare(
                     "moneyflow_ind_dc",
-                    params={"trade_date": trade_date, "content_type": "行业"},
-                    fields=(
-                        "trade_date,name,net_amount,net_amount_rate,"
-                        "buy_elg_amount,buy_elg_amount_rate,"
-                        "buy_lg_amount,buy_lg_amount_rate,"
-                        "buy_md_amount,buy_md_amount_rate,"
-                        "buy_sm_amount,buy_sm_amount_rate"
-                    ),
+                    params={"trade_date": trade_date, "content_type": content_type},
+                    fields=flow_fields,
                     use_query=False,
                 )
-                flow_records = [
-                    item for item in ((flow_resp.get("data") or {}).get("records") or [])
-                    if isinstance(item, dict)
-                ] if isinstance(flow_resp, dict) else []
-
-                for item in flow_records:
-                    sector_name = str(item.get("name") or "").strip()
-                    if not sector_name or sector_name not in allowed_names:
-                        continue
-                    sector_code = name_to_code.get(sector_name) or sector_name
-                    code_name_map[sector_code] = sector_name
-                    per_code_rows[sector_code].append(
-                        {
-                            "date": trade_date,
-                            "main_net_inflow_amount": float(item.get("net_amount") or 0),
-                            "main_net_inflow_ratio": float(item.get("net_amount_rate") or 0),
-                            "super_large_net_inflow_amount": float(item.get("buy_elg_amount") or 0),
-                            "super_large_net_inflow_ratio": float(item.get("buy_elg_amount_rate") or 0),
-                            "large_net_inflow_amount": float(item.get("buy_lg_amount") or 0),
-                            "large_net_inflow_ratio": float(item.get("buy_lg_amount_rate") or 0),
-                            "medium_net_inflow_amount": float(item.get("buy_md_amount") or 0),
-                            "medium_net_inflow_ratio": float(item.get("buy_md_amount_rate") or 0),
-                            "small_net_inflow_amount": float(item.get("buy_sm_amount") or 0),
-                            "small_net_inflow_ratio": float(item.get("buy_sm_amount_rate") or 0),
-                        }
+                if not isinstance(flow_resp, dict) or flow_resp.get("code") != 200:
+                    logger.warning(
+                        "Tushare moneyflow_ind_dc 调用失败: trade_date=%s content_type=%s message=%s",
+                        trade_date,
+                        content_type,
+                        flow_resp.get("message") if isinstance(flow_resp, dict) else flow_resp,
                     )
+                    continue
 
-            dates = [f"{d[:4]}-{d[4:6]}-{d[6:8]}" for d in trade_dates]
+                flow_data = flow_resp.get("data", {})
+                flow_records = flow_data.get("records", []) if isinstance(flow_data, dict) else []
+                for item in flow_records:
+                    if not isinstance(item, dict):
+                        continue
+                    sector_code = str(item.get("ts_code") or "").strip()
+                    sector_name = str(item.get("name") or "").strip()
+                    if not sector_code and sector_name:
+                        sector_code = name_code_map.get(sector_name, "")
+                    if not sector_code or sector_code not in target_code_set:
+                        continue
+                    if sector_name and sector_code not in code_name_map:
+                        code_name_map[sector_code] = sector_name
+                    per_code_rows[sector_code][trade_date] = self._build_daily_fund_flow_payload(item)
+
             sw_code_names = [
-                {"indexCode": code, "indexName": code_name_map[code]}
-                for code in sorted(code_name_map.keys())
+                {"indexCode": sector_code, "indexName": code_name_map.get(sector_code, "")}
+                for sector_code in sector_codes
             ]
 
             if weekly_flag:
-                weekly_codes: Dict[str, List[Dict]] = defaultdict(list)
-                weekly_dates = sorted({datetime.strptime(d, "%Y%m%d").date().strftime("%Y-W%W") for d in trade_dates})
-                for code, rows in per_code_rows.items():
-                    bucket: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
-                    count_map: Dict[str, int] = defaultdict(int)
-                    for row in rows:
-                        week_key = datetime.strptime(row["date"], "%Y%m%d").date().strftime("%Y-W%W")
-                        count_map[week_key] += 1
-                        for key, value in row.items():
-                            if key != "date":
-                                bucket[week_key][key] += float(value)
-                    for week_key in weekly_dates:
-                        if count_map.get(week_key):
-                            weekly_codes[code].append(
-                                {
-                                    key: round(val / count_map[week_key], 4)
-                                    for key, val in bucket[week_key].items()
-                                }
-                            )
-                        else:
-                            weekly_codes[code].append({})
-                return {
-                    "dates": weekly_dates,
-                    "swCodeNames": sw_code_names,
-                    "congestions": dict(weekly_codes),
-                }
+                result = self._build_weekly_fund_flow_payload(
+                    trade_dates=trade_dates,
+                    sector_codes=sector_codes,
+                    per_code_rows=per_code_rows,
+                )
+                result["swCodeNames"] = sw_code_names
+                cache.set(cache_key, result, self.cache_timeout)
+                return result
 
+            dates = [self._display_trade_date(trade_date) for trade_date in trade_dates]
             congestions: Dict[str, List[Dict]] = {}
-            for code, rows in per_code_rows.items():
-                row_map = {row["date"]: row for row in rows}
-                series: List[Dict] = []
-                for trade_date in trade_dates:
-                    item = row_map.get(trade_date)
-                    if not item:
-                        series.append({})
-                        continue
-                    payload = {k: v for k, v in item.items() if k != "date"}
-                    payload["total_net_inflow_amount"] = round(
-                        payload["main_net_inflow_amount"]
-                        + payload["super_large_net_inflow_amount"]
-                        + payload["large_net_inflow_amount"]
-                        + payload["medium_net_inflow_amount"]
-                        + payload["small_net_inflow_amount"],
-                        4,
-                    )
-                    payload["total_net_inflow_ratio"] = round(
-                        payload["main_net_inflow_ratio"]
-                        + payload["super_large_net_inflow_ratio"]
-                        + payload["large_net_inflow_ratio"]
-                        + payload["medium_net_inflow_ratio"]
-                        + payload["small_net_inflow_ratio"],
-                        4,
-                    )
-                    series.append(payload)
-                congestions[code] = series
+            for sector_code in sector_codes:
+                row_map = per_code_rows.get(sector_code, {})
+                congestions[sector_code] = [row_map.get(trade_date, {}) for trade_date in trade_dates]
 
-            return {"dates": dates, "swCodeNames": sw_code_names, "congestions": congestions}
-            
+            result = {"dates": dates, "swCodeNames": sw_code_names, "congestions": congestions}
+            cache.set(cache_key, result, self.cache_timeout)
+            return result
+
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"获取行业资金流向数据失败: {str(e)}")
             return None

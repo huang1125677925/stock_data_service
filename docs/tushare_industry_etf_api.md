@@ -153,19 +153,22 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 ## 4. 行业热点接口
 
-### 4.1 行业成交额占比分位数
+### 4.1 板块成交额百分位
 
 **接口地址**：`GET /django/api/strategy/industry-turnover-percentile/`
 
 **功能说明**：
 
-- 基于申万一级行业日线成交额计算每日行业成交额占比
-- 再按当日全部行业横截面计算分位数
+- 基于东方财富板块快照计算每日板块成交额
+- 支持 `行业板块`、`概念板块`、`地域板块`
+- 当 `idx_type=行业板块` 时，支持按 `东财一级行业`、`东财二级行业`、`东财三级行业` 过滤
+- 对目标板块集合按日计算成交额占总额比例与成交额百分位
 
 **Tushare数据源**：
 
-- `index_classify`
-- `sw_daily`
+- `trade_cal`
+- `dc_index`
+- `dc_daily`
 
 **请求参数**：
 
@@ -173,6 +176,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | ----- | ---- | ---- | ---- |
 | start_date | string | 否 | 开始日期，格式 `YYYY-MM-DD` |
 | end_date | string | 否 | 结束日期，格式 `YYYY-MM-DD` |
+| idx_type | string | 否 | 东方财富板块类型，支持 `行业板块`、`概念板块`、`地域板块`，默认 `行业板块` |
+| level | string | 否 | 东财行业层级，仅 `idx_type=行业板块` 时生效，支持 `东财一级行业`、`东财二级行业`、`东财三级行业` |
 
 **响应示例**：
 
@@ -186,20 +191,26 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
     "data": [
       {
         "date": "2026-05-15",
-        "sector_code": "801050.SI",
+        "sector_code": "BK0475.DC",
         "sector_name": "有色金属",
-        "total_amount": 321456789.12,
+        "idx_type": "行业板块",
+        "level": "东财一级行业",
+        "amount": 321456789.12,
         "daily_total_amount": 5681234567.89,
-        "turnover_ratio": 0.0566,
-        "turnover_ratio_percentile": 94
+        "amount_ratio": 0.0566,
+        "amount_percentile": 94
       }
     ],
     "start_date": "2026-04-01",
     "end_date": "2026-05-15",
+    "actual_end_date": "2026-05-15",
+    "idx_type": "行业板块",
+    "level": "东财一级行业",
     "query_time": "2026-05-16T10:00:00"
   }
 }
 ```
+
 
 ### 4.2 行业MA市场宽度
 
@@ -430,7 +441,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 **功能说明**：
 
-- 按交易日拉取行业板块资金流数据
+- 基于最新交易日的东方财富板块快照锁定目标板块
+- 按交易日拉取目标板块的资金流数据
 - 支持日度序列和按周平均后的周度序列
 - 不再从数据库读取主数据，也不再从 AkShare 回补
 
@@ -447,6 +459,8 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | start_date | string | 否 | 开始日期，格式 `YYYY-MM-DD` |
 | end_date | string | 否 | 结束日期，格式 `YYYY-MM-DD` |
 | week_flag | boolean | 否 | 是否按周汇聚，默认 `false` |
+| idx_type | string | 否 | 东方财富板块类型，支持 `行业板块`、`概念板块`、`地域板块`，默认 `行业板块` |
+| level | string | 否 | 东财行业层级，仅 `idx_type=行业板块` 时生效，支持 `东财一级行业`、`东财二级行业`、`东财三级行业` |
 
 **响应示例**：
 
@@ -489,13 +503,14 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 
 - `dates` 格式为 `YYYY-Www`
 - `congestions[code]` 中每个对象表示该周平均值
+- `level` 仅在 `idx_type=行业板块` 时参与过滤
 
 ## 5. 接口与数据源对照表
 
 | 接口 | 当前主数据源 |
 | ----- | ---- |
 | `/django/api/etf/daily/latest/` | `trade_cal` + `fund_daily` + `index_basic` |
-| `/django/api/strategy/industry-turnover-percentile/` | `index_classify` + `sw_daily` |
+| `/django/api/strategy/industry-turnover-percentile/` | `trade_cal` + `dc_index` + `dc_daily` |
 | `/django/api/strategy/industry-ma-breadth/` | `trade_cal` + `dc_index` + `dc_member` + `stk_factor_pro` |
 | `/django/api/strategy/industry-scale-breadth/` | `bak_daily` + `index_classify` |
 | `/django/api/strategy/industry-actual-output/` | `bak_daily` + `index_classify` + `income_vip` |

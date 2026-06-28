@@ -1759,45 +1759,49 @@ def get_fund_flow_ranking(request):
 @require_http_methods(["GET"])
 def get_industry_fund_flow_data(request):
     """
-    获取行业资金流向数据
-    
-    Query Parameters:
-        start_date (str): 开始日期，格式：YYYY-MM-DD，默认为30天前
-        end_date (str): 结束日期，格式：YYYY-MM-DD，默认为当前日期
-    
-    Returns:
-        {
-            "code": 200,
-            "message": "success",
-            "timestamp": "2024-01-01T12:00:00",
-            "data": {
-                "dates": ["2024-01-01", "2024-01-02", ...],
-                "swCodeNames": [
-                    {"indexCode": "BK0001", "indexName": "农业"},
-                    ...
-                ],
-                "congestions": {
-                    "BK0001.SI": [
-                        {"main_net_inflow_amount": 85, "main_net_inflow_ratio": 76},
-                        ...
-                    ]
-                }
-            }
-        }
+    获取行业板块资金流向时序数据。
+
+    功能：
+        基于最新交易日的东方财富板块清单锁定目标板块，再按交易日拉取 moneyflow_ind_dc
+        资金流数据，返回日度或周度的板块资金流时序。
+
+    参数：
+        request: Django HTTP 请求对象。支持的 Query Parameters 包括：
+            - start_date(str): 开始日期，格式 YYYY-MM-DD，默认最近30天或最近20周。
+            - end_date(str): 结束日期，格式 YYYY-MM-DD，默认当天。
+            - week_flag(bool): 是否按周聚合，true 时返回周均值。
+            - idx_type(str): 东方财富板块类型，支持行业板块、概念板块、地域板块。
+            - level(str): 东财行业层级，仅 idx_type=行业板块 时生效。
+
+    返回值：
+        JsonResponse: 成功时返回包含 dates、swCodeNames、congestions 的标准响应。
+
+    异常：
+        ValueError: 参数格式或 level 参数非法时返回 400 响应。
+        其他异常：记录日志并返回 500 响应。
     """
     try:
-        # 获取查询参数
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
         week_flag = request.GET.get('week_flag', 'false').lower() == 'true'
-        
-        # 从服务层获取行业资金流向数据
-        fund_flow_data = industry_sector_service.get_industry_fund_flow_data(start_date, end_date, week_flag)
+        idx_type = request.GET.get('idx_type', '行业板块')
+        level = request.GET.get('level')
+        effective_level = level if idx_type == '行业板块' else None
+
+        fund_flow_data = industry_sector_service.get_industry_fund_flow_data(
+            start_date=start_date,
+            end_date=end_date,
+            weekly_flag=week_flag,
+            idx_type=idx_type,
+            level=effective_level,
+        )
         if fund_flow_data is None:
             return error_response('获取行业资金流向数据失败', 500)
         
         return success_response(fund_flow_data)
-        
+
+    except ValueError as e:
+        return error_response(str(e), 400)
     except Exception as e:
         logger.error(f"获取行业资金流向数据失败: {str(e)}")
         return error_response(f'获取行业资金流向数据失败: {str(e)}', 500)
