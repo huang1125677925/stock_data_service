@@ -1188,6 +1188,84 @@ class IndustryMABreadthStrategyTests(unittest.TestCase):
 
 class IndustryTurnoverStrategyTests(unittest.TestCase):
     @patch("stock_strategy.industry_turnover_strategy.cache")
+    @patch("stock_strategy.industry_turnover_strategy.get_latest_trade_date")
+    @patch("stock_strategy.industry_turnover_strategy.get_open_trade_dates")
+    @patch("stock_strategy.industry_turnover_strategy.call_tushare")
+    def test_get_industry_turnover_percentile_defaults_to_latest_trade_date(
+        self,
+        mock_call_tushare,
+        mock_get_open_trade_dates,
+        mock_get_latest_trade_date,
+        mock_cache,
+    ):
+        """
+        功能：验证未传 end_date 时，会以最新开市日作为默认截止日期。
+
+        参数：
+        - mock_call_tushare: 模拟 Tushare 接口返回。
+        - mock_get_open_trade_dates: 模拟交易日历返回。
+        - mock_get_latest_trade_date: 模拟最新开市日。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_cache.get.return_value = None
+        mock_get_latest_trade_date.return_value = "20260103"
+        mock_get_open_trade_dates.side_effect = [
+            ["20260103"],
+            ["20260103"],
+        ]
+
+        def _side_effect(interface, params=None, fields=None, token=None, use_query=False):
+            _ = (fields, token, use_query)
+            params = params or {}
+            if interface == "dc_index":
+                self.assertEqual(params["trade_date"], "20260103")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {
+                                "ts_code": "BK001.DC",
+                                "trade_date": "20260103",
+                                "name": "概念A",
+                                "idx_type": "概念板块",
+                                "level": "",
+                            }
+                        ]
+                    },
+                }
+            if interface == "dc_daily":
+                self.assertEqual(params["trade_date"], "20260103")
+                return {
+                    "code": 200,
+                    "data": {
+                        "records": [
+                            {"ts_code": "BK001.DC", "trade_date": "20260103", "amount": 100.0},
+                        ]
+                    },
+                }
+            raise AssertionError(f"unexpected interface: {interface}")
+
+        mock_call_tushare.side_effect = _side_effect
+        strategy = IndustryTurnoverStrategy()
+
+        result = strategy.get_industry_turnover_percentile(
+            start_date="2026-01-03",
+            end_date=None,
+            idx_type="概念板块",
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["date"], "2026-01-03")
+        mock_get_latest_trade_date.assert_called_once()
+        mock_cache.set.assert_called_once()
+
+    @patch("stock_strategy.industry_turnover_strategy.cache")
     @patch("stock_strategy.industry_turnover_strategy.get_open_trade_dates")
     @patch("stock_strategy.industry_turnover_strategy.call_tushare")
     def test_get_industry_turnover_percentile_filters_by_dc_industry_level(

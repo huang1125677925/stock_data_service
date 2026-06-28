@@ -16,6 +16,7 @@ from django.conf import settings
 from django.db import models
 from .models import StockInfo, StockRealtime, MarketSummary, IndustrySector, IndustrySectorDaily, IndustrySectorFundFlow
 from common.validators import validate_stock_symbol
+from common.tushare_industry import get_latest_trade_date, get_open_trade_dates
 from indival_stock_data.models import IndividualStock
 
 
@@ -1297,7 +1298,11 @@ class IndustrySectorService:
             无。默认值由当前时间推导。
         """
         if not end_date:
-            end_date = datetime.now().strftime('%Y-%m-%d')
+            latest_trade_date = get_latest_trade_date()
+            if latest_trade_date:
+                end_date = self._display_trade_date(latest_trade_date)
+            else:
+                end_date = datetime.now().strftime('%Y-%m-%d')
         if not start_date:
             delta = timedelta(weeks=20) if weekly_flag else timedelta(days=30)
             start_date = (datetime.now() - delta).strftime('%Y-%m-%d')
@@ -1317,12 +1322,48 @@ class IndustrySectorService:
         异常：
             无。底层异常向上抛出，由调用方统一处理。
         """
-        from common.tushare_industry import get_open_trade_dates
-
         return get_open_trade_dates(
             self._normalize_trade_date(start_date),
             self._normalize_trade_date(end_date),
         )
+
+    def _get_recent_trade_dates(self, end_date: str, max_count: int = 5) -> List[str]:
+        """
+        获取截止指定日期向前最近若干个开市日。
+
+        参数：
+            end_date: 截止日期，格式 YYYYMMDD。
+            max_count: 需要返回的最近开市日数量，默认 5。
+
+        返回值：
+            按日期从近到远排序的开市日列表。
+
+        异常：
+            无。内部异常时返回空列表。
+        """
+        if max_count <= 0:
+            return []
+
+        try:
+            end_dt = datetime.strptime(end_date, "%Y%m%d")
+        except ValueError:
+            return []
+
+        window_days = max(max_count * 7, 14)
+        for _ in range(6):
+            start_dt = end_dt - timedelta(days=window_days)
+            try:
+                trade_dates = get_open_trade_dates(
+                    start_dt.strftime("%Y%m%d"),
+                    end_date,
+                )
+            except Exception as exc:
+                logger.warning("获取最近交易日失败: %s", exc)
+                return []
+            if trade_dates:
+                return sorted(trade_dates, reverse=True)[:max_count]
+            window_days *= 2
+        return []
 
     def _fetch_dc_index_rows(self, trade_date: str, idx_type: Optional[str] = None) -> List[Dict]:
         """
@@ -1409,6 +1450,108 @@ class IndustrySectorService:
             target_sector_df = target_sector_df[target_sector_df["level"] == level].copy()
 
         return target_sector_df
+
+    def _fetch_moneyflow_records(self, trade_date: str, content_type: str) -> List[Dict]:
+        """
+        获取单个交易日的东方财富板块资金流原始记录。
+
+        参数：
+            trade_date: 交易日，格式 YYYYMMDD。
+            content_type: 资金流板块类型，支持行业、概念、地域。
+
+        返回值：
+            moneyflow_ind_dc 原始记录列表；调用失败或无数据时返回空列表。
+
+        异常：
+            无。内部异常会记录日志并返回空列表。
+        """
+        flow_fields = (
+            "ts_code,trade_date,name,net_amount,net_amount_rate,"
+            "buy_elg_amount,buy_elg_amount_rate,"
+            "buy_lg_amount,buy_lg_amount_rate,"
+            "buy_md_amount,buy_md_amount_rate,"
+            "buy_sm_amount,buy_sm_amount_rate"
+        )
+        flow_resp = call_tushare(
+            "moneyflow_ind_dc",
+            params={"trade_date": trade_date, "content_type": content_type},
+            fields=flow_fields,
+            use_query=False,
+        )
+        if not isinstance(flow_resp, dict) or flow_resp.get("code") != 200:
+            logger.warning(
+                "Tushare moneyflow_ind_dc 调用失败: trade_date=%s content_type=%s message=%s",
+                trade_date,
+                content_type,
+                flow_resp.get("message") if isinstance(flow_resp, dict) else flow_resp,
+            )
+            return []
+
+        flow_data = flow_resp.get("data", {})
+        flow_records = flow_data.get("records", []) if isinstance(flow_data, dict) else []
+        return [item for item in flow_records if isinstance(item, dict)]
+
+    def _resolve_latest_available_fund_flow_context(
+        self,
+        preferred_date: str,
+        idx_type: str,
+        level: Optional[str],
+        max_fallback_count: int = 5,
+    ) -> Tuple[Optional[str], pd.DataFrame]:
+        """
+        解析行业资金流接口应使用的实际可用截止交易日与板块清单。
+
+        参数：
+            preferred_date: 优先使用的截止日期，格式 YYYYMMDD。
+            idx_type: 东方财富板块类型。
+            level: 东财行业层级，仅行业板块时生效。
+            max_fallback_count: 最多向前回退检查的开市日数量，默认 5。
+
+        返回值：
+            元组，第一个值为实际可用交易日，第二个值为目标板块数据框；
+            未命中时返回 (None, 空DataFrame)。
+
+        异常：
+            无。内部异常场景通过空结果返回。
+        """
+        candidate_dates = self._get_recent_trade_dates(preferred_date, max_count=max_fallback_count)
+        if not candidate_dates:
+            candidate_dates = [preferred_date]
+
+        content_type = DC_CONTENT_TYPE_MAP.get(idx_type, "行业")
+        empty_df = pd.DataFrame(columns=["sector_code", "sector_name", "level"])
+        for candidate_date in candidate_dates:
+            target_sector_df = self._resolve_target_sector_df(
+                trade_date=candidate_date,
+                idx_type=idx_type,
+                level=level,
+            )
+            if target_sector_df.empty:
+                continue
+
+            target_code_set: Set[str] = set(target_sector_df["sector_code"].tolist())
+            name_code_map: Dict[str, str] = {
+                str(row["sector_name"]).strip(): str(row["sector_code"]).strip()
+                for row in target_sector_df.to_dict("records")
+            }
+            flow_records = self._fetch_moneyflow_records(candidate_date, content_type)
+            if not flow_records:
+                continue
+
+            matched = False
+            for item in flow_records:
+                sector_code = str(item.get("ts_code") or "").strip()
+                sector_name = str(item.get("name") or "").strip()
+                if not sector_code and sector_name:
+                    sector_code = name_code_map.get(sector_name, "")
+                if sector_code and sector_code in target_code_set:
+                    matched = True
+                    break
+
+            if matched:
+                return candidate_date, target_sector_df
+
+        return None, empty_df
 
     def _build_daily_fund_flow_payload(self, item: Dict) -> Dict:
         """
@@ -1901,8 +2044,6 @@ class IndustrySectorService:
             其他异常：内部记录日志并返回 None。
         """
         try:
-            from common.tushare_proxy import call_tushare
-
             effective_idx_type = str(idx_type or "行业板块").strip() or "行业板块"
             effective_level = level if effective_idx_type == "行业板块" else None
             if effective_level and effective_level not in DC_INDUSTRY_LEVELS:
@@ -1910,7 +2051,7 @@ class IndustrySectorService:
 
             start_date, end_date = self._get_default_fund_flow_dates(start_date, end_date, weekly_flag)
             cache_key = (
-                "industry_fund_flow_dc_v2_"
+                "industry_fund_flow_dc_v3_"
                 f"{start_date}_{end_date}_{int(weekly_flag)}_{effective_idx_type}_{effective_level or 'all-level'}"
             )
             cached_data = cache.get(cache_key)
@@ -1931,19 +2072,23 @@ class IndustrySectorService:
             if not trade_dates:
                 return self._empty_industry_fund_flow_response()
 
-            latest_trade_date = trade_dates[-1]
-            target_sector_df = self._resolve_target_sector_df(
-                trade_date=latest_trade_date,
+            preferred_end_trade_date = trade_dates[-1]
+            actual_end_trade_date, target_sector_df = self._resolve_latest_available_fund_flow_context(
+                preferred_date=preferred_end_trade_date,
                 idx_type=effective_idx_type,
                 level=effective_level,
             )
-            if target_sector_df.empty:
+            if not actual_end_trade_date or target_sector_df.empty:
                 logger.warning(
-                    "未匹配到目标板块: latest_trade_date=%s idx_type=%s level=%s",
-                    latest_trade_date,
+                    "未匹配到可用的行业资金流数据: end_date=%s idx_type=%s level=%s",
+                    end_date,
                     effective_idx_type,
                     effective_level or "",
                 )
+                return self._empty_industry_fund_flow_response()
+
+            trade_dates = [trade_date for trade_date in trade_dates if trade_date <= actual_end_trade_date]
+            if not trade_dates:
                 return self._empty_industry_fund_flow_response()
 
             sector_codes = sorted(target_sector_df["sector_code"].tolist())
@@ -1958,35 +2103,12 @@ class IndustrySectorService:
             content_type = DC_CONTENT_TYPE_MAP.get(effective_idx_type, "行业")
             per_code_rows: Dict[str, Dict[str, Dict]] = defaultdict(dict)
 
-            flow_fields = (
-                "ts_code,trade_date,name,net_amount,net_amount_rate,"
-                "buy_elg_amount,buy_elg_amount_rate,"
-                "buy_lg_amount,buy_lg_amount_rate,"
-                "buy_md_amount,buy_md_amount_rate,"
-                "buy_sm_amount,buy_sm_amount_rate"
-            )
-
             for trade_date in trade_dates:
-                flow_resp = call_tushare(
-                    "moneyflow_ind_dc",
-                    params={"trade_date": trade_date, "content_type": content_type},
-                    fields=flow_fields,
-                    use_query=False,
-                )
-                if not isinstance(flow_resp, dict) or flow_resp.get("code") != 200:
-                    logger.warning(
-                        "Tushare moneyflow_ind_dc 调用失败: trade_date=%s content_type=%s message=%s",
-                        trade_date,
-                        content_type,
-                        flow_resp.get("message") if isinstance(flow_resp, dict) else flow_resp,
-                    )
+                flow_records = self._fetch_moneyflow_records(trade_date, content_type)
+                if not flow_records:
                     continue
 
-                flow_data = flow_resp.get("data", {})
-                flow_records = flow_data.get("records", []) if isinstance(flow_data, dict) else []
                 for item in flow_records:
-                    if not isinstance(item, dict):
-                        continue
                     sector_code = str(item.get("ts_code") or "").strip()
                     sector_name = str(item.get("name") or "").strip()
                     if not sector_code and sector_name:
@@ -2002,9 +2124,17 @@ class IndustrySectorService:
                 for sector_code in sector_codes
             ]
 
+            available_trade_dates = [
+                trade_date
+                for trade_date in trade_dates
+                if any(trade_date in row_map for row_map in per_code_rows.values())
+            ]
+            if not available_trade_dates:
+                return self._empty_industry_fund_flow_response()
+
             if weekly_flag:
                 result = self._build_weekly_fund_flow_payload(
-                    trade_dates=trade_dates,
+                    trade_dates=available_trade_dates,
                     sector_codes=sector_codes,
                     per_code_rows=per_code_rows,
                 )
@@ -2012,11 +2142,11 @@ class IndustrySectorService:
                 cache.set(cache_key, result, self.cache_timeout)
                 return result
 
-            dates = [self._display_trade_date(trade_date) for trade_date in trade_dates]
+            dates = [self._display_trade_date(trade_date) for trade_date in available_trade_dates]
             congestions: Dict[str, List[Dict]] = {}
             for sector_code in sector_codes:
                 row_map = per_code_rows.get(sector_code, {})
-                congestions[sector_code] = [row_map.get(trade_date, {}) for trade_date in trade_dates]
+                congestions[sector_code] = [row_map.get(trade_date, {}) for trade_date in available_trade_dates]
 
             result = {"dates": dates, "swCodeNames": sw_code_names, "congestions": congestions}
             cache.set(cache_key, result, self.cache_timeout)

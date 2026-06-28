@@ -31,7 +31,7 @@ import pandas as pd
 from django.conf import settings
 from django.core.cache import cache
 
-from common.tushare_industry import get_open_trade_dates
+from common.tushare_industry import get_latest_trade_date, get_open_trade_dates
 from common.tushare_proxy import call_tushare
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,11 @@ class IndustryTurnoverStrategy:
         - 无。
         """
         if not end_date:
-            end_date = datetime.now().strftime("%Y-%m-%d")
+            latest_trade_date = get_latest_trade_date()
+            if latest_trade_date:
+                end_date = self._display_trade_date(latest_trade_date)
+            else:
+                end_date = datetime.now().strftime("%Y-%m-%d")
         if not start_date:
             start_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
         return start_date, end_date
@@ -491,7 +495,7 @@ class IndustryTurnoverStrategy:
 
         start_date, end_date = self._get_default_dates(start_date, end_date)
         cache_key = (
-            "industry_turnover_percentile_dc_v2_"
+            "industry_turnover_percentile_dc_v3_"
             f"{start_date}_{end_date}_{effective_idx_type}_{effective_level or 'all-level'}"
         )
 
