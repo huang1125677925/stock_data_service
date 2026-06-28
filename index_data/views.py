@@ -16,6 +16,7 @@ from .serializers import (
     SuccessResponseIndexWeightSerializer,
     SuccessResponseIndexDailybasicSerializer,
     SuccessResponseIndexValuationSummarySerializer,
+    SuccessResponseMajorIndexDailySerializer,
     ErrorResponseSerializer,
 )
 
@@ -849,3 +850,256 @@ class MarketCombinedDailyBasicView(APIView):
 
         except Exception as e:
             return error_response(f"计算全市场综合指标失败: {str(e)}", 500)
+
+
+def _parse_code_list(raw: str | None) -> list[str]:
+    """
+    解析逗号分隔的代码列表
+
+    Args:
+        raw: 逗号分隔字符串（如 "000001.SH,000300.SH"），允许为空或 None
+
+    Returns:
+        解析后的代码列表（去空白、去空项、保持顺序）
+
+    Raises:
+        无（函数内部不抛异常）
+    """
+    if not raw:
+        return []
+    items = []
+    for s in raw.split(","):
+        s = (s or "").strip()
+        if s:
+            items.append(s)
+    return items
+
+
+def _validate_yyyymmdd(date_str: str | None, field_name: str) -> str | None:
+    """
+    校验 YYYYMMDD 日期字符串
+
+    Args:
+        date_str: 日期字符串
+        field_name: 字段名，用于错误提示
+
+    Returns:
+        原样返回 date_str（为空则返回 None）
+
+    Raises:
+        ValueError: 当 date_str 非空且不符合 YYYYMMDD 格式时抛出
+    """
+    if not date_str:
+        return None
+    s = str(date_str).strip()
+    if len(s) != 8 or not s.isdigit():
+        raise ValueError(f"{field_name} 必须为 YYYYMMDD 格式")
+    return s
+
+
+class MajorIndexDailyProxyView(APIView):
+    """
+    国内 + 国际主要指数日线行情接口
+
+    功能：同时调用 Tushare 的 index_daily（国内指数）与 index_global（国际主要指数），聚合输出主要指数日线行情。
+    参数（Query）：
+    - scope(str, 可选)：domestic/global/all，默认 all
+    - trade_date(str, 可选)：YYYYMMDD
+    - start_date(str, 可选)：YYYYMMDD
+    - end_date(str, 可选)：YYYYMMDD
+    - domestic_codes(str, 可选)：国内指数代码列表（逗号分隔），默认内置主要指数集合
+    - global_codes(str, 可选)：国际指数代码列表（逗号分隔），默认内置主要指数集合
+    - token(str, 可选)：Tushare API Token
+    - domestic_fields(str, 可选)：index_daily 字段列表（逗号分隔）
+    - global_fields(str, 可选)：index_global 字段列表（逗号分隔）
+    返回值：success_response(data)；data.interface 固定为 "major_index_daily"，records 为聚合后的行情列表。
+    异常：参数非法/拉取失败时返回 error_response。
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="国内+国际主要指数日线行情",
+        description=(
+            "聚合主要指数日线行情：国内走 index_daily（如 000001.SH、000300.SH），国际走 index_global（如 SPX、IXIC、HSI）。\n"
+            "默认返回内置“主要指数”集合；也支持通过 domestic_codes/global_codes 自定义。\n"
+            "统一响应结构（success_response），data.records 为合并后的行情记录，每条记录包含 source/domestic|global 标识。"
+        ),
+        tags=["index"],
+        parameters=[
+            OpenApiParameter("scope", OpenApiTypes.STR, OpenApiParameter.QUERY, description="范围：domestic/global/all，默认 all", required=False),
+            OpenApiParameter("trade_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="交易日期 YYYYMMDD", required=False),
+            OpenApiParameter("start_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="开始日期 YYYYMMDD", required=False),
+            OpenApiParameter("end_date", OpenApiTypes.STR, OpenApiParameter.QUERY, description="结束日期 YYYYMMDD", required=False),
+            OpenApiParameter("domestic_codes", OpenApiTypes.STR, OpenApiParameter.QUERY, description="国内指数代码列表（逗号分隔），默认内置", required=False),
+            OpenApiParameter("global_codes", OpenApiTypes.STR, OpenApiParameter.QUERY, description="国际指数代码列表（逗号分隔），默认内置", required=False),
+            OpenApiParameter("domestic_fields", OpenApiTypes.STR, OpenApiParameter.QUERY, description="index_daily 字段列表（逗号分隔）", required=False),
+            OpenApiParameter("global_fields", OpenApiTypes.STR, OpenApiParameter.QUERY, description="index_global 字段列表（逗号分隔）", required=False),
+            OpenApiParameter("token", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Tushare API Token", required=False),
+        ],
+        responses={
+            200: SuccessResponseMajorIndexDailySerializer,
+            400: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request):
+        """
+        GET 请求
+
+        查询参数：
+        - scope: domestic/global/all（默认 all）
+        - trade_date/start_date/end_date: YYYYMMDD
+        - domestic_codes/global_codes: 逗号分隔的指数代码列表
+        - token: Tushare Token
+        - domestic_fields/global_fields: 字段列表（逗号分隔）
+
+        返回：
+        - success_response(data, "查询主要指数日线行情成功")
+        - data.interface = "major_index_daily"
+        - data.count = records 数量
+        - data.records = 聚合后的行情记录数组
+        - data.meta = scope、codes、errors（如有）
+        """
+        try:
+            scope = (request.query_params.get("scope") or "all").strip()
+            if scope not in ("all", "domestic", "global"):
+                return error_response("参数 scope 仅支持 domestic/global/all", 400)
+
+            trade_date = _validate_yyyymmdd(request.query_params.get("trade_date"), "trade_date")
+            start_date = _validate_yyyymmdd(request.query_params.get("start_date"), "start_date")
+            end_date = _validate_yyyymmdd(request.query_params.get("end_date"), "end_date")
+
+            token = request.query_params.get("token")
+
+            default_domestic = [
+                {"ts_code": "000001.SH", "name": "上证综指"},
+                {"ts_code": "000300.SH", "name": "沪深300"},
+                {"ts_code": "000905.SH", "name": "中证500"},
+                {"ts_code": "000016.SH", "name": "上证50"},
+                {"ts_code": "399001.SZ", "name": "深证成指"},
+                {"ts_code": "399006.SZ", "name": "创业板指"},
+                {"ts_code": "399107.SZ", "name": "深证A指"},
+            ]
+            default_global = [
+                {"ts_code": "SPX", "name": "标普500指数"},
+                {"ts_code": "IXIC", "name": "纳斯达克指数"},
+                {"ts_code": "DJI", "name": "道琼斯工业指数"},
+                {"ts_code": "HSI", "name": "恒生指数"},
+                {"ts_code": "HKTECH", "name": "恒生科技指数"},
+                {"ts_code": "XIN9", "name": "富时中国A50指数"},
+                {"ts_code": "N225", "name": "日经225指数"},
+                {"ts_code": "FTSE", "name": "富时100指数"},
+                {"ts_code": "GDAXI", "name": "德国DAX指数"},
+                {"ts_code": "TWII", "name": "台湾加权指数"},
+            ]
+
+            domestic_codes = _parse_code_list(request.query_params.get("domestic_codes"))
+            global_codes = _parse_code_list(request.query_params.get("global_codes"))
+
+            domestic_code_map = {x["ts_code"]: x.get("name") for x in default_domestic}
+            global_code_map = {x["ts_code"]: x.get("name") for x in default_global}
+
+            if not domestic_codes:
+                domestic_codes = [x["ts_code"] for x in default_domestic]
+            if not global_codes:
+                global_codes = [x["ts_code"] for x in default_global]
+
+            if scope == "domestic":
+                global_codes = []
+            if scope == "global":
+                domestic_codes = []
+
+            domestic_fields = request.query_params.get("domestic_fields") or "ts_code,trade_date,open,close,high,low,pre_close,change,pct_chg,vol,amount"
+            global_fields = request.query_params.get("global_fields") or "ts_code,trade_date,open,close,high,low,pre_close,change,pct_chg,swing,vol,amount"
+
+            def fetch_one(source: str, interface: str, ts_code: str, name: str | None, fields: str | None):
+                """
+                拉取单个指数的日线行情并打上来源标签
+
+                Args:
+                    source: 数据来源标识（domestic/global）
+                    interface: Tushare 接口名（index_daily/index_global）
+                    ts_code: 指数代码
+                    name: 指数名称（可空）
+                    fields: 字段列表（可空）
+
+                Returns:
+                    (records, error): records 为行情记录列表，error 为失败信息字典或 None
+
+                Raises:
+                    无（异常会被捕获并以 error 形式返回）
+                """
+                params = {"ts_code": ts_code}
+                if trade_date:
+                    params["trade_date"] = trade_date
+                if start_date:
+                    params["start_date"] = start_date
+                if end_date:
+                    params["end_date"] = end_date
+
+                try:
+                    resp = call_tushare(interface, params=params, fields=fields, token=token, use_query=False)
+                except Exception as e:
+                    return [], {"source": source, "ts_code": ts_code, "message": "Tushare调用异常", "error": str(e)}
+
+                if resp.get("code") != 200:
+                    return [], {
+                        "source": source,
+                        "ts_code": ts_code,
+                        "message": resp.get("message", "Tushare调用失败"),
+                        "code": resp.get("code", 500),
+                        "error": resp.get("error"),
+                    }
+
+                data = resp.get("data") or {}
+                recs = data.get("records") or []
+                out = []
+                for r in recs:
+                    row = dict(r)
+                    row["source"] = source
+                    if name:
+                        row["name"] = name
+                    out.append(row)
+                return out, None
+
+            records = []
+            errors = []
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+                futures = []
+                for code in domestic_codes:
+                    futures.append(
+                        executor.submit(fetch_one, "domestic", "index_daily", code, domestic_code_map.get(code), domestic_fields)
+                    )
+                for code in global_codes:
+                    futures.append(
+                        executor.submit(fetch_one, "global", "index_global", code, global_code_map.get(code), global_fields)
+                    )
+
+                for f in concurrent.futures.as_completed(futures):
+                    recs, err = f.result()
+                    if recs:
+                        records.extend(recs)
+                    if err:
+                        errors.append(err)
+
+            if not records and errors:
+                return error_response("获取主要指数日线行情失败", 500, errors=errors)
+
+            out = {
+                "interface": "major_index_daily",
+                "count": len(records),
+                "records": replace_nan(records),
+                "meta": {
+                    "scope": scope,
+                    "domestic_codes": domestic_codes,
+                    "global_codes": global_codes,
+                    "errors": errors,
+                },
+            }
+            return success_response(out, "查询主要指数日线行情成功")
+        except ValueError as e:
+            return error_response(str(e), 400)
+        except Exception as e:
+            return error_response(f"查询主要指数日线行情失败: {str(e)}", 500)

@@ -262,3 +262,60 @@ class SuccessResponseIndexValuationSummarySerializer(serializers.Serializer):
     message = serializers.CharField()
     timestamp = serializers.CharField()
     data = IndexValuationSummaryDataSerializer()
+
+
+class MajorIndexDailyRecordSerializer(serializers.Serializer):
+    """
+    主要指数（日线）记录序列化器
+
+    功能：统一序列化「国内主要指数 index_daily」与「国际主要指数 index_global」的日线行情记录。
+    参数：无。
+    返回值：单条日线行情记录的序列化结构。
+    异常：无（字段均为可选/可空，兼容不同来源字段差异）。
+    """
+
+    source = serializers.CharField(required=False, help_text="数据来源：domestic/global")
+    name = serializers.CharField(required=False, help_text="指数名称（服务端内置映射，可能为空）")
+    ts_code = serializers.CharField(required=False, help_text="指数代码（国内为 TS 代码，国际为 index_global 的 ts_code）")
+    trade_date = serializers.CharField(required=False, help_text="交易日期 YYYYMMDD")
+
+    open = serializers.FloatField(required=False, allow_null=True)
+    close = serializers.FloatField(required=False, allow_null=True)
+    high = serializers.FloatField(required=False, allow_null=True)
+    low = serializers.FloatField(required=False, allow_null=True)
+    pre_close = serializers.FloatField(required=False, allow_null=True)
+    change = serializers.FloatField(required=False, allow_null=True)
+    pct_chg = serializers.FloatField(required=False, allow_null=True)
+    swing = serializers.FloatField(required=False, allow_null=True, help_text="振幅（国际指数常见；国内指数通常无此字段）")
+    vol = serializers.FloatField(required=False, allow_null=True)
+    amount = serializers.FloatField(required=False, allow_null=True)
+
+
+class MajorIndexDailyMetaSerializer(serializers.Serializer):
+    """
+    主要指数（日线）接口 meta 序列化器
+
+    功能：描述本次请求的筛选范围与服务端实际执行情况（如部分指数拉取失败）。
+    参数：无。
+    返回值：meta 结构。
+    异常：无。
+    """
+
+    scope = serializers.CharField(required=False, help_text="请求范围：domestic/global/all")
+    domestic_codes = serializers.ListField(child=serializers.CharField(), required=False)
+    global_codes = serializers.ListField(child=serializers.CharField(), required=False)
+    errors = serializers.ListField(child=serializers.DictField(), required=False, help_text="部分失败的明细列表")
+
+
+class MajorIndexDailyDataSerializer(serializers.Serializer):
+    interface = serializers.CharField()
+    count = serializers.IntegerField()
+    records = MajorIndexDailyRecordSerializer(many=True)
+    meta = MajorIndexDailyMetaSerializer(required=False)
+
+
+class SuccessResponseMajorIndexDailySerializer(serializers.Serializer):
+    code = serializers.IntegerField()
+    message = serializers.CharField()
+    timestamp = serializers.CharField()
+    data = MajorIndexDailyDataSerializer()
