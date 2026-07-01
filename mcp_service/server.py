@@ -32,19 +32,19 @@ def create_server() -> FastMCP:
     from mcp_service.tools.github_mybook_tools import register_github_mybook_tools
     from mcp_service.tools.shell_tools import register_shell_tools
 
-    register_news_data_tools(mcp)
-    register_jin10_flash_tools(mcp)
-    register_stock_data_tools(mcp)
-    register_tushare_tools(mcp)
+    # register_news_data_tools(mcp)
+    # register_jin10_flash_tools(mcp)
+    # register_stock_data_tools(mcp)
+    # register_tushare_tools(mcp)
     register_django_strategy_tools(mcp)
     register_time_tools(mcp)
-    register_github_mybook_tools(mcp)
-    register_shell_tools(mcp)
-    register_tavily_mcp_client(
-        url=os.getenv("TAVILY_MCP_URL", ""),
-        enabled=os.getenv("TAVILY_MCP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
-        timeout_seconds=int(os.getenv("TAVILY_MCP_TIMEOUT_SECONDS", "30")),
-    )
+    # register_github_mybook_tools(mcp)
+    # register_shell_tools(mcp)
+    # register_tavily_mcp_client(
+    #     url=os.getenv("TAVILY_MCP_URL", ""),
+    #     enabled=os.getenv("TAVILY_MCP_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"},
+    #     timeout_seconds=int(os.getenv("TAVILY_MCP_TIMEOUT_SECONDS", "30")),
+    # )
     
     # Register dynamic skill tools from skills directory
     try:
