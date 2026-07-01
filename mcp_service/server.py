@@ -50,7 +50,7 @@ def create_server() -> FastMCP:
     try:
         from ai_service.skill_manager import skill_manager
         skill_manager.register_all_skill_tools(mcp)
-    except ImportError as e:
+    except Exception as e:
         import logging
         logging.error(f"Failed to import skill_manager for tool registration: {e}")
         

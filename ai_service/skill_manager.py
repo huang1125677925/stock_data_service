@@ -2,7 +2,6 @@ import os
 import sys
 import importlib.util
 import logging
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +13,12 @@ class SkillManager:
     """
     def __init__(self, skills_dir_name="skill"):
         # 默认技能目录在项目根目录下的 skill 文件夹
-        self.base_dir = getattr(settings, 'BASE_DIR', os.path.dirname(os.path.dirname(__file__)))
+        # 优先读 Django settings.BASE_DIR，若 Django 未配置则基于本文件位置推算项目根目录
+        try:
+            from django.conf import settings
+            self.base_dir = str(getattr(settings, 'BASE_DIR', os.path.dirname(os.path.dirname(__file__))))
+        except Exception:
+            self.base_dir = os.path.dirname(os.path.dirname(__file__))
         self.skills_dir = os.path.join(self.base_dir, skills_dir_name)
 
     def get_all_skills_prompts(self) -> str:
