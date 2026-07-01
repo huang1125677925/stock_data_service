@@ -1,6 +1,6 @@
 # 股票市场API接口文档
 
-本文档详细描述了股票市场相关的API接口，包括指数基础数据、指数涨跌统计、涨跌比数据和大盘资金流数据的查询接口。
+本文档详细描述了股票市场相关的API接口，包括指数基础数据、指数涨跌统计、涨跌比数据、大盘资金流数据查询接口，以及基于 Tushare 的大盘资金流趋势接口。
 
 ## 接口概览
 
@@ -10,6 +10,7 @@
 | 指数涨跌统计接口 | `/django/api/market/index-high-low-statistics/` | GET | 查询指数涨跌统计数据 |
 | 涨跌比数据接口 | `/django/api/market/rise-fall-ratio/` | GET | 查询指数涨跌比历史数据 |
 | 大盘资金流接口 | `/django/api/market/fund-flow/` | GET | 查询大盘资金流数据 |
+| 大盘资金流趋势接口 | `/django/api/market/fund-flow/trend/` | GET | 查询指定区间内的大盘资金变化、收盘价变化和涨跌幅变化 |
 
 ---
 
@@ -427,6 +428,164 @@ GET /django/api/market/fund-flow/?order_by=date&page=1&page_size=20
 
 ---
 
+## 5. 大盘资金流趋势接口
+
+### 接口信息
+- **URL**: `/django/api/market/fund-flow/trend/`
+- **请求方法**: GET
+- **功能描述**: 基于 Tushare `moneyflow_mkt_dc` 接口，查询指定交易日或日期区间内的大盘资金流趋势数据，供前端展示资金变化曲线、上证/深证收盘价变化和涨跌幅变化
+
+### 数据来源
+- 实时调用 Tushare `moneyflow_mkt_dc`
+- 主要用于前端趋势图、区间变化卡片等可视化展示
+
+### GET 请求 - 查询大盘资金流趋势数据
+
+#### 请求参数
+| 参数名 | 类型 | 必填 | 默认值 | 说明 |
+|--------|------|------|--------|------|
+| trade_date | string | 否 | - | 单个交易日，格式支持 `YYYY-MM-DD` 或 `YYYYMMDD` |
+| start_date | string | 否 | - | 开始日期，格式支持 `YYYY-MM-DD` 或 `YYYYMMDD` |
+| end_date | string | 否 | - | 结束日期，格式支持 `YYYY-MM-DD` 或 `YYYYMMDD` |
+
+#### 参数说明
+- `trade_date` 与 `start_date`、`end_date` 不能同时传入
+- `trade_date`、`start_date`、`end_date` 三者至少传入一种查询方式
+- 当同时传入 `start_date` 和 `end_date` 时，`start_date` 不能晚于 `end_date`
+
+#### 请求示例
+```bash
+# 查询单个交易日数据
+GET /django/api/market/fund-flow/trend/?trade_date=2026-06-30
+
+# 查询指定区间的大盘资金流趋势
+GET /django/api/market/fund-flow/trend/?start_date=2026-06-01&end_date=2026-06-30
+
+# 使用 YYYYMMDD 格式查询
+GET /django/api/market/fund-flow/trend/?start_date=20260601&end_date=20260630
+```
+
+#### 响应参数
+| 参数名 | 类型 | 说明 |
+|--------|------|------|
+| code | int | 响应状态码，200表示成功 |
+| message | string | 响应消息 |
+| data | object | 响应数据 |
+| data.interface | string | 数据源接口标识，固定为 `moneyflow_mkt_dc` |
+| data.count | int | 返回记录数量 |
+| data.records | array | 趋势明细列表，按交易日升序返回 |
+| data.records[].trade_date | string | 交易日期，格式为 `YYYYMMDD` |
+| data.records[].close_sh | float | 上证收盘价 |
+| data.records[].pct_change_sh | float | 上证涨跌幅（%） |
+| data.records[].close_sz | float | 深证收盘价 |
+| data.records[].pct_change_sz | float | 深证涨跌幅（%） |
+| data.records[].net_amount | float | 主力净流入净额（元） |
+| data.records[].net_amount_rate | float | 主力净流入净占比（%） |
+| data.records[].buy_elg_amount | float | 超大单净流入净额（元） |
+| data.records[].buy_elg_amount_rate | float | 超大单净流入净占比（%） |
+| data.records[].buy_lg_amount | float | 大单净流入净额（元） |
+| data.records[].buy_lg_amount_rate | float | 大单净流入净占比（%） |
+| data.records[].buy_md_amount | float | 中单净流入净额（元） |
+| data.records[].buy_md_amount_rate | float | 中单净流入净占比（%） |
+| data.records[].buy_sm_amount | float | 小单净流入净额（元） |
+| data.records[].buy_sm_amount_rate | float | 小单净流入净占比（%） |
+| data.records[].net_amount_change | float | 相对区间首个有效交易日的主力净流入变化值 |
+| data.records[].close_sh_change | float | 相对区间首个有效交易日的上证收盘价变化值 |
+| data.records[].close_sz_change | float | 相对区间首个有效交易日的深证收盘价变化值 |
+| data.summary | object | 区间变化摘要 |
+| data.summary.start_date | string | 区间起始交易日 |
+| data.summary.end_date | string | 区间结束交易日 |
+| data.summary.record_count | int | 区间记录数 |
+| data.summary.net_amount_change | float | 区间主力净流入变化值 |
+| data.summary.shanghai_close_change | float | 区间上证收盘价变化值 |
+| data.summary.shenzhen_close_change | float | 区间深证收盘价变化值 |
+| data.summary.shanghai_change_rate_span | float | 区间上证涨跌幅变化值 |
+| data.summary.shenzhen_change_rate_span | float | 区间深证涨跌幅变化值 |
+| data.query | object | 本次查询条件 |
+| data.query.trade_date | string | 单日查询条件 |
+| data.query.start_date | string | 区间开始日期 |
+| data.query.end_date | string | 区间结束日期 |
+
+#### 成功响应示例
+```json
+{
+    "code": 200,
+    "message": "查询大盘资金流趋势数据成功",
+    "data": {
+        "interface": "moneyflow_mkt_dc",
+        "count": 2,
+        "records": [
+            {
+                "trade_date": "20260627",
+                "close_sh": 3400.0,
+                "pct_change_sh": 0.5,
+                "close_sz": 10000.0,
+                "pct_change_sz": 0.8,
+                "net_amount": 100000000.0,
+                "net_amount_rate": 1.1,
+                "buy_elg_amount": 25000000.0,
+                "buy_elg_amount_rate": 0.6,
+                "buy_lg_amount": 18000000.0,
+                "buy_lg_amount_rate": 0.4,
+                "buy_md_amount": -8000000.0,
+                "buy_md_amount_rate": -0.2,
+                "buy_sm_amount": -4000000.0,
+                "buy_sm_amount_rate": -0.1,
+                "net_amount_change": 0.0,
+                "close_sh_change": 0.0,
+                "close_sz_change": 0.0
+            },
+            {
+                "trade_date": "20260630",
+                "close_sh": 3450.0,
+                "pct_change_sh": 1.2,
+                "close_sz": 10200.0,
+                "pct_change_sz": 1.5,
+                "net_amount": 150000000.0,
+                "net_amount_rate": 2.1,
+                "buy_elg_amount": 30000000.0,
+                "buy_elg_amount_rate": 0.8,
+                "buy_lg_amount": 20000000.0,
+                "buy_lg_amount_rate": 0.5,
+                "buy_md_amount": -10000000.0,
+                "buy_md_amount_rate": -0.3,
+                "buy_sm_amount": -5000000.0,
+                "buy_sm_amount_rate": -0.1,
+                "net_amount_change": 50000000.0,
+                "close_sh_change": 50.0,
+                "close_sz_change": 200.0
+            }
+        ],
+        "summary": {
+            "start_date": "20260627",
+            "end_date": "20260630",
+            "record_count": 2,
+            "net_amount_change": 50000000.0,
+            "shanghai_close_change": 50.0,
+            "shenzhen_close_change": 200.0,
+            "shanghai_change_rate_span": 0.7,
+            "shenzhen_change_rate_span": 0.7
+        },
+        "query": {
+            "trade_date": null,
+            "start_date": "20260627",
+            "end_date": "20260630"
+        }
+    }
+}
+```
+
+#### 错误响应示例
+```json
+{
+    "code": 400,
+    "message": "开始日期不能晚于结束日期",
+    "data": null
+}
+```
+
+---
+
 ## 错误响应
 
 所有接口在发生错误时都会返回统一的错误响应格式：
@@ -451,9 +610,9 @@ GET /django/api/market/fund-flow/?order_by=date&page=1&page_size=20
 
 ## 重要说明
 
-1. **数据来源**: 所有股票相关功能模块的API代码只从数据库获取数据，不直接调用外部数据源
+1. **数据来源**: 大部分股票市场接口从数据库读取；`/django/api/market/fund-flow/trend/` 会实时调用 Tushare `moneyflow_mkt_dc`
 2. **响应格式**: 所有接口统一使用 `success_response` 和 `error_response` 返回数据
-3. **日期格式**: 所有日期参数和返回值均使用 ISO 8601 格式（YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS）
+3. **日期格式**: 数据库类接口通常使用 ISO 8601 格式；`fund-flow/trend` 接口的查询参数兼容 `YYYY-MM-DD` 与 `YYYYMMDD`，返回交易日字段为 `YYYYMMDD`
 4. **分页限制**: 为了性能考虑，分页查询的每页最大数量限制为100条
 5. **数据精度**: 金额和比例数据保持原始精度，以浮点数形式返回
 6. **时区**: 所有时间数据均为服务器本地时区
