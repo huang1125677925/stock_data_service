@@ -238,9 +238,23 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
         mcp,
         name="django.strategy.industry_ma_breadth",
         description=(
-            "行业 MA 市场宽度（与 GET /django/api/strategy/industry-ma-breadth/ 同源，非 HTTP）。"
-            "统计各行业内收盘价高于 N 日均线的股票占比；日期为 YYYY-MM-DD。"
-            "支持 idx_type 与 level 参数筛选东财行业层级；也可用 limit 直接限制返回条数。"
+            "行业MA市场宽度指标 —— 计算指定日期范围内，每个行业板块中收盘价高于N日均线的股票占比（市场宽度）。\n\n"
+            "指标含义：breadth_ratio（宽度比例）反映行业内部个股的强弱分布。比值越高，说明行业内多数个股处于均线上方、趋势偏强；"
+            "比值越低，说明行业内多数个股处于均线下方、趋势偏弱。可用于判断行业整体多空格局。\n\n"
+            '参数说明（均为可选，括号内为默认值）：\n'
+            '- start_date (str, YYYY-MM-DD): 开始日期，不传则默认过去90天\n'
+            '- end_date (str, YYYY-MM-DD): 结束日期，不传则默认当天\n'
+            '- ma_window (int, 默认20): 移动平均窗口（交易日数）。支持预计算窗口: 5/10/20/30/60/90/250\n'
+            '- idx_type (str, 默认"行业板块"): 东方财富板块类型。可选值: 行业板块 | 概念板块 | 地域板块\n'
+            '- level (str, 仅idx_type="行业板块"时生效): 东财行业层级。可选值: 东财一级行业 | 东财二级行业 | 东财三级行业\n'
+            '- limit (int, 默认300, 最大2000): 返回明细条数上限，total字段仍反映全量记录数\n\n'
+            '常用调用示例：\n'
+            '- 查询最近90天行业板块MA20宽度:  不需要传任何参数（全用默认值）\n'
+            '- 查询指定日期范围MA60宽度:     传 start_date="2025-06-01", end_date="2025-06-30", ma_window=60\n'
+            '- 查询概念板块最近30天MA20:     传 idx_type="概念板块"\n'
+            '- 按东财一级行业查看MA20:        传 level="东财一级行业"\n\n'
+            "返回数据每条记录字段: date(日期), sector_code(板块代码), sector_name(板块名称), "
+            "count_above_ma(高于均线股票数), eligible_count(板块内合格股票总数), breadth_ratio(宽度比例, 0~1)"
         ),
     )
     def industry_ma_breadth(
@@ -252,15 +266,27 @@ def register_django_strategy_tools(mcp: FastMCP) -> None:
         limit: int = 300,
     ) -> Dict[str, Any]:
         """
-        查询行业 MA 市场宽度（收盘价高于 MA 的占比）。
+        查询行业MA市场宽度（收盘价高于MA的占比）。
 
         Args:
-            start_date: 开始日期 YYYY-MM-DD；空则策略内默认约过去 90 天
-            end_date: 结束日期 YYYY-MM-DD；空则默认当天
-            ma_window: 移动平均窗口（交易日），默认 20
-            idx_type: 东方财富板块类型，默认行业板块
-            level: 东财行业层级，仅 idx_type=行业板块 时生效
-            limit: 返回明细条数上限（默认 300，最大 2000）；total 仍反映全量记录数。
+            start_date: 开始日期，格式 YYYY-MM-DD。不传则默认过去约90天。
+            end_date: 结束日期，格式 YYYY-MM-DD。不传则默认当天。
+            ma_window: 移动平均窗口（交易日数），默认20。预计算支持的窗口: 5/10/20/30/60/90/250，自定义窗口会实时计算。
+            idx_type: 东方财富板块类型，默认"行业板块"。可选: "行业板块" / "概念板块" / "地域板块"。
+            level: 东财行业层级，仅 idx_type="行业板块" 时生效。可选: "东财一级行业" / "东财二级行业" / "东财三级行业"。不传则返回所有层级。
+            limit: 返回明细条数上限（默认300，最大2000）。数据按 date + sector_code 排序，limit 截取前N条。total 字段仍反映原始全量记录数。
+
+        Returns:
+            Dict包含:
+            - code: 状态码，200表示成功
+            - message: 状态描述
+            - data.summary.latest_date: 最新数据日期
+            - data.summary.avg_breadth_ratio: 最新日期所有行业的平均宽度比例
+            - data.summary.sector_count_on_latest_date: 最新日期的行业数量
+            - data.data: 明细列表，每条含 date/sector_code/sector_name/count_above_ma/eligible_count/breadth_ratio
+            - data.total: 原始全量记录数
+            - data.returned: 实际返回条数
+            - data.ma_window/idx_type/level/start_date/end_date: 回显查询参数
         """
         try:
             ma_w = int(ma_window)
