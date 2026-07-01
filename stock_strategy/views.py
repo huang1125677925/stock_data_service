@@ -20,6 +20,7 @@ from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response, drf_success_response, drf_error_response
 from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tagging_service
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
+from .industry_up_down_ratio_strategy import industry_up_down_ratio_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
 from .auction_selection_strategy import auction_selection_strategy_service
@@ -827,6 +828,56 @@ def get_industry_ma_breadth(request):
         return error_response('参数格式错误：ma_window应为整数', 400)
     except Exception as e:
         return error_response(f'获取行业MA市场宽度数据失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_industry_up_down_ratio(request):
+    """
+    行业涨跌比例查询接口
+
+    功能：计算并返回指定日期范围内，每个东方财富板块的上涨家数、下跌家数以及对应比例。
+    参数（Query Parameters）：
+    - start_date(str): 开始日期，格式YYYY-MM-DD，默认过去90天
+    - end_date(str): 结束日期，格式YYYY-MM-DD，默认当天
+    - idx_type(str): 东方财富板块类型，支持：行业板块、概念板块、地域板块；默认行业板块
+    - level(str): 东财行业层级，仅 idx_type=行业板块 时生效，支持：东财一级行业、东财二级行业、东财三级行业
+    返回值：
+    - 成功：返回包含各板块每日涨跌比例数据的JSON（total, data, query_time, 参数回显）
+    - 失败：返回错误信息JSON
+    事件：
+    - 参数解析与校验
+    - 计算过程中异常捕获
+    - 统一响应封装success_response/error_response
+    """
+    try:
+        start_date = request.GET.get('start_date', None)
+        end_date = request.GET.get('end_date', None)
+        idx_type = request.GET.get('idx_type', '行业板块')
+        level = request.GET.get('level')
+        allowed_levels = {'东财一级行业', '东财二级行业', '东财三级行业'}
+        effective_level = level if idx_type == '行业板块' else None
+        if effective_level and effective_level not in allowed_levels:
+            return error_response('level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业', 400)
+
+        result = industry_up_down_ratio_strategy.get_industry_up_down_ratio(
+            start_date=start_date,
+            end_date=end_date,
+            idx_type=idx_type,
+            level=effective_level,
+        )
+        if result is None:
+            return error_response('获取行业涨跌比例数据失败', 500)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'start_date': start_date,
+            'end_date': end_date,
+            'idx_type': idx_type,
+            'level': effective_level,
+            'query_time': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return error_response(f'获取行业涨跌比例数据失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])

@@ -14,6 +14,7 @@ urlpatterns = [
     path('execute-tagging-task/', views.execute_stock_tagging_task, name='execute_stock_tagging_task'),
     path('stock-analysis/<str:stock_code>/', views.get_stock_analysis_detail, name='get_stock_analysis_detail'),
     path('industry-ma-breadth/', views.get_industry_ma_breadth, name='get_industry_ma_breadth'),
+    path('industry-up-down-ratio/', views.get_industry_up_down_ratio, name='get_industry_up_down_ratio'),
     path('industry-scale-breadth/', views.get_industry_scale_breadth, name='get_industry_scale_breadth'),
     path('industry-actual-output/', views.get_industry_actual_output, name='get_industry_actual_output'),
     path('industry-fund-flow-correlation/', views.get_industry_fund_flow_correlation, name='get_industry_fund_flow_correlation'),

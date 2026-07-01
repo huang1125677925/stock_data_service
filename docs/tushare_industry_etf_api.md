@@ -9,6 +9,7 @@
 - `GET /django/api/etf/daily/latest/`
 - `GET /django/api/strategy/industry-turnover-percentile/`
 - `GET /django/api/strategy/industry-ma-breadth/`
+- `GET /django/api/strategy/industry-up-down-ratio/`
 - `GET /django/api/strategy/industry-scale-breadth/`
 - `GET /django/api/strategy/industry-actual-output/`
 - `GET /django/api/stock/industry/heatmap-data/`
@@ -271,7 +272,63 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 }
 ```
 
-### 4.3 行业规模宽度
+### 4.3 行业涨跌比例
+
+**接口地址**：`GET /django/api/strategy/industry-up-down-ratio/`
+
+**功能说明**：
+
+- 基于 `dc_index` 的板块快照字段，返回每个东方财富板块每日的上涨家数、下跌家数及对应比例
+- 支持按 `idx_type` 与 `level` 过滤行业板块范围
+- 统计口径为板块快照中的涨跌家数，不依赖板块成分股逐只回溯计算
+
+**Tushare数据源**：
+
+- `trade_cal`
+- `dc_index`
+
+**请求参数**：
+
+| 参数名 | 类型 | 必填 | 说明 |
+| ----- | ---- | ---- | ---- |
+| start_date | string | 否 | 开始日期，格式 `YYYY-MM-DD`，默认过去90天 |
+| end_date | string | 否 | 结束日期，格式 `YYYY-MM-DD`，默认当天 |
+| idx_type | string | 否 | 东方财富板块类型，支持 `行业板块`、`概念板块`、`地域板块`，默认 `行业板块` |
+| level | string | 否 | 东财行业层级，仅 `idx_type=行业板块` 时生效，支持 `东财一级行业`、`东财二级行业`、`东财三级行业` |
+
+**响应示例**：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "timestamp": "2026-07-01T16:30:00",
+  "data": {
+    "total": 1,
+    "data": [
+      {
+        "date": "2026-07-01",
+        "sector_code": "BK0420.DC",
+        "sector_name": "消费电子",
+        "idx_type": "行业板块",
+        "level": "东财二级行业",
+        "up_count": 58,
+        "down_count": 42,
+        "total_count": 100,
+        "up_ratio": 0.58,
+        "down_ratio": 0.42
+      }
+    ],
+    "start_date": "2026-06-11",
+    "end_date": "2026-07-01",
+    "idx_type": "行业板块",
+    "level": "东财二级行业",
+    "query_time": "2026-07-01T16:30:00"
+  }
+}
+```
+
+### 4.4 行业规模宽度
 
 **接口地址**：`GET /django/api/strategy/industry-scale-breadth/`
 
@@ -512,6 +569,7 @@ GET /django/api/etf/daily/latest/?index_category=消费&group_by=index_publisher
 | `/django/api/etf/daily/latest/` | `trade_cal` + `fund_daily` + `index_basic` |
 | `/django/api/strategy/industry-turnover-percentile/` | `trade_cal` + `dc_index` + `dc_daily` |
 | `/django/api/strategy/industry-ma-breadth/` | `trade_cal` + `dc_index` + `dc_member` + `stk_factor_pro` |
+| `/django/api/strategy/industry-up-down-ratio/` | `trade_cal` + `dc_index` |
 | `/django/api/strategy/industry-scale-breadth/` | `bak_daily` + `index_classify` |
 | `/django/api/strategy/industry-actual-output/` | `bak_daily` + `index_classify` + `income_vip` |
 | `/django/api/stock/industry/heatmap-data/` | `bak_daily` + `index_classify` + `income_vip` + `fina_indicator_vip` |
