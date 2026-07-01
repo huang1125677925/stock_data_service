@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from common.tushare_proxy import call_tushare
 
@@ -478,6 +478,128 @@ class LimitBoardDataService:
             "query_time": datetime.now().isoformat(),
         }
 
+    def get_industry_trend_strength(
+        self,
+        start_date: str,
+        end_date: str,
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        获取行业维度的涨停趋势强度分析。
+
+        功能：
+        - 基于 `limit_list_d(limit_type=U)` 在指定时间区间内按交易日、行业聚合涨停股数据。
+        - 输出每个行业每日的涨停数量、平均换手率、首次封板耗时、总成交额、平均开板次数、
+          平均连板数，以及 `up_stat` 的平均统计结果。
+
+        参数：
+        - start_date (str): 开始日期，格式 `YYYYMMDD`。
+        - end_date (str): 结束日期，格式 `YYYYMMDD`。
+        - token (str，可选): Tushare Token，用于覆盖默认环境变量。
+
+        返回值：
+        - Dict[str, Any]: 包含查询区间、汇总信息、按行业聚合后的日度明细、源数据统计和查询时间。
+
+        异常：
+        - ValueError: 日期格式非法、开始日期晚于结束日期、或查询区间超过限制时抛出。
+        - RuntimeError: Tushare 接口调用失败时抛出。
+        """
+        self._validate_date_range(start_date, end_date)
+
+        limit_up = self._fetch_records(
+            "limit_list_d",
+            {"start_date": start_date, "end_date": end_date, "limit_type": "U"},
+            token=token,
+            required=False,
+        )
+        grouped_records = self._group_limit_up_by_date_and_industry(limit_up)
+
+        data = []
+        industry_totals: Dict[str, Dict[str, Any]] = {}
+        trade_dates = sorted({trade_date for trade_date, _ in grouped_records.keys()})
+        for (trade_date, industry), records in sorted(grouped_records.items(), key=lambda item: (item[0][0], item[0][1])):
+            count = len(records)
+            turnover_values = [self._safe_float(item.get("turnover_ratio")) for item in records if item.get("turnover_ratio") not in (None, "")]
+            first_limit_minutes = [
+                minute
+                for minute in (self._minutes_since_market_open(item.get("first_time")) for item in records)
+                if minute is not None
+            ]
+            total_amount = sum(self._safe_float(item.get("amount")) for item in records)
+            avg_open_times = self._safe_round(sum(self._safe_int(item.get("open_times")) for item in records) / count if count else 0)
+            avg_limit_times = self._safe_round(sum(self._safe_int(item.get("limit_times")) for item in records) / count if count else 0)
+            up_stat_metrics = [
+                self._parse_up_stat_detail(item.get("up_stat"))
+                for item in records
+            ]
+            valid_up_stat_metrics = [metric for metric in up_stat_metrics if metric[0] is not None and metric[1] is not None]
+
+            row = {
+                "trade_date": trade_date,
+                "industry": industry,
+                "limit_up_count": count,
+                "avg_turnover_ratio": self._safe_round(sum(turnover_values) / len(turnover_values) if turnover_values else 0),
+                "avg_first_limit_minutes": self._safe_round(sum(first_limit_minutes) / len(first_limit_minutes) if first_limit_minutes else 0),
+                "total_amount": self._safe_round(total_amount, 2),
+                "avg_open_times": avg_open_times,
+                "avg_limit_times": avg_limit_times,
+                "avg_up_stat_n": self._safe_round(
+                    sum(metric[0] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) if valid_up_stat_metrics else 0
+                ),
+                "avg_up_stat_t": self._safe_round(
+                    sum(metric[1] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) if valid_up_stat_metrics else 0
+                ),
+                "avg_up_stat_ratio_pct": self._safe_round(
+                    sum(metric[2] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) * 100 if valid_up_stat_metrics else 0
+                ),
+            }
+            data.append(row)
+
+            industry_summary = industry_totals.setdefault(
+                industry,
+                {
+                    "industry": industry,
+                    "trade_day_count": 0,
+                    "total_limit_up_count": 0,
+                    "total_amount": 0.0,
+                },
+            )
+            industry_summary["trade_day_count"] += 1
+            industry_summary["total_limit_up_count"] += count
+            industry_summary["total_amount"] += total_amount
+
+        top_industries = sorted(
+            (
+                {
+                    **item,
+                    "avg_daily_limit_up_count": self._safe_round(
+                        item["total_limit_up_count"] / item["trade_day_count"] if item["trade_day_count"] else 0
+                    ),
+                    "total_amount": self._safe_round(item["total_amount"], 2),
+                }
+                for item in industry_totals.values()
+            ),
+            key=lambda item: (item["total_limit_up_count"], item["total_amount"]),
+            reverse=True,
+        )[:20]
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "summary": {
+                "trade_day_count": len(trade_dates),
+                "industry_count": len(industry_totals),
+                "record_count": len(data),
+                "total_limit_up_count": len(limit_up),
+                "top_industries": top_industries,
+            },
+            "data": data,
+            "source_counts": {
+                "limit_list_d_up": len(limit_up),
+            },
+            "query_time": datetime.now().isoformat(),
+        }
+
     def _fetch_records(
         self,
         interface: str,
@@ -501,6 +623,31 @@ class LimitBoardDataService:
             trade_date = str(item.get("trade_date") or "")
             if trade_date:
                 grouped[trade_date].append(item)
+        return dict(grouped)
+
+    @staticmethod
+    def _group_limit_up_by_date_and_industry(
+        records: Iterable[Dict[str, Any]]
+    ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+        """
+        按交易日和行业对涨停记录分组。
+
+        参数：
+        - records (Iterable[Dict[str, Any]]): `limit_list_d(limit_type=U)` 返回的原始记录集合。
+
+        返回值：
+        - Dict[Tuple[str, str], List[Dict[str, Any]]]: 以 `(trade_date, industry)` 为键的分组结果。
+
+        异常：
+        - 无。缺失交易日的记录会被忽略，缺失行业的记录会归入“未知行业”。
+        """
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for item in records:
+            trade_date = str(item.get("trade_date") or "")
+            if not trade_date:
+                continue
+            industry = str(item.get("industry") or "").strip() or "未知行业"
+            grouped[(trade_date, industry)].append(item)
         return dict(grouped)
 
     @classmethod
@@ -723,6 +870,53 @@ class LimitBoardDataService:
             if value > 0:
                 counter[value] += 1
         return dict(counter)
+
+    @staticmethod
+    def _minutes_since_market_open(value: Any) -> Optional[int]:
+        """
+        计算时间相对 09:30 的分钟数。
+
+        参数：
+        - value (Any): Tushare 返回的时间字符串，格式通常为 `HHMMSS`。
+
+        返回值：
+        - Optional[int]: 自 09:30 起累计的分钟数；若时间为空或格式非法则返回 `None`。
+
+        异常：
+        - 无。非法输入统一返回 `None`。
+        """
+        text = str(value or "").strip()
+        if len(text) != 6 or not text.isdigit():
+            return None
+        hour = int(text[:2])
+        minute = int(text[2:4])
+        return max((hour - 9) * 60 + (minute - 30), 0)
+
+    @staticmethod
+    def _parse_up_stat_detail(value: Any) -> Tuple[Optional[int], Optional[int], float]:
+        """
+        解析涨停统计字段 `up_stat`。
+
+        参数：
+        - value (Any): `limit_list_d` 返回的涨停统计字符串，格式通常为 `N/T`。
+
+        返回值：
+        - Tuple[Optional[int], Optional[int], float]:
+          第一个值为涨停次数 `N`，第二个值为统计窗口 `T`，第三个值为 `N/T` 比值。
+
+        异常：
+        - 无。无法解析时返回 `(None, None, 0.0)`。
+        """
+        text = str(value or "").strip()
+        if "/" not in text:
+            return None, None, 0.0
+        left, right = text.split("/", 1)
+        if not left.isdigit() or not right.isdigit():
+            return None, None, 0.0
+        numerator = int(left)
+        denominator = int(right)
+        ratio = numerator / denominator if denominator else 0.0
+        return numerator, denominator, ratio
 
     @staticmethod
     def _build_break_item(item: Dict[str, Any], status: str, ths_item: Dict[str, Any]) -> Dict[str, Any]:

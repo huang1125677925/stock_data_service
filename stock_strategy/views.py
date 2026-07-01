@@ -1301,6 +1301,51 @@ def get_limit_board_trend_analysis(request):
     except Exception as e:
         return error_response(f'获取涨停打板趋势分析失败: {str(e)}', 500)
 
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_limit_board_industry_trend_strength(request):
+    """
+    涨停趋势强度行业分析接口
+
+    功能：
+    - 基于 Tushare `limit_list_d(limit_type=U)`，按时间区间统计各行业每日涨停趋势强度指标。
+
+    参数：
+    - start_date (str): 开始日期，必填，格式 `YYYYMMDD`。
+    - end_date (str): 结束日期，必填，格式 `YYYYMMDD`。
+    - token (str，可选): Tushare Token，传入后覆盖环境变量。
+
+    返回值：
+    - 成功：返回区间内按交易日和行业聚合的涨停数量、平均换手率、首次封板耗时分钟数、
+      总成交额、平均开板次数、平均连板数、平均涨停统计数据等信息。
+    - 失败：返回统一错误响应。
+
+    异常：
+    - ValueError: 参数格式不正确时转为 400 响应。
+    - RuntimeError: 底层数据源调用失败时转为 500 响应。
+
+    事件：
+    - 解析并校验日期区间参数。
+    - 调用涨停打板组合服务执行行业维度趋势强度聚合。
+    - 使用 `success_response` / `error_response` 统一封装响应。
+    """
+    try:
+        start_date, end_date = _get_required_date_range(request)
+        token = request.GET.get('token')
+        result = limit_board_data_service.get_industry_trend_strength(
+            start_date=start_date,
+            end_date=end_date,
+            token=token,
+        )
+        return success_response(result, '获取行业涨停趋势强度分析成功')
+    except ValueError as e:
+        return error_response(f'参数格式错误: {str(e)}', 400)
+    except RuntimeError as e:
+        return error_response(str(e), 500)
+    except Exception as e:
+        return error_response(f'获取行业涨停趋势强度分析失败: {str(e)}', 500)
+
 class IndexMacdXgbGrowthDatesView(APIView):
     """
     指数MACD XGBoost最近上涨日预测视图

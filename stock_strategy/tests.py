@@ -207,18 +207,91 @@ class FakeLimitBoardFetcher:
         }
 
     def _records(self, interface, params):
+        """
+        功能：根据接口名和查询参数返回预设测试记录。
+
+        参数：
+        - interface (str): Tushare 接口名称。
+        - params (dict): 接口查询参数，支持按区间与涨跌停类型切换数据集。
+
+        返回值：
+        - list[dict]: 对应接口的伪造记录列表。
+
+        异常：
+        - 无。未知接口默认返回空列表。
+        """
         is_range_query = bool(params.get("start_date") and params.get("end_date"))
         limit_type = params.get("limit_type")
         if interface == "limit_list_d" and limit_type == "U":
             records = [
-                {"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "amount": 1000, "fd_amount": 200, "open_times": 0, "limit_times": 1},
-                {"trade_date": "20260114", "ts_code": "000002.SZ", "name": "二板股", "amount": 2000, "fd_amount": 500, "open_times": 1, "limit_times": 2},
+                {
+                    "trade_date": "20260114",
+                    "ts_code": "000001.SZ",
+                    "name": "一板股",
+                    "industry": "机器人",
+                    "amount": 1000,
+                    "fd_amount": 200,
+                    "turnover_ratio": 10.0,
+                    "first_time": "093500",
+                    "open_times": 0,
+                    "up_stat": "1/1",
+                    "limit_times": 1,
+                },
+                {
+                    "trade_date": "20260114",
+                    "ts_code": "000002.SZ",
+                    "name": "二板股",
+                    "industry": "机器人",
+                    "amount": 2000,
+                    "fd_amount": 500,
+                    "turnover_ratio": 20.0,
+                    "first_time": "094500",
+                    "open_times": 1,
+                    "up_stat": "2/3",
+                    "limit_times": 2,
+                },
             ]
             if is_range_query:
                 records.extend([
-                    {"trade_date": "20260115", "ts_code": "000001.SZ", "name": "一板股", "amount": 1500, "fd_amount": 300, "open_times": 0, "limit_times": 2},
-                    {"trade_date": "20260115", "ts_code": "000006.SZ", "name": "新启动", "amount": 1200, "fd_amount": 240, "open_times": 0, "limit_times": 1},
-                    {"trade_date": "20260115", "ts_code": "000007.SZ", "name": "高标股", "amount": 2200, "fd_amount": 600, "open_times": 0, "limit_times": 3},
+                    {
+                        "trade_date": "20260115",
+                        "ts_code": "000001.SZ",
+                        "name": "一板股",
+                        "industry": "机器人",
+                        "amount": 1500,
+                        "fd_amount": 300,
+                        "turnover_ratio": 12.0,
+                        "first_time": "094000",
+                        "open_times": 0,
+                        "up_stat": "2/2",
+                        "limit_times": 2,
+                    },
+                    {
+                        "trade_date": "20260115",
+                        "ts_code": "000006.SZ",
+                        "name": "新启动",
+                        "industry": "机器人",
+                        "amount": 1200,
+                        "fd_amount": 240,
+                        "turnover_ratio": 8.0,
+                        "first_time": "100000",
+                        "open_times": 0,
+                        "up_stat": "1/1",
+                        "limit_times": 1,
+                    },
+                    {
+                        "trade_date": "20260115",
+                        "ts_code": "000007.SZ",
+                        "name": "高标股",
+                        "industry": "消费电子",
+                        "amount": 2200,
+                        "fd_amount": 600,
+                        "turnover_ratio": 15.0,
+                        "first_time": "095000",
+                        "open_times": 0,
+                        "up_stat": "3/4",
+                        "limit_times": 3,
+                    },
                 ])
             return records
         if interface == "limit_list_d" and limit_type == "D":
@@ -303,6 +376,18 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(result["active_hot_money"][0]["hm_name"], "测试游资")
 
     def test_trend_analysis_returns_sentiment_concept_and_lifecycle_trends(self):
+        """
+        功能：验证区间趋势分析会返回情绪、题材与个股生命周期三类结果。
+
+        参数：
+        - 无。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
         result = self.service.get_trend_analysis(start_date="20260114", end_date="20260115", top_n=10)
 
         self.assertEqual(result["summary"]["trade_day_count"], 2)
@@ -311,6 +396,38 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(result["concept_trends"][0]["concept_name"], "机器人")
         lifecycle_by_code = {item["ts_code"]: item for item in result["stock_lifecycles"]}
         self.assertEqual(lifecycle_by_code["000001.SZ"]["lifecycle_stage"], "二板确认")
+
+    def test_industry_trend_strength_groups_limit_up_metrics_by_date_and_industry(self):
+        """
+        功能：验证行业涨停趋势强度分析会按交易日和行业聚合涨停指标。
+
+        参数：
+        - 无。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        result = self.service.get_industry_trend_strength(start_date="20260114", end_date="20260115")
+
+        self.assertEqual(result["summary"]["trade_day_count"], 2)
+        self.assertEqual(result["summary"]["industry_count"], 2)
+        self.assertEqual(result["summary"]["total_limit_up_count"], 5)
+        robot_day1 = next(
+            item for item in result["data"]
+            if item["trade_date"] == "20260114" and item["industry"] == "机器人"
+        )
+        self.assertEqual(robot_day1["limit_up_count"], 2)
+        self.assertEqual(robot_day1["avg_turnover_ratio"], 15.0)
+        self.assertEqual(robot_day1["avg_first_limit_minutes"], 10.0)
+        self.assertEqual(robot_day1["total_amount"], 3000.0)
+        self.assertEqual(robot_day1["avg_open_times"], 0.5)
+        self.assertEqual(robot_day1["avg_limit_times"], 1.5)
+        self.assertEqual(robot_day1["avg_up_stat_n"], 1.5)
+        self.assertEqual(robot_day1["avg_up_stat_t"], 2.0)
+        self.assertAlmostEqual(robot_day1["avg_up_stat_ratio_pct"], 83.33, places=2)
 
 
 class BoardRpsTradeDayTests(unittest.TestCase):

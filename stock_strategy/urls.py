@@ -25,6 +25,7 @@ urlpatterns = [
     path('limit-board/break-reseal/', views.get_limit_board_break_reseal, name='get_limit_board_break_reseal'),
     path('limit-board/hot-money-review/', views.get_limit_board_hot_money_review, name='get_limit_board_hot_money_review'),
     path('limit-board/trend-analysis/', views.get_limit_board_trend_analysis, name='get_limit_board_trend_analysis'),
+    path('limit-board/industry-trend-strength/', views.get_limit_board_industry_trend_strength, name='get_limit_board_industry_trend_strength'),
     path('value-stocks/', views.get_value_stock_candidates, name='get_value_stock_candidates'),
     path('value-stocks/revenue-history/', views.get_value_stock_revenue_history, name='get_value_stock_revenue_history'),
     path('swing-analysis/', views.get_swing_analysis, name='get_swing_analysis'),

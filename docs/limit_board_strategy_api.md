@@ -1,6 +1,6 @@
 # 涨停打板组合数据接口文档
 
-本文档面向前端开发，描述涨停、打板、竞价、题材、炸板回封、龙虎榜游资复盘、趋势分析相关组合接口。
+本文档面向前端开发，描述涨停、打板、竞价、题材、炸板回封、龙虎榜游资复盘、趋势分析、行业趋势强度相关组合接口。
 
 ## 统一响应格式
 
@@ -630,9 +630,133 @@ curl "http://localhost:8000/django/api/strategy/limit-board/trend-analysis/?star
 }
 ```
 
+## 7. 行业涨停趋势强度分析
+
+```http
+GET /django/api/strategy/limit-board/industry-trend-strength/
+```
+
+### 功能
+
+基于区间 `limit_list_d(limit_type=U)` 涨停池数据，按交易日和行业聚合输出行业维度的涨停趋势强度指标，适合前端做行业热度趋势表、行业轮动看板、打板强度排行。
+
+### 数据源
+
+- `limit_list_d(start_date,end_date,limit_type=U)`：区间涨停池
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---:|---:|---:|---|
+| `start_date` | string | 是 | - | 开始日期，格式 `YYYYMMDD` |
+| `end_date` | string | 是 | - | 结束日期，格式 `YYYYMMDD` |
+| `token` | string | 否 | - | Tushare Token |
+
+### 示例请求
+
+```bash
+curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-strength/?start_date=20260114&end_date=20260131"
+```
+
+### data 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `start_date` | string | 查询开始日期 |
+| `end_date` | string | 查询结束日期 |
+| `summary` | object | 汇总信息 |
+| `data` | array | 行业日度趋势强度明细 |
+| `source_counts` | object | 数据源记录数 |
+| `query_time` | string | 查询时间 |
+
+### summary 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `trade_day_count` | number | 区间内出现涨停数据的交易日数量 |
+| `industry_count` | number | 区间内有涨停记录的行业数量 |
+| `record_count` | number | 行业日度明细记录数 |
+| `total_limit_up_count` | number | 区间总涨停样本数 |
+| `top_industries` | array | 按区间累计涨停家数排序的行业汇总，最多 20 条 |
+
+### top_industries 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `industry` | string | 行业名称 |
+| `trade_day_count` | number | 该行业在区间内上榜交易日数 |
+| `total_limit_up_count` | number | 区间累计涨停家数 |
+| `avg_daily_limit_up_count` | number | 日均涨停家数 |
+| `total_amount` | number | 区间累计成交额 |
+
+### item 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `trade_date` | string | 交易日期 |
+| `industry` | string | 行业名称 |
+| `limit_up_count` | number | 当日该行业涨停家数 |
+| `avg_turnover_ratio` | number | 当日该行业涨停股平均换手率 |
+| `avg_first_limit_minutes` | number | 当日该行业涨停股首次封板相对 `09:30` 的平均耗时，单位分钟 |
+| `total_amount` | number | 当日该行业涨停股成交额之和 |
+| `avg_open_times` | number | 当日该行业涨停股平均开板次数 |
+| `avg_limit_times` | number | 当日该行业涨停股平均连板数 |
+| `avg_up_stat_n` | number | `up_stat` 中分子 `N` 的平均值，表示平均涨停次数 |
+| `avg_up_stat_t` | number | `up_stat` 中分母 `T` 的平均值，表示平均统计窗口天数 |
+| `avg_up_stat_ratio_pct` | number | `up_stat` 中 `N/T` 的平均值，已转换为百分比 |
+
+### up_stat 口径说明
+
+- `up_stat` 原始格式为 `N/T`，表示 `T` 天内出现 `N` 次涨停。
+- 接口会将其拆分后分别计算 `avg_up_stat_n`、`avg_up_stat_t` 和 `avg_up_stat_ratio_pct`。
+- 例如 `1/1` 与 `2/3` 的平均涨停统计比值为 `((1/1) + (2/3)) / 2 = 83.33%`。
+
+### 示例响应片段
+
+```json
+{
+  "code": 200,
+  "message": "获取行业涨停趋势强度分析成功",
+  "data": {
+    "start_date": "20260114",
+    "end_date": "20260115",
+    "summary": {
+      "trade_day_count": 2,
+      "industry_count": 2,
+      "record_count": 3,
+      "total_limit_up_count": 5,
+      "top_industries": [
+        {
+          "industry": "机器人",
+          "trade_day_count": 2,
+          "total_limit_up_count": 4,
+          "avg_daily_limit_up_count": 2.0,
+          "total_amount": 5700.0
+        }
+      ]
+    },
+    "data": [
+      {
+        "trade_date": "20260114",
+        "industry": "机器人",
+        "limit_up_count": 2,
+        "avg_turnover_ratio": 15.0,
+        "avg_first_limit_minutes": 10.0,
+        "total_amount": 3000.0,
+        "avg_open_times": 0.5,
+        "avg_limit_times": 1.5,
+        "avg_up_stat_n": 1.5,
+        "avg_up_stat_t": 2.0,
+        "avg_up_stat_ratio_pct": 83.33
+      }
+    ]
+  }
+}
+```
+
 ## 前端页面建议
 
-建议拆成 6 个模块：
+建议拆成 7 个模块：
 
 | 页面模块 | 推荐接口 | 展示方式 |
 |---|---|---|
@@ -642,11 +766,13 @@ curl "http://localhost:8000/django/api/strategy/limit-board/trend-analysis/?star
 | 炸板回封 | `/break-reseal/` | 回封/炸板双列表、开板次数排行 |
 | 游资复盘 | `/hot-money-review/` | 活跃游资排行、龙虎榜股票表 |
 | 趋势分析 | `/trend-analysis/` | 情绪折线图、题材热度趋势、个股生命周期表 |
+| 行业趋势强度 | `/industry-trend-strength/` | 行业热度表、轮动趋势、封板效率对比 |
 
 ## 注意事项
 
 - `trade_date` 必须传交易日；非交易日通常会返回空数据或 Tushare 错误。
 - 趋势分析接口使用 `start_date/end_date`，当前限制最大 90 个自然日。
+- 行业趋势强度接口同样使用 `start_date/end_date`，当前限制最大 90 个自然日。
 - 前端应展示 `source_counts`，便于判断是否某个增强数据源为空。
 - 组合接口中部分增强源为空不一定代表接口失败，核心字段仍可使用。
 - `raw_sources`、`top_list`、`limit_record` 等对象保留 Tushare 原始字段，前端可以按需展示详情。
