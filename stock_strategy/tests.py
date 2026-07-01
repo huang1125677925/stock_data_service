@@ -10,6 +10,7 @@ from .limit_board_service import LimitBoardDataService
 from scheduled_tasks.stock_data_query_tasks import dc_board_rps
 from scheduled_tasks.stock_data_query_tasks import dc_board_member_rps
 from scheduled_tasks.stock_data_query_tasks import major_index_rps
+from scheduled_tasks.stock_data_query_tasks import stock_rps
 
 
 class FakeTusharePro:
@@ -625,6 +626,238 @@ class DcBoardMemberRpsTests(unittest.TestCase):
         self.assertEqual(result_map.loc["000002.SZ", "pct_change"], 1.5)
         self.assertGreater(result_map.loc["000001.SZ", "RPS_5"], result_map.loc["000002.SZ", "RPS_5"])
         self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
+        mock_cache.set.assert_called_once()
+
+
+class StockRpsTests(unittest.TestCase):
+    """
+    组件：股票 RPS 计算测试。
+
+    功能：
+    - 验证股票 RPS 会基于 `stock_basic` 股票池和 `daily` 单日快照计算多周期收益率与 RPS。
+    - 验证未显式传入 `trade_date` 时，若最新开市日缺少日线快照，会自动回退到最近可用交易日。
+    """
+
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps.cache")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_period_start_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_stock_basic_all_statuses")
+    def test_compute_stock_rps_fetches_snapshots_for_periods(
+        self,
+        mock_fetch_stock_basic_all_statuses,
+        mock_get_period_start_trade_dates,
+        mock_fetch_daily_snapshot_by_trade_date,
+        mock_cache,
+    ):
+        """
+        功能：验证 `compute_stock_rps` 会按多个周期起始交易日和截止交易日拉取股票快照并计算排名。
+
+        参数：
+        - mock_fetch_stock_basic_all_statuses: 模拟股票基础信息股票池。
+        - mock_get_period_start_trade_dates: 模拟多周期起始交易日映射。
+        - mock_fetch_daily_snapshot_by_trade_date: 模拟股票日线快照。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_fetch_stock_basic_all_statuses.return_value = pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "industry": "银行",
+                    "market": "主板",
+                    "list_date": "19910403",
+                    "delist_date": "",
+                    "list_status": "L",
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "symbol": "000002",
+                    "name": "万科A",
+                    "industry": "房地产",
+                    "market": "主板",
+                    "list_date": "19910129",
+                    "delist_date": "",
+                    "list_status": "L",
+                },
+                {
+                    "ts_code": "000003.SZ",
+                    "symbol": "000003",
+                    "name": "未来上市",
+                    "industry": "测试",
+                    "market": "主板",
+                    "list_date": "20260110",
+                    "delist_date": "",
+                    "list_status": "L",
+                },
+            ]
+        )
+        mock_get_period_start_trade_dates.return_value = {
+            5: "20260106",
+            20: "20260102",
+        }
+        mock_fetch_daily_snapshot_by_trade_date.side_effect = [
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260106", "close": 11.0, "pct_change": 0.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260106", "close": 10.2, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260109", "close": 12.0, "pct_change": 5.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260109", "close": 10.5, "pct_change": 1.5},
+                ]
+            ),
+        ]
+        mock_cache.get.return_value = None
+
+        result_df, errors = stock_rps.compute_stock_rps(
+            periods=[5, 20],
+            trade_date="20260109",
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        self.assertEqual(
+            set(result_df["ts_code"].tolist()),
+            {"000001.SZ", "000002.SZ"},
+        )
+        mock_get_period_start_trade_dates.assert_called_once_with("20260109", [5, 20], token=None)
+        self.assertEqual(
+            mock_fetch_daily_snapshot_by_trade_date.call_args_list,
+            [
+                unittest.mock.call("20260102", token=None),
+                unittest.mock.call("20260106", token=None),
+                unittest.mock.call("20260109", token=None),
+            ],
+        )
+        self.assertIn("RPS_5", result_df.columns)
+        self.assertIn("RPS_20", result_df.columns)
+        self.assertIn("pct_change", result_df.columns)
+        self.assertIn("RPS_today", result_df.columns)
+        result_map = result_df.set_index("ts_code")
+        self.assertEqual(result_map.loc["000001.SZ", "pct_change"], 5.0)
+        self.assertEqual(result_map.loc["000002.SZ", "pct_change"], 1.5)
+        self.assertGreater(result_map.loc["000001.SZ", "RPS_5"], result_map.loc["000002.SZ", "RPS_5"])
+        self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
+        mock_cache.set.assert_called_once()
+
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps.cache")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_period_start_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_recent_trade_dates")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_stock_basic_all_statuses")
+    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_latest_trade_date")
+    def test_compute_stock_rps_falls_back_to_previous_trade_date_when_latest_snapshot_missing(
+        self,
+        mock_get_latest_trade_date,
+        mock_fetch_stock_basic_all_statuses,
+        mock_get_recent_trade_dates,
+        mock_get_period_start_trade_dates,
+        mock_fetch_daily_snapshot_by_trade_date,
+        mock_cache,
+    ):
+        """
+        功能：验证未传 `trade_date` 时，若最新开市日无 `daily` 快照，会自动回退到最近可用交易日。
+
+        参数：
+        - mock_get_latest_trade_date: 模拟最近开市日查询结果。
+        - mock_fetch_stock_basic_all_statuses: 模拟股票基础信息股票池。
+        - mock_get_recent_trade_dates: 模拟最近开市日候选列表。
+        - mock_get_period_start_trade_dates: 模拟多周期起始交易日映射。
+        - mock_fetch_daily_snapshot_by_trade_date: 模拟股票日线快照。
+        - mock_cache: 模拟缓存对象。
+
+        返回值：
+        - 无。
+
+        异常：
+        - 断言失败时由测试框架抛出异常。
+        """
+        mock_get_latest_trade_date.return_value = "20260109"
+        mock_fetch_stock_basic_all_statuses.return_value = pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "industry": "银行",
+                    "market": "主板",
+                    "list_date": "19910403",
+                    "delist_date": "",
+                    "list_status": "L",
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "symbol": "000002",
+                    "name": "万科A",
+                    "industry": "房地产",
+                    "market": "主板",
+                    "list_date": "19910129",
+                    "delist_date": "",
+                    "list_status": "L",
+                },
+            ]
+        )
+        mock_get_recent_trade_dates.return_value = ["20260109", "20260108"]
+        mock_get_period_start_trade_dates.return_value = {5: "20260102"}
+        mock_fetch_daily_snapshot_by_trade_date.side_effect = [
+            pd.DataFrame(columns=["ts_code", "trade_date", "close", "pct_change"]),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260108", "close": 11.0, "pct_change": 5.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260108", "close": 10.4, "pct_change": 1.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260102", "close": 10.0, "pct_change": 0.0},
+                ]
+            ),
+            pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260108", "close": 11.0, "pct_change": 5.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260108", "close": 10.4, "pct_change": 1.0},
+                ]
+            ),
+        ]
+        mock_cache.get.return_value = None
+
+        result_df, errors = stock_rps.compute_stock_rps(
+            periods=[5],
+            trade_date=None,
+        )
+
+        self.assertIsNotNone(result_df)
+        self.assertTrue(
+            any("已自动回退至最近可用交易日20260108" in error for error in errors),
+            msg=f"unexpected errors: {errors}",
+        )
+        mock_get_period_start_trade_dates.assert_called_once_with("20260108", [5], token=None)
+        self.assertEqual(
+            mock_fetch_daily_snapshot_by_trade_date.call_args_list,
+            [
+                unittest.mock.call("20260109", token=None),
+                unittest.mock.call("20260108", token=None),
+                unittest.mock.call("20260102", token=None),
+                unittest.mock.call("20260108", token=None),
+            ],
+        )
+        self.assertEqual(result_df.attrs.get("trade_date"), "20260108")
         mock_cache.set.assert_called_once()
 
 

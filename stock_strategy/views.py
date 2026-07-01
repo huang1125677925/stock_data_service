@@ -14,6 +14,7 @@ from .services import rps_service, StockScreeningService
 from scheduled_tasks.stock_data_query_tasks.dc_board_rps import compute_board_rps
 from scheduled_tasks.stock_data_query_tasks.dc_board_member_rps import compute_dc_board_member_rps
 from scheduled_tasks.stock_data_query_tasks.major_index_rps import compute_major_index_rps
+from scheduled_tasks.stock_data_query_tasks.stock_rps import compute_stock_rps
 from .models import IndexRPS, StockSelectionRecord
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response, drf_success_response, drf_error_response
@@ -276,6 +277,66 @@ def get_index_rps(request):
         
     except Exception as e:
         return error_response(f'获取指数RPS强度排名失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_stock_rps(request):
+    """
+    获取股票多周期 RPS 强度排名数据。
+
+    Query Parameters:
+        periods (str): 回看交易日周期，多个周期用逗号分隔，如 "5,20,60"。
+        trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最近可用交易日。
+        exchange (str): 交易所筛选，可选，如 SSE、SZSE、BSE。
+        market (str): 市场类型筛选，可选，如 主板、创业板、科创板、北交所。
+        token (str): Tushare Token（覆盖环境变量）。
+
+    Returns:
+        JSON响应，包含股票列表、周期参数、目标日期、错误信息和查询时间。
+
+    Raises:
+        无。异常会统一包装为 error_response。
+    """
+    try:
+        periods_str = request.GET.get('periods', '5,20,60')
+        trade_date = request.GET.get('trade_date')
+        exchange = request.GET.get('exchange')
+        market = request.GET.get('market')
+        token = request.GET.get('token')
+
+        try:
+            periods = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
+            if not periods:
+                periods = [5, 20, 60]
+        except ValueError:
+            return error_response('周期参数格式错误，应为逗号分隔的整数', 400)
+
+        df, errors = compute_stock_rps(
+            periods=periods,
+            trade_date=trade_date,
+            token=token,
+            exchange=exchange,
+            market=market,
+        )
+        if df is None:
+            error_message = ', '.join(errors) if errors else '未获取到股票 RPS 数据'
+            return error_response(f'获取股票RPS排名失败: {error_message}', 500)
+
+        result = df.fillna('').to_dict('records')
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'periods': periods,
+            'trade_date': df.attrs.get('trade_date', trade_date),
+            'exchange': exchange,
+            'market': market,
+            'errors': errors,
+            'query_time': datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        return error_response(f'获取股票RPS排名失败: {str(e)}', 500)
 
 
 @csrf_exempt
