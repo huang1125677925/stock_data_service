@@ -1,1 +1,0 @@
-# Personal Center app package init

@@ -9,7 +9,6 @@ from .views import (
     IndexDailyProxyView,
     IndexWeightProxyView,
     IndexDailybasicProxyView,
-    IndexValuationSummaryProxyView,
     MarketCombinedDailyBasicView,
     MajorIndexDailyProxyView,
 )
@@ -26,6 +25,5 @@ urlpatterns = [
     path("major-index-daily/", MajorIndexDailyProxyView.as_view(), name="major-index-daily"),
     path("index-weight/", IndexWeightProxyView.as_view(), name="index-weight"),
     path("index-dailybasic/", IndexDailybasicProxyView.as_view(), name="index-dailybasic"),
-    path("index-valuation-summary/", IndexValuationSummaryProxyView.as_view(), name="index-valuation-summary"),
     path("market-combined-dailybasic/", MarketCombinedDailyBasicView.as_view(), name="market-combined-dailybasic"),
 ]

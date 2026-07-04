@@ -2,6 +2,31 @@ import os
 from typing import Dict, Optional, Any
 
 
+def _get_tushare_token(token: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve a Tushare token from an explicit value or environment.
+
+    Django loads .env in settings.py, but this helper is also used by scripts
+    that may import common.tushare_proxy without bootstrapping Django first.
+    """
+    explicit_token = token.strip() if isinstance(token, str) else token
+    if explicit_token:
+        return explicit_token
+
+    env_token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+
+    env_token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    return env_token or None
+
+
 def _success(data: Any, message: str = "success") -> Dict[str, Any]:
     from datetime import datetime
     return {
@@ -56,7 +81,7 @@ def call_tushare(
         return _error("tushare 库未安装或导入失败", 503, error=str(e))
 
     # 令牌配置
-    ts_token = token or os.environ.get("TUSHARE_TOKEN")
+    ts_token = _get_tushare_token(token)
     if ts_token:
         try:
             ts.set_token(ts_token)
@@ -120,7 +145,7 @@ def call_tushare_pro_bar(
     except Exception as e:
         return _error("tushare 库未安装或导入失败", 503, error=str(e))
 
-    ts_token = token or os.environ.get("TUSHARE_TOKEN")
+    ts_token = _get_tushare_token(token)
     if ts_token:
         try:
             ts.set_token(ts_token)

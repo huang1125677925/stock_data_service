@@ -1,9 +1,0 @@
-{
-  "prompts": [
-    {
-      "interface_name": "default",
-      "prompt_template": "请根据以下数据进行分析，找到当前的投资机会，输出简洁的中文结果：\n{data}",
-      "is_active": true
-    }
-  ]
-}

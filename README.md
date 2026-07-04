@@ -121,53 +121,26 @@ AkShare     定时任务   数据清洗   MySQL    REST API  用户界面
 - **财务报表数据**：资产负债表、利润表、现金流量表
 - **业绩报告数据**：季度和年度业绩指标
 
-### 3. 量化策略模块 (`quantitative_strategy`)
-- **策略配置管理**：策略参数配置和管理
-- **回测任务调度**：异步回测任务处理
-- **回测结果分析**：收益率、夏普比率、最大回撤等指标
-- **策略性能统计**：历史表现统计分析
-
-#### 支持的策略类型：
-- **移动平均策略**：MA交叉策略
-- **MACD策略**：MACD指标策略
-- **RSI策略**：相对强弱指标策略
-- **布林带策略**：布林带突破策略
-- **KDJ策略**：随机指标策略
-- **BIAS策略**：乖离率策略
-- **PSY策略**：心理线指标策略
-- **WR策略**：威廉指标策略
-
-### 4. 新闻资讯模块 (`cctv_news`)
-- **新闻采集**：CCTV新闻联播内容自动采集
-- **AI内容分析**：新闻内容智能分析和摘要
-- **新闻检索**：按日期、关键词检索新闻
-
-### 5. 用户管理模块 (`user_management`)
+### 3. 用户管理模块 (`user_management`)
 - **用户注册登录**：完整的用户认证系统
 - **权限管理**：基于角色的访问控制
 - **邀请码系统**：用户邀请注册机制
 - **Token认证**：API访问令牌管理
 
-### 6. 论坛社区模块 (`forum`)
-- **帖子管理**：用户发帖、编辑、删除
-- **评论系统**：帖子评论和回复
-- **用户互动**：点赞、收藏等社交功能
-
-### 7. 定时任务模块 (`scheduled_tasks`)
+### 4. 定时任务模块 (`scheduled_tasks`)
 - **数据更新任务**：股票数据定时更新
-- **新闻采集任务**：新闻内容定时抓取
 - **系统维护任务**：日志清理、状态检查
 - **任务监控**：任务执行状态监控
 
-### 8. 股票策略模块 (`stock_strategy`)
+### 5. 股票策略模块 (`stock_strategy`)
 - **行业轮动策略**：基于行业板块的投资策略
 - **策略信号生成**：买卖信号生成和推送
 
-### 9. 股票市场模块 (`stock_market`)
+### 6. 股票市场模块 (`stock_market`)
 - **市场数据统计**：整体市场数据分析
 - **市场指标计算**：技术指标计算服务
 
-### 10. MCP服务模块 (`mcp_service`)
+### 7. MCP服务模块 (`mcp_service`)
 - **Tushare数据接口**：基于 FastMCP 的工具集成，支持各类数据接口
 - **SSE传输支持**：支持大模型或 AI 助手通过 SSE 协议直连访问数据
 - **模块化工具库**：提供可扩展的工具和资源，便于直接挂载和调试
@@ -388,41 +361,20 @@ mcp run mcp_service/server.py
 
 ### 主要API端点
 
-#### 1. 股票数据API (`/api/stock/`)
-- `GET /api/stock/industry-sectors/` - 获取行业板块列表
-- `GET /api/stock/industry-sectors/{id}/` - 获取板块详情
-- `GET /api/stock/industry-sectors/{id}/daily-data/` - 获取板块日频数据
-- `GET /api/stock/stocks/` - 获取股票列表
-- `GET /api/stock/stocks/{code}/realtime/` - 获取股票实时行情
+#### 股票/行业API
+- `GET /django/api/stock/industry-sectors/` - 获取行业板块列表
+- `GET /django/api/stock/industry/fund-flow/data/` - 获取行业资金流数据
+- `GET /django/api/individual_stock/stocks/` - 获取个股列表
+- `GET /django/api/individual_stock/stocks/{stockCode}/history/` - 获取个股历史行情
 
-#### 2. 个股数据API (`/api/individual-stock/`)
-- `GET /api/individual-stock/stocks/` - 获取个股列表
-- `GET /api/individual-stock/stocks/{code}/` - 获取个股详情
-- `GET /api/individual-stock/stocks/{code}/daily-data/` - 获取个股日频数据
-- `GET /api/individual-stock/stocks/{code}/performance/` - 获取个股业绩数据
-
-#### 3. 量化策略API (`/api/quant/`)
-- `GET /api/quant/strategies/` - 获取策略列表
-- `POST /api/quant/backtest/` - 创建回测任务
-- `GET /api/quant/backtest/{task_id}/` - 获取回测结果
-- `GET /api/quant/backtest/{task_id}/chart/` - 获取回测图表
-
-#### 4. 新闻资讯API (`/api/news/`)
-- `GET /api/news/` - 获取新闻列表
-- `GET /api/news/{id}/` - 获取新闻详情
-- `GET /api/news/search/` - 搜索新闻
-
-#### 5. 用户管理API (`/api/user/`)
-- `POST /api/user/register/` - 用户注册
-- `POST /api/user/login/` - 用户登录
-- `POST /api/user/logout/` - 用户登出
-- `GET /api/user/profile/` - 获取用户信息
-
-#### 6. 论坛API (`/api/forum/`)
-- `GET /api/forum/posts/` - 获取帖子列表
-- `POST /api/forum/posts/` - 创建帖子
-- `GET /api/forum/posts/{id}/` - 获取帖子详情
-- `POST /api/forum/posts/{id}/comments/` - 添加评论
+#### 用户管理API (`/django/api/user/`)
+- `POST /django/api/user/register/` - 用户注册
+- `POST /django/api/user/login/` - 用户登录
+- `POST /django/api/user/logout/` - 用户登出
+- `POST /django/api/user/reset-password/` - 重置密码
+- `GET /django/api/user/invitation/` - 查询邀请码
+- `POST /django/api/user/invitation/` - 创建邀请码
+- `POST /django/api/user/invitation/validate/` - 校验邀请码
 
 详细的API文档请参考 `docs/` 目录下的相关文档。
 
@@ -431,8 +383,6 @@ mcp run mcp_service/server.py
 项目使用 `django-crontab` 管理定时任务，主要任务包括：
 
 ### 数据采集任务
-- **新闻采集**：`25 20,21 * * *` - 每天20:25和21:25采集CCTV新闻
-- **新闻分析**：`35 20,21 * * *` - 每天20:35和21:35分析新闻内容
 - **行业板块更新**：`1 16,17,18,19 * * *` - 每天16-19点更新行业数据
 - **个股数据更新**：`40 16,23 * * *` - 每天16:40和23:40更新个股数据
 
@@ -451,8 +401,6 @@ python manage.py crontab add
 # 移除所有定时任务
 python manage.py crontab remove
 
-# 手动执行特定任务
-python manage.py shell -c "from scheduled_tasks.tasks import fetch_cctv_news; fetch_cctv_news()"
 ```
 
 ## 🔧 开发指南
@@ -470,10 +418,7 @@ stock_data_service/
 │   └── sensitive_words.py      # 敏感词过滤
 ├── stock_data/                 # 股票数据模块
 ├── indival_stock_data/         # 个股数据模块
-├── quantitative_strategy/      # 量化策略模块
-├── cctv_news/                  # 新闻资讯模块
 ├── user_management/            # 用户管理模块
-├── forum/                      # 论坛社区模块
 ├── scheduled_tasks/            # 定时任务模块
 ├── stock_strategy/             # 股票策略模块
 ├── stock_market/               # 股票市场模块

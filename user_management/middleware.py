@@ -33,9 +33,6 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/user/login/',
             '/django/api/user/invitation/validate/',
             '/django/api/user/reset-password/',
-            '/django/api/individual_stock/strategy-results/',
-            '/django/api/individual_stock/stock-tags/',
-            # '/django/api/stock/industry/performance-reports/',
             '/django/api/index/index-basic',
             '/django/api/tasks/',
             '/django/api/docs/',
@@ -43,11 +40,6 @@ class AuthenticationMiddleware(MiddlewareMixin):
             '/django/api/schema/',
             '/django/api/redoc/',
             '/django/api/strategy/',
-            '/django/api/ai/analyze/',
-            '/django/api/ai/chat/',
-            '/django/api/stock/industry/statistics/',
-            '/django/api/stock/industry/ranking/',
-            '/django/api/stock/industry/comparison/',
         ]
     
     def process_request(self, request):

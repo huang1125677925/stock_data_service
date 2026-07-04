@@ -41,20 +41,14 @@ INSTALLED_APPS = [
     'rest_framework',
     'drf_spectacular',
     'industry_stock_data',
-    'cctv_news',
     'stock_strategy',
     'user_management',
     'scheduled_tasks',
     'index_data',
-    'forum',
     'indival_stock_data',
-    'quantitative_strategy',
     'stock_market',
     'django_comment_migrate',
-    'personal_center',
     'etfapp',
-    'ai_service',
-    'chat_service',
 ]
 
 MIDDLEWARE = [

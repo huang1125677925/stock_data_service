@@ -1,1 +1,0 @@
-# Market analysis package for breadth indicators (ADR, ADL)

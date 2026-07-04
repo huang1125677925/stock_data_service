@@ -117,11 +117,6 @@ DJANGO_SETTINGS_MODULE=stock_data_service.settings
 # 每30分钟检查任务状态
 */30 * * * * cd /path/to/stock_data_service && venv/bin/python manage.py runtask check_task_status
 
-# 每天晚上9:32爬取新闻联播
-32 21 * * * cd /path/to/stock_data_service && venv/bin/python manage.py runtask fetch_cctv_news >> /path/to/stock_data_service/logs/cctv_news.log 2>&1
-
-# 每天晚上10:24分析新闻联播
-24 22 * * * cd /path/to/stock_data_service && venv/bin/python manage.py runtask analyze_cctv_news >> /path/to/stock_data_service/logs/cctv_news_analysis.log 2>&1
 ```
 
 ## 7. 启动服务
@@ -220,10 +215,6 @@ sudo systemctl restart nginx
 # 查看应用日志
 cat logs/django.log
 
-# 查看定时任务日志
-cat logs/cctv_news.log
-cat logs/cctv_news_analysis.log
-
 # 查看Gunicorn日志
 cat logs/gunicorn_stdout.log
 cat logs/gunicorn_stderr.log
@@ -237,16 +228,6 @@ crontab -l
 
 # 查看django-crontab配置
 python manage.py crontab show
-```
-
-### 手动执行任务
-
-```bash
-# 手动执行爬取任务
-python manage.py shell -c "from scheduled_tasks.tasks import fetch_cctv_news; fetch_cctv_news()"
-
-# 手动执行分析任务
-python manage.py shell -c "from scheduled_tasks.tasks import analyze_cctv_news; analyze_cctv_news()"
 ```
 
 ## 10. 安全建议
