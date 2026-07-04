@@ -17,6 +17,16 @@ class LimitBoardDataService:
     # limit_list_ths `status` 字段中需要统计的涨停状态类型
     LIMIT_STATUS_TYPES: Tuple[str, ...] = ("T字板", "一字板", "换手板")
 
+    # limit_list_ths 显式请求字段。
+    # Tushare 默认仅返回“默认显示（Y）”字段，first_lu_time、rise_rate 等标记为 N 的字段
+    # 需通过 fields 显式声明才会返回，否则响应中缺失这些列。
+    LIMIT_LIST_THS_FIELDS: str = (
+        "trade_date,ts_code,name,price,pct_chg,open_num,lu_desc,limit_type,tag,status,"
+        "first_lu_time,last_lu_time,first_ld_time,last_ld_time,limit_order,limit_amount,"
+        "turnover_rate,free_float,lu_limit_order,limit_up_suc_rate,turnover,"
+        "rise_rate,sum_float,market_type"
+    )
+
     def __init__(self, fetcher: Callable[..., Dict[str, Any]] = call_tushare):
         self.fetcher = fetcher
 
@@ -519,6 +529,7 @@ class LimitBoardDataService:
             "limit_list_ths",
             {"start_date": start_date, "end_date": end_date, "limit_type": "涨停池"},
             token=token,
+            fields=self.LIMIT_LIST_THS_FIELDS,
             required=False,
         )
         limit_up_d = self._fetch_records(

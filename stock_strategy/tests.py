@@ -325,7 +325,7 @@ class FakeLimitBoardFetcher:
             return records
         if interface == "limit_list_ths" and limit_type == "涨停池":
             return [
-                {"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "lu_desc": "机器人概念", "tag": "首板", "status": "一字板", "limit_times": 1, "turnover_ratio": 10.0, "open_num": 0},
+                {"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "lu_desc": "机器人概念", "tag": "首板", "status": "一字板", "limit_times": 1, "turnover_ratio": 10.0, "open_num": 0, "first_lu_time": "093000", "limit_up_suc_rate": 0.85, "rise_rate": 3.2, "market_type": "HS"},
                 {"trade_date": "20260114", "ts_code": "000002.SZ", "name": "二板股", "lu_desc": "机器人概念", "tag": "连板", "status": "换手板", "limit_times": 2, "turnover_ratio": 20.0, "open_num": 1},
                 {"trade_date": "20260114", "ts_code": "000009.SZ", "name": "ST退市", "lu_desc": "重组预期", "tag": "首板", "status": "一字板", "limit_times": 1, "turnover_ratio": 5.0, "open_num": 0},
                 {"trade_date": "20260114", "ts_code": "000010.SZ", "name": "无行业股", "lu_desc": "杂项", "tag": "首板", "status": "换手板", "limit_times": 1, "turnover_ratio": 6.0, "open_num": 0},
@@ -449,6 +449,11 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(robot_stock["industry"], "机器人")
         self.assertIn("lu_desc", robot_stock)
         self.assertIn("tag", robot_stock)
+        # 个股保留 limit_list_ths 新增字段
+        self.assertEqual(robot_stock["first_lu_time"], "093000")
+        self.assertEqual(robot_stock["limit_up_suc_rate"], 0.85)
+        self.assertEqual(robot_stock["rise_rate"], 3.2)
+        self.assertEqual(robot_stock["market_type"], "HS")
 
         # 20260115：整体 3 只，细分到机器人(2)与消费电子(1)
         day2 = result["data"]["20260115"]

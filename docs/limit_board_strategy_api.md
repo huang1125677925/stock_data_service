@@ -735,7 +735,36 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 #### stocks 字段（个股维度）
 
 - `stocks` 是一个对象，key 为行业名称，value 为该行业内的涨停股数组。
-- 每只个股保留 `limit_list_ths` 中该日该股票的全部原始字段（如 `ts_code`、`name`、`lu_desc`、`tag`、`limit_times`、`turnover_ratio`、`open_num` 等），并额外补充 `industry` 字段标识所属行业。
+- 每只个股保留 `limit_list_ths` 中该日该股票的全部原始字段（接口已通过 `fields` 显式声明完整字段，含默认不返回的 `N` 字段），并额外补充 `industry` 字段标识所属行业。字段如下：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `trade_date` | string | 交易日期 |
+| `ts_code` | string | 股票代码 |
+| `name` | string | 股票名称 |
+| `price` | number | 收盘价(元) |
+| `pct_chg` | number | 涨跌幅% |
+| `open_num` | number | 打开次数 |
+| `lu_desc` | string | 涨停原因 |
+| `limit_type` | string | 板单类别 |
+| `tag` | string | 涨停标签 |
+| `status` | string | 涨停状态（如 `T字板`、`一字板`、`换手板`、`N连板`） |
+| `first_lu_time` | string | 首次涨停时间 |
+| `last_lu_time` | string | 最后涨停时间 |
+| `first_ld_time` | string | 首次跌停时间 |
+| `last_ld_time` | string | 最后跌停时间 |
+| `limit_order` | number | 封单量(元) |
+| `limit_amount` | number | 封单额(元) |
+| `turnover_rate` | number | 换手率% |
+| `free_float` | number | 实际流通(元) |
+| `lu_limit_order` | number | 最大封单(元) |
+| `limit_up_suc_rate` | number | 近一年涨停封板率 |
+| `turnover` | number | 成交额 |
+| `rise_rate` | number | 涨速 |
+| `sum_float` | number | 总市值(亿元) |
+| `market_type` | string | 股票类型：`HS` 沪深主板、`GEM` 创业板、`STAR` 科创板 |
+| `industry` | string | 所属行业（本接口补充，来自 `limit_list_d` 映射） |
+
 - ST/退市股票（名称含 `ST` 或 `退`）不计入统计范围。
 - 无法归类到具体行业（既无法从 `limit_list_d` 匹配、`limit_list_ths` 也无 `industry` 字段）的个股不计入统计范围，即不存在 `未知行业` 分组。
 - 某交易日经上述过滤后若无有效涨停个股，则该交易日不会出现在 `data` 中。
@@ -785,11 +814,19 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
               "trade_date": "20260114",
               "ts_code": "000001.SZ",
               "name": "一板股",
+              "price": 12.5,
+              "pct_chg": 10.0,
               "lu_desc": "机器人概念",
+              "limit_type": "涨停池",
               "tag": "首板",
-              "limit_times": 1,
-              "turnover_ratio": 10.0,
+              "status": "一字板",
               "open_num": 0,
+              "turnover_rate": 10.0,
+              "limit_up_suc_rate": 0.85,
+              "turnover": 100000000,
+              "first_lu_time": "093000",
+              "rise_rate": 12.5,
+              "market_type": "HS",
               "industry": "机器人"
             }
           ]
