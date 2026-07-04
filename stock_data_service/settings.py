@@ -43,7 +43,6 @@ INSTALLED_APPS = [
     'industry_stock_data',
     'stock_strategy',
     'user_management',
-    'scheduled_tasks',
     'index_data',
     'indival_stock_data',
     'stock_market',
@@ -162,7 +161,7 @@ REST_FRAMEWORK = {
 # drf-spectacular 配置
 SPECTACULAR_SETTINGS = {
     'TITLE': '股票数据服务 OpenAPI 文档',
-    'DESCRIPTION': '统一响应格式的 Django REST API 文档，包含 scheduled_tasks 下的 Tushare 直通代理接口',
+    'DESCRIPTION': '统一响应格式的 Django REST API 文档',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
@@ -273,8 +272,6 @@ AI_GITHUB_SYNC_PATH_TEMPLATE = os.environ.get(
     'AI_GITHUB_SYNC_PATH_TEMPLATE',
     'ai_answers/{date}-{time}-{question}.md',
 ).strip()
-# GitHub mybook 记忆文件目录（相对仓库根目录，供 MCP 工具 append/read/list 使用）
-AI_GITHUB_MEMORY_PREFIX = os.environ.get('AI_GITHUB_MEMORY_PREFIX', 'memories').strip().strip('/')
 
 # 数据更新频率（秒）
 DATA_UPDATE_INTERVAL = int(os.environ.get('DATA_UPDATE_INTERVAL', 60))
