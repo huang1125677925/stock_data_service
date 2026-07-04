@@ -786,6 +786,8 @@ def get_industry_ma_breadth(request):
     - ma_window(int): 移动平均窗口大小（交易日），默认20
     - idx_type(str): 东方财富板块类型，支持：行业板块、概念板块、地域板块；默认行业板块
     - level(str): 东财行业层级，仅 idx_type=行业板块 时生效，支持：东财一级行业、东财二级行业、东财三级行业
+    - sector_code(str): 东财板块代码，例如 BK1462.DC；传入时进入单行业模式，
+      仅计算该板块并按成分股逐只拉取因子数据（请求次数与时间跨度无关），此时忽略 idx_type/level
     返回值：
     - 成功：返回包含各行业每日宽度数据的JSON（total, data, query_time, 参数回显）
     - 失败：返回错误信息JSON
@@ -800,9 +802,11 @@ def get_industry_ma_breadth(request):
         ma_window = int(request.GET.get('ma_window', 20))
         idx_type = request.GET.get('idx_type', '行业板块')
         level = request.GET.get('level')
+        sector_code = (request.GET.get('sector_code') or '').strip() or None
         allowed_levels = {'东财一级行业', '东财二级行业', '东财三级行业'}
-        effective_level = level if idx_type == '行业板块' else None
-        if effective_level and effective_level not in allowed_levels:
+        # 单行业模式下由板块代码唯一确定行业，忽略 idx_type/level
+        effective_level = None if sector_code else (level if idx_type == '行业板块' else None)
+        if not sector_code and effective_level and effective_level not in allowed_levels:
             return error_response('level参数错误，仅支持：东财一级行业、东财二级行业、东财三级行业', 400)
         # 计算行业MA市场宽度
         result = industry_ma_breadth_strategy.get_industry_ma_breadth(
@@ -811,6 +815,7 @@ def get_industry_ma_breadth(request):
             ma_window=ma_window,
             idx_type=idx_type,
             level=effective_level,
+            sector_code=sector_code,
         )
         if result is None:
             return error_response('获取行业MA市场宽度数据失败', 500)
@@ -822,6 +827,7 @@ def get_industry_ma_breadth(request):
             'ma_window': ma_window,
             'idx_type': idx_type,
             'level': effective_level,
+            'sector_code': sector_code,
             'query_time': datetime.now().isoformat()
         })
     except ValueError:

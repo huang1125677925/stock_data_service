@@ -570,6 +570,166 @@ class IndustryMABreadthStrategy:
             logger.error("基于本地快照计算行业 MA 宽度失败: %s", exc)
             return None
 
+    def _fetch_factor_by_stock(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+        fields: str,
+    ) -> List[Dict]:
+        """按单只股票拉取指定区间的技术指标序列。
+
+        参数：
+        - ts_code (str): 股票代码，格式 000001.SZ。
+        - start_date (str): 区间开始日期，格式 YYYYMMDD。
+        - end_date (str): 区间结束日期，格式 YYYYMMDD。
+        - fields (str): `stk_factor_pro` 请求字段列表。
+
+        返回值：
+        - List[Dict]: 该股票在区间内的因子记录列表；失败或无数据时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        resp = call_tushare(
+            "stk_factor_pro",
+            params={
+                "ts_code": ts_code,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+            fields=fields,
+            use_query=False,
+        )
+        if not isinstance(resp, dict) or resp.get("code") != 200:
+            logger.warning(
+                "Tushare stk_factor_pro 调用失败: ts_code=%s message=%s",
+                ts_code,
+                resp.get("message") if isinstance(resp, dict) else resp,
+            )
+            return []
+        data = resp.get("data", {})
+        records = data.get("records", []) if isinstance(data, dict) else []
+        return [item for item in records if isinstance(item, dict)]
+
+    def _compute_for_single_sector(
+        self,
+        sector_code: str,
+        start_date: str,
+        end_date: str,
+        ma_window: int,
+    ) -> Optional[List[Dict]]:
+        """针对单一东财板块，按成分股逐只拉取因子并计算 MA 宽度时间序列。
+
+        功能：
+        - 与全量模式相比，按成分股逐只请求 `stk_factor_pro` 的区间数据，
+          请求次数只与成分股数量相关，不随时间跨度增长，适合长区间查询。
+
+        参数：
+        - sector_code (str): 东财板块代码，例如 BK1462.DC。
+        - start_date (str): 开始日期，格式 YYYY-MM-DD。
+        - end_date (str): 结束日期，格式 YYYY-MM-DD。
+        - ma_window (int): 均线窗口（交易日）。
+
+        返回值：
+        - Optional[List[Dict]]: 该板块每日宽度结果列表；无有效数据时返回空列表，异常时返回 None。
+
+        异常：
+        - 无。内部异常会记录日志并返回 None。
+        """
+        try:
+            normalized_sector_code = str(sector_code or "").strip()
+            if not normalized_sector_code:
+                logger.warning("单行业模式缺少有效的 sector_code")
+                return []
+
+            output_trade_dates = self._get_trade_dates(start_date, end_date)
+            if not output_trade_dates:
+                logger.warning("指定区间内未获取到有效交易日")
+                return []
+            latest_trade_date = output_trade_dates[-1]
+
+            index_rows = self._fetch_dc_index_rows(latest_trade_date)
+            sector_name = ""
+            for row in index_rows:
+                if str(row.get("ts_code") or "").strip() == normalized_sector_code:
+                    sector_name = str(row.get("name") or "").strip()
+                    break
+
+            member_rows = self._fetch_dc_member_rows(latest_trade_date, [normalized_sector_code])
+            if not member_rows:
+                logger.warning("未获取到板块成分股数据: sector_code=%s", normalized_sector_code)
+                return []
+
+            member_df = pd.DataFrame(member_rows)
+            if member_df.empty or "con_code" not in member_df.columns:
+                logger.warning("dc_member 返回数据缺少必要字段(con_code)")
+                return []
+            target_codes = sorted(
+                {str(code or "").strip() for code in member_df["con_code"].tolist() if str(code or "").strip()}
+            )
+            if not target_codes:
+                logger.warning("板块成分股为空: sector_code=%s", normalized_sector_code)
+                return []
+
+            use_precomputed_ma = ma_window in SUPPORTED_PRECOMPUTED_WINDOWS
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+            fetch_start_date = (
+                start_date
+                if use_precomputed_ma
+                else (start_dt - timedelta(days=ma_window * 2)).strftime("%Y-%m-%d")
+            )
+            factor_fields = (
+                f"ts_code,trade_date,close,ma_bfq_{ma_window}"
+                if use_precomputed_ma
+                else "ts_code,trade_date,close"
+            )
+            fetch_start = self._normalize_trade_date(fetch_start_date)
+            fetch_end = self._normalize_trade_date(end_date)
+
+            factor_rows: List[Dict] = []
+            for ts_code in target_codes:
+                factor_rows.extend(
+                    self._fetch_factor_by_stock(ts_code, fetch_start, fetch_end, factor_fields)
+                )
+            if not factor_rows:
+                logger.warning("stk_factor_pro 未返回可用技术指标数据: sector_code=%s", normalized_sector_code)
+                return []
+
+            output_dates = set(output_trade_dates)
+            if use_precomputed_ma:
+                factor_df = self._build_supported_window_frame(factor_rows, ma_window, output_dates)
+            else:
+                factor_df = self._build_rolling_window_frame(factor_rows, ma_window, output_dates)
+
+            if factor_df.empty:
+                logger.warning("未构建出可用的股票 MA 数据: sector_code=%s", normalized_sector_code)
+                return []
+
+            factor_df["sector_code"] = normalized_sector_code
+            factor_df["sector_name"] = sector_name
+            factor_df["above_ma"] = factor_df["close_price"] > factor_df["ma_close"]
+            agg_df = (
+                factor_df.groupby(["trade_date", "sector_code", "sector_name"])
+                .agg(
+                    count_above_ma=("above_ma", lambda values: int(values.fillna(False).sum())),
+                    eligible_count=("ma_close", lambda values: int(values.notna().sum())),
+                )
+                .reset_index()
+            )
+            agg_df["breadth_ratio"] = agg_df.apply(
+                lambda row: (row["count_above_ma"] / row["eligible_count"]) if row["eligible_count"] > 0 else 0,
+                axis=1,
+            )
+            agg_df["date"] = agg_df["trade_date"].map(self._display_trade_date)
+            agg_df["breadth_ratio"] = agg_df["breadth_ratio"].round(4)
+            return agg_df[
+                ["date", "sector_code", "sector_name", "count_above_ma", "eligible_count", "breadth_ratio"]
+            ].sort_values(["date", "sector_code"]).to_dict("records")
+        except Exception as exc:
+            logger.error("单行业 MA 宽度计算失败: sector_code=%s error=%s", sector_code, exc)
+            return None
+
     def get_industry_ma_breadth(
         self,
         start_date: Optional[str] = None,
@@ -577,11 +737,14 @@ class IndustryMABreadthStrategy:
         ma_window: int = 20,
         idx_type: str = "行业板块",
         level: Optional[str] = None,
+        sector_code: Optional[str] = None,
     ) -> Optional[List[Dict]]:
         """计算行业 MA 市场宽度。
 
         功能：
         - 在指定日期范围内，计算每个行业“收盘价高于 MA_N”的股票占比。
+        - 当传入 `sector_code` 时，仅计算该板块，并按成分股逐只拉取因子数据，
+          请求次数与时间跨度无关，适合长区间查询；此时忽略 `idx_type`/`level`。
 
         参数：
         - start_date (Optional[str]): 开始日期，格式 YYYY-MM-DD。
@@ -589,6 +752,7 @@ class IndustryMABreadthStrategy:
         - ma_window (int): 移动平均窗口大小（交易日）。
         - idx_type (str): 东方财富板块类型，支持行业板块、概念板块、地域板块。
         - level (Optional[str]): 东财行业层级，仅 `idx_type=行业板块` 时生效。
+        - sector_code (Optional[str]): 东财板块代码，例如 BK1462.DC；传入时进入单行业模式。
 
         返回值：
         - Optional[List[Dict]]: 每日每行业的宽度结果列表；失败返回 `None`。
@@ -599,6 +763,42 @@ class IndustryMABreadthStrategy:
         try:
             if ma_window <= 1:
                 ma_window = 2
+
+            normalized_sector_code = str(sector_code or "").strip()
+            if normalized_sector_code:
+                start_date, end_date = self._get_default_dates(start_date, end_date)
+                cache_key = (
+                    "industry_ma_breadth_dc_v3_sector_"
+                    f"{start_date}_{end_date}_{ma_window}_{normalized_sector_code}"
+                )
+                try:
+                    cached = cache.get(cache_key)
+                    if cached is not None and isinstance(cached, list):
+                        logger.info("从缓存获取单行业 MA 市场宽度数据")
+                        return cached
+                except Exception as exc:
+                    logger.warning("读取单行业 MA 市场宽度缓存失败，将直接计算: %s", exc)
+
+                sector_result = self._compute_for_single_sector(
+                    sector_code=normalized_sector_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    ma_window=ma_window,
+                )
+                if sector_result is None:
+                    return None
+                if sector_result:
+                    try:
+                        cache.set(cache_key, sector_result, self.cache_timeout)
+                    except Exception as exc:
+                        logger.warning("写入单行业 MA 市场宽度缓存失败: %s", exc)
+                    logger.info(
+                        "行业 MA 宽度计算完成（单行业模式）: sector_code=%s result_rows=%s",
+                        normalized_sector_code,
+                        len(sector_result),
+                    )
+                return sector_result
+
             effective_idx_type = str(idx_type or "行业板块").strip() or "行业板块"
             effective_level = level if effective_idx_type == "行业板块" else None
             if effective_level and effective_level not in DC_INDUSTRY_LEVELS:
