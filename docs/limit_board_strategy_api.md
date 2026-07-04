@@ -638,7 +638,7 @@ GET /django/api/strategy/limit-board/industry-trend-strength/
 
 ### 功能
 
-以区间 `limit_list_ths(limit_type=涨停池)` 同花顺涨停池数据为基础，从 `limit_list_d(limit_type=U)` 获取每只涨停股所属行业，按交易日聚合输出「整体、行业、个股」三个维度的数据，适合前端做行业热度趋势表、行业轮动看板、逐日涨停股下钻。
+以区间 `limit_list_ths(limit_type=涨停池)` 同花顺涨停池数据为基础，按 `industry_mapping` 指定的方式获取每只涨停股所属行业，按交易日聚合输出「整体、行业、个股」三个维度的数据，适合前端做行业热度趋势表、行业轮动看板、逐日涨停股下钻。
 
 统计范围会剔除以下个股（不计入任何维度）：
 
@@ -648,7 +648,22 @@ GET /django/api/strategy/limit-board/industry-trend-strength/
 ### 数据源
 
 - `limit_list_ths(start_date,end_date,limit_type=涨停池)`：区间同花顺涨停池，作为涨停个股基础数据（含涨停原因、标签等全部字段）
-- `limit_list_d(start_date,end_date,limit_type=U)`：区间涨停池，仅用于构建 `(交易日, 股票代码) -> 所属行业` 映射
+- 行业映射来源随 `industry_mapping` 变化：
+  - `default`：`limit_list_d(start_date,end_date,limit_type=U)`，按交易日构建 `(交易日, 股票代码) -> 所属行业` 的动态映射。
+  - `dc_concept` / `dc_region` / `dc_l1` / `dc_l2` / `dc_l3`：本地东方财富板块成分快照 `data/dc_board_members_snapshot.json`，按 `股票代码 -> 板块名称` 映射。快照为单一时点的静态成分，全区间一致，不随交易日变化。
+
+### 行业映射方式（`industry_mapping`）
+
+| 取值 | 行业来源 | 映射关系 | 说明 |
+|---|---|---|---|
+| `default` | `limit_list_d` 的 `industry` 字段 | 一对一 | 默认方式，按交易日动态映射 |
+| `dc_concept` | 东财概念板块（快照） | 多对多 | 同一只个股可同时归入多个概念板块 |
+| `dc_region` | 东财地域板块（快照） | 一对一 | |
+| `dc_l1` | 东财一级行业板块（快照） | 一对一 | |
+| `dc_l2` | 东财二级行业板块（快照） | 一对一 | |
+| `dc_l3` | 东财三级行业板块（快照） | 一对一 | |
+
+> `dc_concept` 为多对多映射：同一只涨停股会同时出现在多个概念行业分组中。因此各行业维度的涨停数量（`industries[].limit_up_count`、`top_industries[].total_limit_up_count`）按成分归属分别计入，而整体/汇总的涨停总数（`overall.limit_up_count`、`summary.total_limit_up_count`）按去重个股计，避免重复计数。其余映射方式为一对一，两类计数一致。
 
 ### 请求参数
 
@@ -656,12 +671,17 @@ GET /django/api/strategy/limit-board/industry-trend-strength/
 |---|---:|---:|---:|---|
 | `start_date` | string | 是 | - | 开始日期，格式 `YYYYMMDD` |
 | `end_date` | string | 是 | - | 结束日期，格式 `YYYYMMDD` |
+| `industry_mapping` | string | 否 | `default` | 行业映射方式，取值见上表：`default`、`dc_concept`、`dc_region`、`dc_l1`、`dc_l2`、`dc_l3`；非法值返回 400 |
 | `token` | string | 否 | - | Tushare Token |
 
 ### 示例请求
 
 ```bash
+# 默认行业映射（limit_list_d）
 curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-strength/?start_date=20260114&end_date=20260131"
+
+# 使用东财二级行业板块映射
+curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-strength/?start_date=20260114&end_date=20260131&industry_mapping=dc_l2"
 ```
 
 ### data 字段
@@ -681,10 +701,12 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 |---|---|---|
 | `trade_day_count` | number | 区间内出现涨停数据的交易日数量 |
 | `industry_count` | number | 区间内涉及的行业数量 |
-| `total_limit_up_count` | number | 剔除 ST 与未知行业后，纳入统计的涨停个股总数 |
-| `industry_matched_count` | number | 成功从 `limit_list_d` 匹配到行业的个股记录数 |
+| `total_limit_up_count` | number | 剔除 ST 与未知行业后，纳入统计的涨停个股总数（按交易日内去重个股累加；`dc_concept` 多对多下不重复计数） |
+| `industry_matched_count` | number | 成功匹配到行业的个股记录数（`default` 来自 `limit_list_d`，其余来自快照；多对多映射下同一个股的多个成分计为一次） |
 | `excluded_st_count` | number | 因 ST/退市被剔除的个股数 |
 | `excluded_unknown_industry_count` | number | 因无法归类到具体行业被剔除的个股数 |
+| `industry_mapping` | string | 本次使用的行业映射方式（`default`/`dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3`） |
+| `industry_mapping_label` | string | 行业映射方式的中文标签 |
 | `top_industries` | array | 按区间累计涨停家数排序的行业汇总，最多 20 条 |
 
 ### top_industries 字段
@@ -695,6 +717,14 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | `trade_day_count` | number | 该行业在区间内上榜交易日数 |
 | `total_limit_up_count` | number | 区间累计涨停家数 |
 | `avg_daily_limit_up_count` | number | 日均涨停家数 |
+
+### source_counts 字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `limit_list_ths` | number | 区间同花顺涨停池记录数 |
+| `limit_list_d_up` | number | 区间 `limit_list_d(limit_type=U)` 记录数；仅 `default` 映射会拉取，其余映射为 0 |
+| `dc_board_snapshot_stocks` | number | 本地板块快照中命中该映射方式的股票数；`default` 映射为 0 |
 
 ### data[trade_date] 字段（按交易日 key）
 
@@ -711,7 +741,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `limit_up_count` | number | 该日涨停股总数 |
+| `limit_up_count` | number | 该日涨停股总数（按去重个股计；`dc_concept` 多对多下同一个股不重复计数） |
 | `industry_count` | number | 该日涨停股涉及的行业数量 |
 
 #### industries 字段（行业维度）
@@ -719,7 +749,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `industry` | string | 行业名称 |
-| `limit_up_count` | number | 该日该行业涨停家数 |
+| `limit_up_count` | number | 该日该行业涨停家数（按成分归属计；`dc_concept` 下各行业分别计入同一个股） |
 | `status_counts` | object | 该日该行业涨停股按涨停状态（`limit_list_ths` 的 `status` 字段）分类的数量统计 |
 
 #### status_counts 字段（涨停状态统计）
@@ -763,10 +793,11 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | `rise_rate` | number | 涨速 |
 | `sum_float` | number | 总市值(亿元) |
 | `market_type` | string | 股票类型：`HS` 沪深主板、`GEM` 创业板、`STAR` 科创板 |
-| `industry` | string | 所属行业（本接口补充，来自 `limit_list_d` 映射） |
+| `industry` | string | 所属行业/板块名称（本接口补充，来源随 `industry_mapping` 而定） |
 
 - ST/退市股票（名称含 `ST` 或 `退`）不计入统计范围。
-- 无法归类到具体行业（既无法从 `limit_list_d` 匹配、`limit_list_ths` 也无 `industry` 字段）的个股不计入统计范围，即不存在 `未知行业` 分组。
+- 无法归类到具体行业（未知行业）的个股不计入统计范围，即不存在 `未知行业` 分组。`default` 方式下指既无法从 `limit_list_d` 匹配、`limit_list_ths` 也无 `industry` 字段；快照方式下指该股票代码不在对应板块成分快照中。
+- `dc_concept`（多对多）方式下，同一只涨停股会同时出现在其所属的多个概念行业分组中；此时 `stocks`/`industries` 各分组按成分归属分别列出，而 `overall.limit_up_count` 与 `summary.total_limit_up_count` 按去重个股计。
 - 某交易日经上述过滤后若无有效涨停个股，则该交易日不会出现在 `data` 中。
 
 ### 示例响应片段
@@ -855,7 +886,9 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 
 - `trade_date` 必须传交易日；非交易日通常会返回空数据或 Tushare 错误。
 - 趋势分析接口使用 `start_date/end_date`，当前限制最大 90 个自然日。
-- 行业趋势强度接口同样使用 `start_date/end_date`，当前限制最大 90 个自然日；`data` 以交易日为 key，个股维度保留 `limit_list_ths` 原始字段，行业由 `limit_list_d` 补充映射。
+- 行业趋势强度接口同样使用 `start_date/end_date`，当前限制最大 90 个自然日；`data` 以交易日为 key，个股维度保留 `limit_list_ths` 原始字段，行业由 `industry_mapping` 指定的映射方式补充。
+- 行业趋势强度接口的 `industry_mapping` 支持 6 种映射方式：`default`（`limit_list_d` 行业字段，按日动态）与 5 种基于本地东财板块成分快照的方式（`dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3`）；不传参使用 `default`，非法值返回 400。快照方式的成分为单一时点静态数据，全区间一致，需定期更新快照文件才能反映最新板块成分。
+- `dc_concept` 为多对多映射，同一只涨停股会同时归入多个概念行业，此时 `overall.limit_up_count`、`summary.total_limit_up_count` 按去重个股计，而 `industries[].limit_up_count`、`top_industries[].total_limit_up_count` 按成分归属分别计入，两者可能不相等。
 - 前端应展示 `source_counts`，便于判断是否某个增强数据源为空。
 - 组合接口中部分增强源为空不一定代表接口失败，核心字段仍可使用。
 - `raw_sources`、`top_list`、`limit_record` 等对象保留 Tushare 原始字段，前端可以按需展示详情。

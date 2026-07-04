@@ -1309,14 +1309,18 @@ def get_limit_board_industry_trend_strength(request):
     涨停趋势强度行业分析接口
 
     功能：
-    - 以 Tushare `limit_list_ths(limit_type=涨停池)` 区间数据为基础，从 `limit_list_d(limit_type=U)`
-      获取每只涨停股所属行业，按交易日为 key 返回整体、行业、个股三个维度的涨停数据。
+    - 以 Tushare `limit_list_ths(limit_type=涨停池)` 区间数据为基础，按 `industry_mapping` 指定的
+      映射方式获取每只涨停股所属行业，按交易日为 key 返回整体、行业、个股三个维度的涨停数据。
     - 剔除 ST/退市类股票，以及无法归类到具体行业（未知行业）的个股，不计入统计范围。
 
     参数：
     - start_date (str): 开始日期，必填，格式 `YYYYMMDD`。
     - end_date (str): 结束日期，必填，格式 `YYYYMMDD`。
     - token (str，可选): Tushare Token，传入后覆盖环境变量。
+    - industry_mapping (str，可选): 行业映射方式，默认 `default`。可选值：
+      `default`（limit_list_d 行业字段，按日动态）、`dc_concept`（东财概念板块）、
+      `dc_region`（东财地域板块）、`dc_l1`/`dc_l2`/`dc_l3`（东财一/二/三级行业板块），
+      后 5 种基于本地东方财富板块成分快照。
 
     返回值：
     - 成功：以交易日为 key 返回三个维度数据——整体（当日涨停总数与行业数量）、
@@ -1337,10 +1341,12 @@ def get_limit_board_industry_trend_strength(request):
     try:
         start_date, end_date = _get_required_date_range(request)
         token = request.GET.get('token')
+        industry_mapping = request.GET.get('industry_mapping')
         result = limit_board_data_service.get_industry_trend_strength(
             start_date=start_date,
             end_date=end_date,
             token=token,
+            industry_mapping=industry_mapping,
         )
         return success_response(result, '获取行业涨停趋势强度分析成功')
     except ValueError as e:

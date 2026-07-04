@@ -1,10 +1,34 @@
 from __future__ import annotations
 
+import json
+import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from common.tushare_proxy import call_tushare
+
+logger = logging.getLogger(__name__)
+
+# 东方财富板块成分本地快照，供行业映射复用（与 industry_ma_breadth_strategy 共用同一份文件）
+DC_BOARD_SNAPSHOT_FILE = (
+    Path(__file__).resolve().parent.parent / "data" / "dc_board_members_snapshot.json"
+)
+
+# industry-trend-strength 接口支持的行业映射方式。
+# default 使用 limit_list_d 的 industry 字段（按交易日动态）；
+# 其余 5 种基于本地东方财富板块成分快照（静态成分，全区间一致）。
+INDUSTRY_MAPPING_MODES: Dict[str, Dict[str, str]] = {
+    "default": {"idx_type": "", "level": "", "label": "默认行业映射(limit_list_d)"},
+    "dc_concept": {"idx_type": "概念板块", "level": "", "label": "东财概念板块"},
+    "dc_region": {"idx_type": "地域板块", "level": "", "label": "东财地域板块"},
+    "dc_l1": {"idx_type": "行业板块", "level": "东财一级行业", "label": "东财一级行业板块"},
+    "dc_l2": {"idx_type": "行业板块", "level": "东财二级行业", "label": "东财二级行业板块"},
+    "dc_l3": {"idx_type": "行业板块", "level": "东财三级行业", "label": "东财三级行业板块"},
+}
+
+DEFAULT_INDUSTRY_MAPPING = "default"
 
 
 class LimitBoardDataService:
@@ -496,34 +520,46 @@ class LimitBoardDataService:
         start_date: str,
         end_date: str,
         token: Optional[str] = None,
+        industry_mapping: str = DEFAULT_INDUSTRY_MAPPING,
     ) -> Dict[str, Any]:
         """
         获取行业维度的涨停趋势强度分析。
 
         功能：
         - 以 `limit_list_ths(limit_type=涨停池)` 在指定时间区间内的同花顺涨停池数据为基础，
-          从 `limit_list_d(limit_type=U)` 获取每只涨停股所属行业。
+          按 `industry_mapping` 指定的映射方式获取每只涨停股所属行业。
         - 剔除 ST/退市类股票，以及无法归类到具体行业（未知行业）的个股，二者均不计入统计范围。
         - 结果以交易日为 key，每个交易日返回整体、行业、个股三个维度：
-          - 整体：该日（过滤后）涨停总数与涉及行业数量。
+          - 整体：该日（过滤后）涨停总数（按去重个股计）与涉及行业数量。
           - 行业：该日涨停股细分到各个行业，以及每个行业的涨停数量与涨停状态统计
             （`T字板`、`一字板`、`换手板`）。
           - 个股：每个行业内的涨停股列表，每只个股包含 `limit_list_ths` 中该日的全部原始字段
             （并补充所属行业 `industry`）。
 
+        行业映射方式（`industry_mapping`）：
+        - `default`：从 `limit_list_d(limit_type=U)` 的 `industry` 字段按交易日动态映射（默认）。
+        - `dc_concept` / `dc_region` / `dc_l1` / `dc_l2` / `dc_l3`：基于本地东方财富板块成分
+          快照（概念板块 / 地域板块 / 东财一/二/三级行业板块）映射，成分为静态快照，全区间一致。
+          其中 `dc_concept` 为多对多映射，同一只涨停股可同时归入多个概念板块，因此整体/汇总的
+          涨停总数按去重个股计，各行业的涨停数量则按成分归属分别计入。
+
         参数：
         - start_date (str): 开始日期，格式 `YYYYMMDD`。
         - end_date (str): 结束日期，格式 `YYYYMMDD`。
         - token (str，可选): Tushare Token，用于覆盖默认环境变量。
+        - industry_mapping (str): 行业映射方式，取值见 `INDUSTRY_MAPPING_MODES`，默认 `default`。
 
         返回值：
         - Dict[str, Any]: 包含查询区间、汇总信息、按交易日为 key 的三维明细、源数据统计和查询时间。
 
         异常：
-        - ValueError: 日期格式非法、开始日期晚于结束日期、或查询区间超过限制时抛出。
+        - ValueError: 日期格式非法、开始日期晚于结束日期、查询区间超限、或映射方式非法时抛出。
         - RuntimeError: Tushare 接口调用失败时抛出。
         """
         self._validate_date_range(start_date, end_date)
+        mapping_mode = self._normalize_industry_mapping(industry_mapping)
+        mapping_meta = INDUSTRY_MAPPING_MODES[mapping_mode]
+        use_snapshot = mapping_mode != DEFAULT_INDUSTRY_MAPPING
 
         ths_records = self._fetch_records(
             "limit_list_ths",
@@ -532,13 +568,31 @@ class LimitBoardDataService:
             fields=self.LIMIT_LIST_THS_FIELDS,
             required=False,
         )
-        limit_up_d = self._fetch_records(
-            "limit_list_d",
-            {"start_date": start_date, "end_date": end_date, "limit_type": "U"},
-            token=token,
-            required=False,
-        )
-        industry_map = self._build_industry_map(limit_up_d)
+
+        # 构建行业解析器：default 走 limit_list_d 动态映射，其余走本地板块成分快照。
+        limit_up_d: List[Dict[str, Any]] = []
+        industry_map: Dict[Tuple[str, str], str] = {}
+        snapshot_index: Dict[str, List[str]] = {}
+        if use_snapshot:
+            snapshot_index = self._build_snapshot_industry_index(
+                idx_type=mapping_meta["idx_type"],
+                level=mapping_meta["level"],
+            )
+        else:
+            limit_up_d = self._fetch_records(
+                "limit_list_d",
+                {"start_date": start_date, "end_date": end_date, "limit_type": "U"},
+                token=token,
+                required=False,
+            )
+            industry_map = self._build_industry_map(limit_up_d)
+
+        def resolve_industries(trade_date: str, code: Any, record: Dict[str, Any]) -> List[str]:
+            if use_snapshot:
+                return list(snapshot_index.get(str(code or ""), []))
+            mapped_industry = industry_map.get((trade_date, code))
+            industry = mapped_industry or str(record.get("industry") or "").strip()
+            return [industry] if industry else []
 
         data: Dict[str, Any] = {}
         industry_matched_count = 0
@@ -549,27 +603,30 @@ class LimitBoardDataService:
         for trade_date in sorted(grouped.keys()):
             day_records = grouped[trade_date]
             industry_stocks: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            day_unique_codes: set = set()
             for record in day_records:
                 # 剔除 ST 股票，不计入统计范围
                 if self._is_st_stock(record.get("name")):
                     excluded_st_count += 1
                     continue
                 code = record.get("ts_code")
-                mapped_industry = industry_map.get((trade_date, code))
-                industry = mapped_industry or str(record.get("industry") or "").strip()
+                industries = resolve_industries(trade_date, code, record)
                 # 剔除无法归类到具体行业（未知行业）的个股，不计入统计范围
-                if not industry:
+                if not industries:
                     excluded_unknown_industry_count += 1
                     continue
-                if mapped_industry:
-                    industry_matched_count += 1
-                industry_stocks[industry].append({**record, "industry": industry})
+                industry_matched_count += 1
+                day_unique_codes.add(code)
+                # 多对多映射（如概念板块）下同一只个股会归入多个行业分组
+                for industry in industries:
+                    industry_stocks[industry].append({**record, "industry": industry})
 
             # 该交易日经过滤后无有效涨停个股则跳过
             if not industry_stocks:
                 continue
 
-            day_limit_up_count = sum(len(stocks) for stocks in industry_stocks.values())
+            # 整体涨停总数按去重个股计（概念多对多时避免重复计数）
+            day_limit_up_count = len(day_unique_codes)
             counted_limit_up_count += day_limit_up_count
             industries = sorted(
                 (
@@ -628,12 +685,15 @@ class LimitBoardDataService:
                 "industry_matched_count": industry_matched_count,
                 "excluded_st_count": excluded_st_count,
                 "excluded_unknown_industry_count": excluded_unknown_industry_count,
+                "industry_mapping": mapping_mode,
+                "industry_mapping_label": mapping_meta["label"],
                 "top_industries": top_industries,
             },
             "data": data,
             "source_counts": {
                 "limit_list_ths": len(ths_records),
                 "limit_list_d_up": len(limit_up_d),
+                "dc_board_snapshot_stocks": len(snapshot_index),
             },
             "query_time": datetime.now().isoformat(),
         }
@@ -679,6 +739,92 @@ class LimitBoardDataService:
         """
         text = str(name or "").upper()
         return "ST" in text or "退" in text
+
+    @staticmethod
+    def _normalize_industry_mapping(industry_mapping: Optional[str]) -> str:
+        """
+        校验并归一化行业映射方式参数。
+
+        参数：
+        - industry_mapping (Optional[str]): 请求传入的映射方式，空值回退为默认映射。
+
+        返回值：
+        - str: `INDUSTRY_MAPPING_MODES` 中的合法键。
+
+        异常：
+        - ValueError: 传入的映射方式不在支持范围内时抛出。
+        """
+        mode = str(industry_mapping or "").strip() or DEFAULT_INDUSTRY_MAPPING
+        if mode not in INDUSTRY_MAPPING_MODES:
+            supported = ", ".join(INDUSTRY_MAPPING_MODES.keys())
+            raise ValueError(f"industry_mapping 非法，仅支持: {supported}")
+        return mode
+
+    @classmethod
+    def _load_board_snapshot(cls) -> List[Dict[str, Any]]:
+        """
+        加载本地东方财富板块成分快照（进程内缓存）。
+
+        参数：
+        - 无。
+
+        返回值：
+        - List[Dict[str, Any]]: 快照中的板块列表；文件缺失或解析失败时返回空列表。
+
+        异常：
+        - 无。内部异常会记录日志并返回空列表。
+        """
+        cached = getattr(cls, "_board_snapshot_cache", None)
+        if cached is not None:
+            return cached
+        boards: List[Dict[str, Any]] = []
+        try:
+            if DC_BOARD_SNAPSHOT_FILE.exists():
+                with DC_BOARD_SNAPSHOT_FILE.open("r", encoding="utf-8") as file_obj:
+                    payload = json.load(file_obj)
+                raw_boards = payload.get("boards", []) if isinstance(payload, dict) else []
+                boards = [item for item in raw_boards if isinstance(item, dict)]
+            else:
+                logger.warning("本地板块成分快照不存在: %s", DC_BOARD_SNAPSHOT_FILE)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("读取本地板块成分快照失败: %s", exc)
+            boards = []
+        cls._board_snapshot_cache = boards
+        return boards
+
+    @classmethod
+    def _build_snapshot_industry_index(cls, idx_type: str, level: str) -> Dict[str, List[str]]:
+        """
+        基于本地板块成分快照构建 `股票代码 -> 所属板块名称列表` 的索引。
+
+        参数：
+        - idx_type (str): 东方财富板块类型（如 `行业板块`、`概念板块`、`地域板块`）。
+        - level (str): 东财行业层级，仅 `行业板块` 需要（`东财一/二/三级行业`）；其它类型传空串。
+
+        返回值：
+        - Dict[str, List[str]]: 以股票代码为键、所属板块名称去重列表为值的映射。
+          概念板块为多对多，一只个股可能对应多个板块名称。
+
+        异常：
+        - 无。
+        """
+        index: Dict[str, List[str]] = {}
+        for board in cls._load_board_snapshot():
+            if str(board.get("idx_type") or "").strip() != idx_type:
+                continue
+            if level and str(board.get("level") or "").strip() != level:
+                continue
+            sector_name = str(board.get("sector_name") or "").strip()
+            if not sector_name:
+                continue
+            for member in board.get("members") or []:
+                code = str(member or "").strip()
+                if not code:
+                    continue
+                names = index.setdefault(code, [])
+                if sector_name not in names:
+                    names.append(sector_name)
+        return index
 
     @classmethod
     def _count_limit_status(cls, stocks: Iterable[Dict[str, Any]]) -> Dict[str, int]:
