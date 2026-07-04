@@ -11,14 +11,14 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
 from .services import rps_service, StockScreeningService
-from scheduled_tasks.stock_data_query_tasks.dc_board_rps import compute_board_rps
-from scheduled_tasks.stock_data_query_tasks.dc_board_member_rps import compute_dc_board_member_rps
-from scheduled_tasks.stock_data_query_tasks.major_index_rps import compute_major_index_rps
-from scheduled_tasks.stock_data_query_tasks.stock_rps import compute_stock_rps
+from stock_strategy.data_tasks.dc_board_rps import compute_board_rps
+from stock_strategy.data_tasks.dc_board_member_rps import compute_dc_board_member_rps
+from stock_strategy.data_tasks.major_index_rps import compute_major_index_rps
+from stock_strategy.data_tasks.stock_rps import compute_stock_rps
 from .models import IndexRPS, StockSelectionRecord
 from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response, drf_success_response, drf_error_response
-from scheduled_tasks.stock_data_query_tasks.stock_tagging_tasks import stock_tagging_service
+from stock_strategy.data_tasks.stock_tagging_tasks import stock_tagging_service
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
 from .industry_up_down_ratio_strategy import industry_up_down_ratio_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy

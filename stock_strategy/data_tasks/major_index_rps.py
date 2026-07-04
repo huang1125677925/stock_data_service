@@ -1,16 +1,8 @@
-import os
-import sys
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import django
 import pandas as pd
 from django.core.cache import cache
-
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
-django.setup()
 
 from common.tushare_proxy import call_tushare
 

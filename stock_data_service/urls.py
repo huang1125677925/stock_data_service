@@ -43,7 +43,6 @@ def index(request):
             'individual_stock': '/django/api/individual_stock/',
             'stock_strategy': '/django/api/strategy/',
             'user_management': '/django/api/user/',
-            'scheduled_tasks': '/django/api/tasks/',
             'index': '/django/api/index/',
             'market': '/django/api/market/',
             'etf': '/django/api/etf/'
@@ -63,7 +62,6 @@ urlpatterns = [
     path('django/api/individual_stock/', include('indival_stock_data.urls')),
     path('django/api/strategy/', include('stock_strategy.urls')),
     path('django/api/user/', include('user_management.urls')),
-    path('django/api/tasks/', include('scheduled_tasks.urls')),
     path('django/api/index/', include('index_data.urls')),
     path('django/api/market/', include('stock_market.urls')),
     path('django/api/etf/', include('etfapp.urls')),

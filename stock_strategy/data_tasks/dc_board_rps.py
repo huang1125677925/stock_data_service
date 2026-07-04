@@ -1,11 +1,3 @@
-import sys
-import os
-from pathlib import Path
-import django
-
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
-django.setup()
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Tuple

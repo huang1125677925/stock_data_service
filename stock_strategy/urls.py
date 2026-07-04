@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import tushare_proxy_views
 
 urlpatterns = [
     path('index-rps/', views.get_index_rps, name='get_index_rps'),
@@ -17,4 +18,8 @@ urlpatterns = [
     path('limit-board/industry-trend-strength/', views.get_limit_board_industry_trend_strength, name='get_limit_board_industry_trend_strength'),
     path('swing-analysis/', views.get_swing_analysis, name='get_swing_analysis'),
     path('swing-channel-candidates/', views.get_swing_channel_candidates, name='get_swing_channel_candidates'),
+    # Tushare 直通代理（原 scheduled_tasks 迁移而来）
+    path('dc-daily/', tushare_proxy_views.DcDailyProxyView.as_view(), name='dc-daily-proxy'),
+    path('dc-index/', tushare_proxy_views.DcIndexProxyView.as_view(), name='dc-index-proxy'),
+    path('limit-step/', tushare_proxy_views.LimitStepProxyView.as_view(), name='limit-step-proxy'),
 ]

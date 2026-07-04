@@ -8,10 +8,10 @@ from .industry_ma_breadth_strategy import IndustryMABreadthStrategy
 from .industry_up_down_ratio_strategy import IndustryUpDownRatioStrategy
 from .industry_turnover_strategy import IndustryTurnoverStrategy
 from .limit_board_service import LimitBoardDataService
-from scheduled_tasks.stock_data_query_tasks import dc_board_rps
-from scheduled_tasks.stock_data_query_tasks import dc_board_member_rps
-from scheduled_tasks.stock_data_query_tasks import major_index_rps
-from scheduled_tasks.stock_data_query_tasks import stock_rps
+from stock_strategy.data_tasks import dc_board_rps
+from stock_strategy.data_tasks import dc_board_member_rps
+from stock_strategy.data_tasks import major_index_rps
+from stock_strategy.data_tasks import stock_rps
 
 
 class FakeTusharePro:
@@ -447,7 +447,7 @@ class BoardRpsTradeDayTests(unittest.TestCase):
     - 使用 mock 隔离交易日历、板块列表与日线行情依赖。
     """
 
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.get_open_trade_dates")
+    @patch("stock_strategy.data_tasks.dc_board_rps.get_open_trade_dates")
     def test_get_period_start_trade_date_uses_trade_calendar(self, mock_get_open_trade_dates):
         """
         功能：验证起始交易日会根据交易日历回推 period 个交易日。
@@ -474,10 +474,10 @@ class BoardRpsTradeDayTests(unittest.TestCase):
 
         self.assertEqual(start_date, "20260102")
 
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.cache")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._fetch_dc_daily_trade_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_board_map_by_date")
+    @patch("stock_strategy.data_tasks.dc_board_rps.cache")
+    @patch("stock_strategy.data_tasks.dc_board_rps._fetch_dc_daily_trade_date")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_period_start_trade_dates")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_board_map_by_date")
     def test_compute_board_rps_fetches_trade_date_snapshots_for_periods(
         self,
         mock_get_board_map_by_date,
@@ -557,12 +557,12 @@ class BoardRpsTradeDayTests(unittest.TestCase):
         self.assertGreater(result_map.loc["BK001", "RPS_today"], result_map.loc["BK002", "RPS_today"])
         mock_cache.set.assert_called_once()
 
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps.cache")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._fetch_dc_daily_trade_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_period_start_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_recent_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_board_map_by_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_rps._get_latest_trade_date")
+    @patch("stock_strategy.data_tasks.dc_board_rps.cache")
+    @patch("stock_strategy.data_tasks.dc_board_rps._fetch_dc_daily_trade_date")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_period_start_trade_dates")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_recent_trade_dates")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_board_map_by_date")
+    @patch("stock_strategy.data_tasks.dc_board_rps._get_latest_trade_date")
     def test_compute_board_rps_falls_back_to_previous_trade_date_when_latest_snapshot_missing(
         self,
         mock_get_latest_trade_date,
@@ -654,11 +654,11 @@ class DcBoardMemberRpsTests(unittest.TestCase):
     - 使用 mock 隔离成分股、板块名称、交易日历和日线行情依赖。
     """
 
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps.cache")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_stock_daily_trade_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._get_period_start_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_dc_board_name")
-    @patch("scheduled_tasks.stock_data_query_tasks.dc_board_member_rps._fetch_dc_board_members")
+    @patch("stock_strategy.data_tasks.dc_board_member_rps.cache")
+    @patch("stock_strategy.data_tasks.dc_board_member_rps._fetch_stock_daily_trade_date")
+    @patch("stock_strategy.data_tasks.dc_board_member_rps._get_period_start_trade_dates")
+    @patch("stock_strategy.data_tasks.dc_board_member_rps._fetch_dc_board_name")
+    @patch("stock_strategy.data_tasks.dc_board_member_rps._fetch_dc_board_members")
     def test_compute_dc_board_member_rps_fetches_member_snapshots_for_periods(
         self,
         mock_fetch_dc_board_members,
@@ -756,10 +756,10 @@ class StockRpsTests(unittest.TestCase):
     - 验证未显式传入 `trade_date` 时，若最新开市日缺少日线快照，会自动回退到最近可用交易日。
     """
 
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps.cache")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_period_start_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_stock_basic_all_statuses")
+    @patch("stock_strategy.data_tasks.stock_rps.cache")
+    @patch("stock_strategy.data_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
+    @patch("stock_strategy.data_tasks.stock_rps._get_period_start_trade_dates")
+    @patch("stock_strategy.data_tasks.stock_rps._fetch_stock_basic_all_statuses")
     def test_compute_stock_rps_fetches_snapshots_for_periods(
         self,
         mock_fetch_stock_basic_all_statuses,
@@ -873,12 +873,12 @@ class StockRpsTests(unittest.TestCase):
         self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
 
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps.cache")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_period_start_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_recent_trade_dates")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._fetch_stock_basic_all_statuses")
-    @patch("scheduled_tasks.stock_data_query_tasks.stock_rps._get_latest_trade_date")
+    @patch("stock_strategy.data_tasks.stock_rps.cache")
+    @patch("stock_strategy.data_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
+    @patch("stock_strategy.data_tasks.stock_rps._get_period_start_trade_dates")
+    @patch("stock_strategy.data_tasks.stock_rps._get_recent_trade_dates")
+    @patch("stock_strategy.data_tasks.stock_rps._fetch_stock_basic_all_statuses")
+    @patch("stock_strategy.data_tasks.stock_rps._get_latest_trade_date")
     def test_compute_stock_rps_falls_back_to_previous_trade_date_when_latest_snapshot_missing(
         self,
         mock_get_latest_trade_date,
@@ -997,18 +997,18 @@ class MajorIndexRpsTests(unittest.TestCase):
     - 使用 mock 隔离 Tushare 行情接口与缓存依赖。
     """
 
-    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.cache")
+    @patch("stock_strategy.data_tasks.major_index_rps.cache")
     @patch.dict(
-        "scheduled_tasks.stock_data_query_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
+        "stock_strategy.data_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
         {"000001.SH": "上证综指", "399001.SZ": "深证成指"},
         clear=True,
     )
     @patch.dict(
-        "scheduled_tasks.stock_data_query_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
+        "stock_strategy.data_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
         {"SPX": "标普500指数", "IXIC": "纳斯达克指数"},
         clear=True,
     )
-    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.call_tushare")
+    @patch("stock_strategy.data_tasks.major_index_rps.call_tushare")
     def test_compute_major_index_rps_combines_domestic_and_global_histories(
         self,
         mock_call_tushare,
@@ -1092,18 +1092,18 @@ class MajorIndexRpsTests(unittest.TestCase):
         self.assertGreater(result_map.loc["000001.SH", "RPS_today"], result_map.loc["399001.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
 
-    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.cache")
+    @patch("stock_strategy.data_tasks.major_index_rps.cache")
     @patch.dict(
-        "scheduled_tasks.stock_data_query_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
+        "stock_strategy.data_tasks.major_index_rps.DOMESTIC_LARGE_CAP_INDEXES",
         {"000001.SH": "上证综指"},
         clear=True,
     )
     @patch.dict(
-        "scheduled_tasks.stock_data_query_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
+        "stock_strategy.data_tasks.major_index_rps.GLOBAL_LARGE_CAP_INDEXES",
         {"SPX": "标普500指数"},
         clear=True,
     )
-    @patch("scheduled_tasks.stock_data_query_tasks.major_index_rps.call_tushare")
+    @patch("stock_strategy.data_tasks.major_index_rps.call_tushare")
     def test_compute_major_index_rps_uses_latest_available_bar_before_anchor_date(
         self,
         mock_call_tushare,

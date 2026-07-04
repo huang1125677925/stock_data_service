@@ -7,16 +7,7 @@
 事件：标记成功/失败时记录日志
 """
 
-import sys
-import os
 import json
-from pathlib import Path
-from tracemalloc import start
-import django
-
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'stock_data_service.settings')
-django.setup()
 
 import logging
 import hashlib

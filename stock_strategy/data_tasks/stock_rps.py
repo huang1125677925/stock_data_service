@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from django.core.cache import cache
 
 from common.tushare_proxy import call_tushare
-from scheduled_tasks.stock_data_query_tasks.dc_board_rps import (
+from stock_strategy.data_tasks.dc_board_rps import (
     _apply_rps,
     _ensure_date_str,
     _get_latest_trade_date,
