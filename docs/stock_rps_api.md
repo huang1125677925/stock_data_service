@@ -24,6 +24,7 @@ GET /django/api/strategy/stock-rps/
 
 - `stock_basic`：获取股票基础信息、上市日期、退市日期和市场分类
 - `daily`：获取股票在指定交易日的日线快照
+- `daily_basic`：获取截止交易日的最新股价、总市值和流通市值
 - `trade_cal`：通过项目内交易日历工具回推各周期的起始交易日
 
 适用场景：
@@ -72,6 +73,14 @@ GET /django/api/strategy/stock-rps/
 
 - `close`
 - `pct_chg`
+
+此外，接口会额外拉取截止交易日的 Tushare `daily_basic` 快照，用于补充最新股价与市值信息，主要使用字段：
+
+- `close`：作为最新股价 `latest_price`
+- `total_mv`：总市值（Tushare 原始单位为万元，接口已换算为元）
+- `circ_mv`：流通市值（Tushare 原始单位为万元，接口已换算为元）
+
+说明：`daily_basic` 仅用于补充展示字段，不参与 RPS 计算。若该接口在截止交易日无数据，市值字段会置空，`latest_price` 会回退使用截止交易日的收盘价，并在 `errors` 中给出提示。
 
 ### 4. 区间涨跌幅计算
 
@@ -177,6 +186,9 @@ curl "http://localhost:8000/django/api/strategy/stock-rps/?exchange=SZSE&market=
         "list_status": "L",
         "trade_date": "20260630",
         "pct_change": 4.82,
+        "latest_price": 512.30,
+        "total_mv": 2254800000000.0,
+        "circ_mv": 1987600000000.0,
         "RPS_today": 66.67,
         "return_5": 11.34,
         "RPS_5": 66.67,
@@ -196,6 +208,9 @@ curl "http://localhost:8000/django/api/strategy/stock-rps/?exchange=SZSE&market=
         "list_status": "L",
         "trade_date": "20260630",
         "pct_change": 2.13,
+        "latest_price": 342.15,
+        "total_mv": 998700000000.0,
+        "circ_mv": 875400000000.0,
         "RPS_today": 33.33,
         "return_5": 7.85,
         "RPS_5": 33.33,
@@ -215,6 +230,9 @@ curl "http://localhost:8000/django/api/strategy/stock-rps/?exchange=SZSE&market=
         "list_status": "L",
         "trade_date": "20260630",
         "pct_change": -0.56,
+        "latest_price": 1685.00,
+        "total_mv": 2116800000000.0,
+        "circ_mv": 2116800000000.0,
         "RPS_today": 0.0,
         "return_5": 1.42,
         "RPS_5": 0.0,
@@ -272,6 +290,9 @@ curl "http://localhost:8000/django/api/strategy/stock-rps/?exchange=SZSE&market=
 | `list_status` | string | 当前记录来源状态，常见为 `L`、`P`、`D` |
 | `trade_date` | string | 本条记录对应的截止交易日，格式 `YYYYMMDD` |
 | `pct_change` | number/null | 截止交易日当天涨跌幅，对应 Tushare `pct_chg` |
+| `latest_price` | number/null | 最新股价，取自 `daily_basic` 的 `close`；缺失时回退为截止交易日收盘价 |
+| `total_mv` | number/null | 总市值，单位元，取自 `daily_basic` 的 `total_mv`（原始单位万元，已换算） |
+| `circ_mv` | number/null | 流通市值，单位元，取自 `daily_basic` 的 `circ_mv`（原始单位万元，已换算） |
 | `RPS_today` | number | 按当天涨跌幅横向计算得到的 RPS |
 | `return_{period}` | number/null | 某周期的区间收益率，例如 `return_5` |
 | `RPS_{period}` | number/null | 某周期区间收益率对应的 RPS，例如 `RPS_5` |
@@ -357,4 +378,4 @@ curl "http://localhost:8000/django/api/strategy/stock-rps/?exchange=SZSE&market=
 
 - 视图入口：`stock_strategy/views.py`
 - 路由配置：`stock_strategy/urls.py`
-- 计算逻辑：`scheduled_tasks/stock_data_query_tasks/stock_rps.py`
+- 计算逻辑：`stock_strategy/data_tasks/stock_rps.py`

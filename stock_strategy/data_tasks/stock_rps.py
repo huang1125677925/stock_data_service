@@ -284,6 +284,50 @@ def _build_stock_snapshot_map(
     return snapshot_map
 
 
+def _fetch_daily_basic_by_trade_date(trade_date: str, token: Optional[str]) -> pd.DataFrame:
+    """
+    功能：按单个交易日拉取全市场每日指标快照，提取最新股价与市值信息。
+
+    Args:
+        trade_date: 查询交易日，格式为 YYYYMMDD。
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+
+    Returns:
+        pandas.DataFrame: 每日指标快照，包含 ts_code、close、total_mv、circ_mv 列；
+        接口失败或无数据时返回空 DataFrame。total_mv、circ_mv 单位为元
+        （Tushare 原始单位为万元，此处已换算）。
+
+    Raises:
+        无。函数内部通过空 DataFrame 兜底。
+    """
+    empty_columns = ["ts_code", "close", "total_mv", "circ_mv"]
+    resp = call_tushare(
+        "daily_basic",
+        params={"trade_date": trade_date},
+        token=token,
+        fields="ts_code,close,total_mv,circ_mv",
+        use_query=False,
+    )
+    if resp.get("code") != 200:
+        return pd.DataFrame(columns=empty_columns)
+
+    records = (resp.get("data") or {}).get("records") or []
+    if not records:
+        return pd.DataFrame(columns=empty_columns)
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        return pd.DataFrame(columns=empty_columns)
+
+    out["ts_code"] = out["ts_code"].astype(str)
+    out["close"] = pd.to_numeric(out.get("close"), errors="coerce")
+    # Tushare daily_basic 的 total_mv、circ_mv 单位为万元，换算为元
+    out["total_mv"] = pd.to_numeric(out.get("total_mv"), errors="coerce") * 10000.0
+    out["circ_mv"] = pd.to_numeric(out.get("circ_mv"), errors="coerce") * 10000.0
+    out = out.dropna(subset=["ts_code"])
+    return out[["ts_code", "close", "total_mv", "circ_mv"]].drop_duplicates(subset=["ts_code"])
+
+
 def _resolve_latest_available_stock_trade_date(
     preferred_date: str,
     stock_basic_df: pd.DataFrame,
@@ -356,7 +400,8 @@ def compute_stock_rps(
     Returns:
         Tuple[Optional[pandas.DataFrame], List[str]]:
         - 第一个返回值：结果 DataFrame，包含 ts_code、symbol、name、industry、market、pct_change、
-          RPS_today、return_{p}、RPS_{p} 等列；失败时返回 None。
+          RPS_today、return_{p}、RPS_{p}、latest_price（最新股价）、total_mv（总市值，元）、
+          circ_mv（流通市值，元）等列；失败时返回 None。
         - 第二个返回值：错误或提示信息列表。
 
     Raises:
@@ -443,6 +488,22 @@ def compute_stock_rps(
         result_df[f"close_{period}"] = result_df["ts_code"].map(start_snapshot["close"])
         result_df[f"return_{period}"] = (result_df["close_end"] / result_df[f"close_{period}"] - 1.0) * 100.0
         result_df[f"RPS_{period}"] = _apply_rps(result_df[f"return_{period}"].fillna(-999))
+
+    # 合并最新股价与市值信息（total_mv 总市值、circ_mv 流通市值，单位元）
+    daily_basic_df = _fetch_daily_basic_by_trade_date(end_date, token=token)
+    if daily_basic_df is not None and not daily_basic_df.empty:
+        basic_indexed = daily_basic_df.set_index("ts_code")
+        result_df["latest_price"] = result_df["ts_code"].map(basic_indexed["close"])
+        result_df["total_mv"] = result_df["ts_code"].map(basic_indexed["total_mv"])
+        result_df["circ_mv"] = result_df["ts_code"].map(basic_indexed["circ_mv"])
+    else:
+        errors.append(f"daily_basic返回空数据: trade_date={end_date}，市值与最新价字段为空")
+        result_df["latest_price"] = pd.NA
+        result_df["total_mv"] = pd.NA
+        result_df["circ_mv"] = pd.NA
+
+    # 最新股价缺失时回退使用截止日收盘价
+    result_df["latest_price"] = result_df["latest_price"].fillna(result_df["close_end"])
 
     drop_columns = ["close_end"] + [f"close_{period}" for period in normalized_periods]
     result_df = result_df.drop(columns=drop_columns, errors="ignore")

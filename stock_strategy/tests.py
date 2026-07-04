@@ -756,6 +756,15 @@ class StockRpsTests(unittest.TestCase):
     - 验证未显式传入 `trade_date` 时，若最新开市日缺少日线快照，会自动回退到最近可用交易日。
     """
 
+    @patch(
+        "stock_strategy.data_tasks.stock_rps._fetch_daily_basic_by_trade_date",
+        return_value=pd.DataFrame(
+            [
+                {"ts_code": "000001.SZ", "close": 12.0, "total_mv": 1.0e11, "circ_mv": 9.0e10},
+                {"ts_code": "000002.SZ", "close": 10.5, "total_mv": 8.0e10, "circ_mv": 7.0e10},
+            ]
+        ),
+    )
     @patch("stock_strategy.data_tasks.stock_rps.cache")
     @patch("stock_strategy.data_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
     @patch("stock_strategy.data_tasks.stock_rps._get_period_start_trade_dates")
@@ -766,6 +775,7 @@ class StockRpsTests(unittest.TestCase):
         mock_get_period_start_trade_dates,
         mock_fetch_daily_snapshot_by_trade_date,
         mock_cache,
+        mock_fetch_daily_basic_by_trade_date,
     ):
         """
         功能：验证 `compute_stock_rps` 会按多个周期起始交易日和截止交易日拉取股票快照并计算排名。
@@ -873,6 +883,7 @@ class StockRpsTests(unittest.TestCase):
         self.assertGreater(result_map.loc["000001.SZ", "RPS_today"], result_map.loc["000002.SZ", "RPS_today"])
         mock_cache.set.assert_called_once()
 
+    @patch("stock_strategy.data_tasks.stock_rps._fetch_daily_basic_by_trade_date")
     @patch("stock_strategy.data_tasks.stock_rps.cache")
     @patch("stock_strategy.data_tasks.stock_rps._fetch_daily_snapshot_by_trade_date")
     @patch("stock_strategy.data_tasks.stock_rps._get_period_start_trade_dates")
@@ -887,6 +898,7 @@ class StockRpsTests(unittest.TestCase):
         mock_get_period_start_trade_dates,
         mock_fetch_daily_snapshot_by_trade_date,
         mock_cache,
+        mock_fetch_daily_basic_by_trade_date,
     ):
         """
         功能：验证未传 `trade_date` 时，若最新开市日无 `daily` 快照，会自动回退到最近可用交易日。
