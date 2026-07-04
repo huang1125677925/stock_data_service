@@ -323,6 +323,16 @@ class FakeLimitBoardFetcher:
                     {"trade_date": "20260115", "ts_code": "885002.TI", "name": "消费", "up_nums": 6, "cons_nums": 1, "up_stat": "2天2板", "pct_chg": 1.8, "rank": "2"},
                 ])
             return records
+        if interface == "limit_list_ths" and limit_type == "涨停池":
+            return [
+                {"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "lu_desc": "机器人概念", "tag": "首板", "status": "一字板", "limit_times": 1, "turnover_ratio": 10.0, "open_num": 0},
+                {"trade_date": "20260114", "ts_code": "000002.SZ", "name": "二板股", "lu_desc": "机器人概念", "tag": "连板", "status": "换手板", "limit_times": 2, "turnover_ratio": 20.0, "open_num": 1},
+                {"trade_date": "20260114", "ts_code": "000009.SZ", "name": "ST退市", "lu_desc": "重组预期", "tag": "首板", "status": "一字板", "limit_times": 1, "turnover_ratio": 5.0, "open_num": 0},
+                {"trade_date": "20260114", "ts_code": "000010.SZ", "name": "无行业股", "lu_desc": "杂项", "tag": "首板", "status": "换手板", "limit_times": 1, "turnover_ratio": 6.0, "open_num": 0},
+                {"trade_date": "20260115", "ts_code": "000001.SZ", "name": "一板股", "lu_desc": "机器人概念", "tag": "连板", "status": "T字板", "limit_times": 2, "turnover_ratio": 12.0, "open_num": 0},
+                {"trade_date": "20260115", "ts_code": "000006.SZ", "name": "新启动", "lu_desc": "机器人概念", "tag": "首板", "status": "换手板", "limit_times": 1, "turnover_ratio": 8.0, "open_num": 0},
+                {"trade_date": "20260115", "ts_code": "000007.SZ", "name": "高标股", "lu_desc": "消费电子", "tag": "连板", "status": "一字板", "limit_times": 3, "turnover_ratio": 15.0, "open_num": 0},
+            ]
         if interface == "limit_list_ths":
             return [{"trade_date": "20260114", "ts_code": "000004.SZ", "name": "炸板股", "lu_desc": "题材催化", "open_num": 2}]
         if interface == "kpl_list":
@@ -397,9 +407,9 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         lifecycle_by_code = {item["ts_code"]: item for item in result["stock_lifecycles"]}
         self.assertEqual(lifecycle_by_code["000001.SZ"]["lifecycle_stage"], "二板确认")
 
-    def test_industry_trend_strength_groups_limit_up_metrics_by_date_and_industry(self):
+    def test_industry_trend_strength_groups_ths_limit_up_by_date_and_industry(self):
         """
-        功能：验证行业涨停趋势强度分析会按交易日和行业聚合涨停指标。
+        功能：验证行业涨停趋势强度分析以 limit_list_ths 为基础、按交易日 key 返回整体/行业/个股三个维度。
 
         参数：
         - 无。
@@ -414,20 +424,47 @@ class LimitBoardDataServiceTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["trade_day_count"], 2)
         self.assertEqual(result["summary"]["industry_count"], 2)
+        # ST 股票与未知行业个股不计入统计范围
         self.assertEqual(result["summary"]["total_limit_up_count"], 5)
-        robot_day1 = next(
-            item for item in result["data"]
-            if item["trade_date"] == "20260114" and item["industry"] == "机器人"
-        )
-        self.assertEqual(robot_day1["limit_up_count"], 2)
-        self.assertEqual(robot_day1["avg_turnover_ratio"], 15.0)
-        self.assertEqual(robot_day1["avg_first_limit_minutes"], 10.0)
-        self.assertEqual(robot_day1["total_amount"], 3000.0)
-        self.assertEqual(robot_day1["avg_open_times"], 0.5)
-        self.assertEqual(robot_day1["avg_limit_times"], 1.5)
-        self.assertEqual(robot_day1["avg_up_stat_n"], 1.5)
-        self.assertEqual(robot_day1["avg_up_stat_t"], 2.0)
-        self.assertAlmostEqual(robot_day1["avg_up_stat_ratio_pct"], 83.33, places=2)
+        self.assertEqual(result["summary"]["excluded_st_count"], 1)
+        self.assertEqual(result["summary"]["excluded_unknown_industry_count"], 1)
+
+        # 以交易日为 key
+        self.assertEqual(sorted(result["data"].keys()), ["20260114", "20260115"])
+
+        # 20260114：过滤 ST 与未知行业后，整体 2 只，均归入机器人行业
+        day1 = result["data"]["20260114"]
+        self.assertEqual(day1["overall"]["limit_up_count"], 2)
+        self.assertEqual(day1["overall"]["industry_count"], 1)
+        self.assertEqual(day1["industries"], [
+            {
+                "industry": "机器人",
+                "limit_up_count": 2,
+                "status_counts": {"T字板": 0, "一字板": 1, "换手板": 1},
+            }
+        ])
+        self.assertEqual(len(day1["stocks"]["机器人"]), 2)
+        # 个股保留 limit_list_ths 原始字段，并补充所属行业
+        robot_stock = day1["stocks"]["机器人"][0]
+        self.assertEqual(robot_stock["industry"], "机器人")
+        self.assertIn("lu_desc", robot_stock)
+        self.assertIn("tag", robot_stock)
+
+        # 20260115：整体 3 只，细分到机器人(2)与消费电子(1)
+        day2 = result["data"]["20260115"]
+        self.assertEqual(day2["overall"]["limit_up_count"], 3)
+        self.assertEqual(day2["overall"]["industry_count"], 2)
+        industry_counts = {item["industry"]: item["limit_up_count"] for item in day2["industries"]}
+        self.assertEqual(industry_counts, {"机器人": 2, "消费电子": 1})
+        # 行业维度涨停状态统计
+        status_by_industry = {item["industry"]: item["status_counts"] for item in day2["industries"]}
+        self.assertEqual(status_by_industry["机器人"], {"T字板": 1, "一字板": 0, "换手板": 1})
+        self.assertEqual(status_by_industry["消费电子"], {"T字板": 0, "一字板": 1, "换手板": 0})
+
+        # top_industries 汇总
+        top = {item["industry"]: item["total_limit_up_count"] for item in result["summary"]["top_industries"]}
+        self.assertEqual(top["机器人"], 4)
+        self.assertEqual(top["消费电子"], 1)
 
 
 class BoardRpsTradeDayTests(unittest.TestCase):

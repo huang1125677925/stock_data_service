@@ -1309,7 +1309,9 @@ def get_limit_board_industry_trend_strength(request):
     涨停趋势强度行业分析接口
 
     功能：
-    - 基于 Tushare `limit_list_d(limit_type=U)`，按时间区间统计各行业每日涨停趋势强度指标。
+    - 以 Tushare `limit_list_ths(limit_type=涨停池)` 区间数据为基础，从 `limit_list_d(limit_type=U)`
+      获取每只涨停股所属行业，按交易日为 key 返回整体、行业、个股三个维度的涨停数据。
+    - 剔除 ST/退市类股票，以及无法归类到具体行业（未知行业）的个股，不计入统计范围。
 
     参数：
     - start_date (str): 开始日期，必填，格式 `YYYYMMDD`。
@@ -1317,8 +1319,10 @@ def get_limit_board_industry_trend_strength(request):
     - token (str，可选): Tushare Token，传入后覆盖环境变量。
 
     返回值：
-    - 成功：返回区间内按交易日和行业聚合的涨停数量、平均换手率、首次封板耗时分钟数、
-      总成交额、平均开板次数、平均连板数、平均涨停统计数据等信息。
+    - 成功：以交易日为 key 返回三个维度数据——整体（当日涨停总数与行业数量）、
+      行业（当日各行业涨停数量，及 T字板/一字板/换手板 涨停状态统计）、
+      个股（各行业内涨停股列表，含 `limit_list_ths` 全部字段）。
+      统计范围剔除 ST/退市股与未知行业股。
     - 失败：返回统一错误响应。
 
     异常：

@@ -14,6 +14,9 @@ class LimitBoardDataService:
     该服务只做 Tushare 多接口聚合和轻量统计，不写库；HTTP 层负责参数校验和响应包装。
     """
 
+    # limit_list_ths `status` 字段中需要统计的涨停状态类型
+    LIMIT_STATUS_TYPES: Tuple[str, ...] = ("T字板", "一字板", "换手板")
+
     def __init__(self, fetcher: Callable[..., Dict[str, Any]] = call_tushare):
         self.fetcher = fetcher
 
@@ -488,9 +491,15 @@ class LimitBoardDataService:
         获取行业维度的涨停趋势强度分析。
 
         功能：
-        - 基于 `limit_list_d(limit_type=U)` 在指定时间区间内按交易日、行业聚合涨停股数据。
-        - 输出每个行业每日的涨停数量、平均换手率、首次封板耗时、总成交额、平均开板次数、
-          平均连板数，以及 `up_stat` 的平均统计结果。
+        - 以 `limit_list_ths(limit_type=涨停池)` 在指定时间区间内的同花顺涨停池数据为基础，
+          从 `limit_list_d(limit_type=U)` 获取每只涨停股所属行业。
+        - 剔除 ST/退市类股票，以及无法归类到具体行业（未知行业）的个股，二者均不计入统计范围。
+        - 结果以交易日为 key，每个交易日返回整体、行业、个股三个维度：
+          - 整体：该日（过滤后）涨停总数与涉及行业数量。
+          - 行业：该日涨停股细分到各个行业，以及每个行业的涨停数量与涨停状态统计
+            （`T字板`、`一字板`、`换手板`）。
+          - 个股：每个行业内的涨停股列表，每只个股包含 `limit_list_ths` 中该日的全部原始字段
+            （并补充所属行业 `industry`）。
 
         参数：
         - start_date (str): 开始日期，格式 `YYYYMMDD`。
@@ -498,7 +507,7 @@ class LimitBoardDataService:
         - token (str，可选): Tushare Token，用于覆盖默认环境变量。
 
         返回值：
-        - Dict[str, Any]: 包含查询区间、汇总信息、按行业聚合后的日度明细、源数据统计和查询时间。
+        - Dict[str, Any]: 包含查询区间、汇总信息、按交易日为 key 的三维明细、源数据统计和查询时间。
 
         异常：
         - ValueError: 日期格式非法、开始日期晚于结束日期、或查询区间超过限制时抛出。
@@ -506,81 +515,96 @@ class LimitBoardDataService:
         """
         self._validate_date_range(start_date, end_date)
 
-        limit_up = self._fetch_records(
+        ths_records = self._fetch_records(
+            "limit_list_ths",
+            {"start_date": start_date, "end_date": end_date, "limit_type": "涨停池"},
+            token=token,
+            required=False,
+        )
+        limit_up_d = self._fetch_records(
             "limit_list_d",
             {"start_date": start_date, "end_date": end_date, "limit_type": "U"},
             token=token,
             required=False,
         )
-        grouped_records = self._group_limit_up_by_date_and_industry(limit_up)
+        industry_map = self._build_industry_map(limit_up_d)
 
-        data = []
-        industry_totals: Dict[str, Dict[str, Any]] = {}
-        trade_dates = sorted({trade_date for trade_date, _ in grouped_records.keys()})
-        for (trade_date, industry), records in sorted(grouped_records.items(), key=lambda item: (item[0][0], item[0][1])):
-            count = len(records)
-            turnover_values = [self._safe_float(item.get("turnover_ratio")) for item in records if item.get("turnover_ratio") not in (None, "")]
-            first_limit_minutes = [
-                minute
-                for minute in (self._minutes_since_market_open(item.get("first_time")) for item in records)
-                if minute is not None
-            ]
-            total_amount = sum(self._safe_float(item.get("amount")) for item in records)
-            avg_open_times = self._safe_round(sum(self._safe_int(item.get("open_times")) for item in records) / count if count else 0)
-            avg_limit_times = self._safe_round(sum(self._safe_int(item.get("limit_times")) for item in records) / count if count else 0)
-            up_stat_metrics = [
-                self._parse_up_stat_detail(item.get("up_stat"))
-                for item in records
-            ]
-            valid_up_stat_metrics = [metric for metric in up_stat_metrics if metric[0] is not None and metric[1] is not None]
+        data: Dict[str, Any] = {}
+        industry_matched_count = 0
+        counted_limit_up_count = 0
+        excluded_st_count = 0
+        excluded_unknown_industry_count = 0
+        grouped = self._group_by_date(ths_records)
+        for trade_date in sorted(grouped.keys()):
+            day_records = grouped[trade_date]
+            industry_stocks: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for record in day_records:
+                # 剔除 ST 股票，不计入统计范围
+                if self._is_st_stock(record.get("name")):
+                    excluded_st_count += 1
+                    continue
+                code = record.get("ts_code")
+                mapped_industry = industry_map.get((trade_date, code))
+                industry = mapped_industry or str(record.get("industry") or "").strip()
+                # 剔除无法归类到具体行业（未知行业）的个股，不计入统计范围
+                if not industry:
+                    excluded_unknown_industry_count += 1
+                    continue
+                if mapped_industry:
+                    industry_matched_count += 1
+                industry_stocks[industry].append({**record, "industry": industry})
 
-            row = {
-                "trade_date": trade_date,
-                "industry": industry,
-                "limit_up_count": count,
-                "avg_turnover_ratio": self._safe_round(sum(turnover_values) / len(turnover_values) if turnover_values else 0),
-                "avg_first_limit_minutes": self._safe_round(sum(first_limit_minutes) / len(first_limit_minutes) if first_limit_minutes else 0),
-                "total_amount": self._safe_round(total_amount, 2),
-                "avg_open_times": avg_open_times,
-                "avg_limit_times": avg_limit_times,
-                "avg_up_stat_n": self._safe_round(
-                    sum(metric[0] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) if valid_up_stat_metrics else 0
-                ),
-                "avg_up_stat_t": self._safe_round(
-                    sum(metric[1] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) if valid_up_stat_metrics else 0
-                ),
-                "avg_up_stat_ratio_pct": self._safe_round(
-                    sum(metric[2] for metric in valid_up_stat_metrics) / len(valid_up_stat_metrics) * 100 if valid_up_stat_metrics else 0
-                ),
-            }
-            data.append(row)
+            # 该交易日经过滤后无有效涨停个股则跳过
+            if not industry_stocks:
+                continue
 
-            industry_summary = industry_totals.setdefault(
-                industry,
-                {
-                    "industry": industry,
-                    "trade_day_count": 0,
-                    "total_limit_up_count": 0,
-                    "total_amount": 0.0,
-                },
+            day_limit_up_count = sum(len(stocks) for stocks in industry_stocks.values())
+            counted_limit_up_count += day_limit_up_count
+            industries = sorted(
+                (
+                    {
+                        "industry": name,
+                        "limit_up_count": len(stocks),
+                        "status_counts": self._count_limit_status(stocks),
+                    }
+                    for name, stocks in industry_stocks.items()
+                ),
+                key=lambda item: (-item["limit_up_count"], item["industry"]),
             )
-            industry_summary["trade_day_count"] += 1
-            industry_summary["total_limit_up_count"] += count
-            industry_summary["total_amount"] += total_amount
+            data[trade_date] = {
+                "trade_date": trade_date,
+                "overall": {
+                    "limit_up_count": day_limit_up_count,
+                    "industry_count": len(industry_stocks),
+                },
+                "industries": industries,
+                "stocks": dict(industry_stocks),
+            }
+
+        trade_dates = sorted(data.keys())
+
+        industry_range_totals: Dict[str, Dict[str, Any]] = {}
+        for trade_date in trade_dates:
+            for entry in data[trade_date]["industries"]:
+                name = entry["industry"]
+                agg = industry_range_totals.setdefault(
+                    name,
+                    {"industry": name, "total_limit_up_count": 0, "trade_day_count": 0},
+                )
+                agg["total_limit_up_count"] += entry["limit_up_count"]
+                agg["trade_day_count"] += 1
 
         top_industries = sorted(
             (
                 {
-                    **item,
+                    **agg,
                     "avg_daily_limit_up_count": self._safe_round(
-                        item["total_limit_up_count"] / item["trade_day_count"] if item["trade_day_count"] else 0
+                        agg["total_limit_up_count"] / agg["trade_day_count"] if agg["trade_day_count"] else 0
                     ),
-                    "total_amount": self._safe_round(item["total_amount"], 2),
                 }
-                for item in industry_totals.values()
+                for agg in industry_range_totals.values()
             ),
-            key=lambda item: (item["total_limit_up_count"], item["total_amount"]),
-            reverse=True,
+            key=lambda item: (-item["total_limit_up_count"], item["industry"]),
         )[:20]
 
         return {
@@ -588,14 +612,17 @@ class LimitBoardDataService:
             "end_date": end_date,
             "summary": {
                 "trade_day_count": len(trade_dates),
-                "industry_count": len(industry_totals),
-                "record_count": len(data),
-                "total_limit_up_count": len(limit_up),
+                "industry_count": len(industry_range_totals),
+                "total_limit_up_count": counted_limit_up_count,
+                "industry_matched_count": industry_matched_count,
+                "excluded_st_count": excluded_st_count,
+                "excluded_unknown_industry_count": excluded_unknown_industry_count,
                 "top_industries": top_industries,
             },
             "data": data,
             "source_counts": {
-                "limit_list_d_up": len(limit_up),
+                "limit_list_ths": len(ths_records),
+                "limit_list_d_up": len(limit_up_d),
             },
             "query_time": datetime.now().isoformat(),
         }
@@ -626,29 +653,71 @@ class LimitBoardDataService:
         return dict(grouped)
 
     @staticmethod
-    def _group_limit_up_by_date_and_industry(
-        records: Iterable[Dict[str, Any]]
-    ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+    def _is_st_stock(name: Any) -> bool:
         """
-        按交易日和行业对涨停记录分组。
+        判断股票名称是否为 ST/退市类股票。
+
+        参数：
+        - name (Any): 股票名称，通常来自 `limit_list_ths` 的 `name` 字段。
+
+        返回值：
+        - bool: 名称中包含 `ST`（含 `*ST`、`SST`、`S*ST` 等）或 `退` 时返回 True。
+
+        异常：
+        - 无。
+        """
+        text = str(name or "").upper()
+        return "ST" in text or "退" in text
+
+    @classmethod
+    def _count_limit_status(cls, stocks: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+        """
+        统计一组涨停股在 `LIMIT_STATUS_TYPES` 各涨停状态下的数量。
+
+        参数：
+        - stocks (Iterable[Dict[str, Any]]): 涨停个股记录集合，取每条记录的 `status` 字段。
+
+        返回值：
+        - Dict[str, int]: 以涨停状态（`T字板`、`一字板`、`换手板`）为键、对应数量为值的字典，
+          未出现的状态计数为 0。
+
+        异常：
+        - 无。
+        """
+        counts: Dict[str, int] = {status: 0 for status in cls.LIMIT_STATUS_TYPES}
+        for item in stocks:
+            status = str(item.get("status") or "").strip()
+            if status in counts:
+                counts[status] += 1
+        return counts
+
+    @staticmethod
+    def _build_industry_map(
+        records: Iterable[Dict[str, Any]]
+    ) -> Dict[Tuple[str, str], str]:
+        """
+        基于 `limit_list_d` 记录构建 `(交易日, 股票代码) -> 行业` 的映射。
 
         参数：
         - records (Iterable[Dict[str, Any]]): `limit_list_d(limit_type=U)` 返回的原始记录集合。
 
         返回值：
-        - Dict[Tuple[str, str], List[Dict[str, Any]]]: 以 `(trade_date, industry)` 为键的分组结果。
+        - Dict[Tuple[str, str], str]: 以 `(trade_date, ts_code)` 为键、所属行业为值的映射。
+          缺失交易日或股票代码的记录会被忽略，缺失行业的记录不写入映射。
 
         异常：
-        - 无。缺失交易日的记录会被忽略，缺失行业的记录会归入“未知行业”。
+        - 无。
         """
-        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        mapping: Dict[Tuple[str, str], str] = {}
         for item in records:
             trade_date = str(item.get("trade_date") or "")
-            if not trade_date:
+            code = item.get("ts_code")
+            if not trade_date or not code:
                 continue
-            industry = str(item.get("industry") or "").strip() or "未知行业"
-            grouped[(trade_date, industry)].append(item)
-        return dict(grouped)
+            industry = str(item.get("industry") or "").strip()
+            if industry:
+                mapping[(trade_date, code)] = industry
+        return mapping
 
     @classmethod
     def _build_concept_trends(cls, concepts: Iterable[Dict[str, Any]], top_n: int) -> List[Dict[str, Any]]:
@@ -870,53 +939,6 @@ class LimitBoardDataService:
             if value > 0:
                 counter[value] += 1
         return dict(counter)
-
-    @staticmethod
-    def _minutes_since_market_open(value: Any) -> Optional[int]:
-        """
-        计算时间相对 09:30 的分钟数。
-
-        参数：
-        - value (Any): Tushare 返回的时间字符串，格式通常为 `HHMMSS`。
-
-        返回值：
-        - Optional[int]: 自 09:30 起累计的分钟数；若时间为空或格式非法则返回 `None`。
-
-        异常：
-        - 无。非法输入统一返回 `None`。
-        """
-        text = str(value or "").strip()
-        if len(text) != 6 or not text.isdigit():
-            return None
-        hour = int(text[:2])
-        minute = int(text[2:4])
-        return max((hour - 9) * 60 + (minute - 30), 0)
-
-    @staticmethod
-    def _parse_up_stat_detail(value: Any) -> Tuple[Optional[int], Optional[int], float]:
-        """
-        解析涨停统计字段 `up_stat`。
-
-        参数：
-        - value (Any): `limit_list_d` 返回的涨停统计字符串，格式通常为 `N/T`。
-
-        返回值：
-        - Tuple[Optional[int], Optional[int], float]:
-          第一个值为涨停次数 `N`，第二个值为统计窗口 `T`，第三个值为 `N/T` 比值。
-
-        异常：
-        - 无。无法解析时返回 `(None, None, 0.0)`。
-        """
-        text = str(value or "").strip()
-        if "/" not in text:
-            return None, None, 0.0
-        left, right = text.split("/", 1)
-        if not left.isdigit() or not right.isdigit():
-            return None, None, 0.0
-        numerator = int(left)
-        denominator = int(right)
-        ratio = numerator / denominator if denominator else 0.0
-        return numerator, denominator, ratio
 
     @staticmethod
     def _build_break_item(item: Dict[str, Any], status: str, ths_item: Dict[str, Any]) -> Dict[str, Any]:
