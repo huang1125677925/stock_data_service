@@ -9,7 +9,6 @@ urlpatterns = [
     path('dc-board-member-rps/', views.get_dc_board_member_rps, name='get_dc_board_member_rps'),
     path('industry-turnover-percentile/', views.get_industry_turnover_percentile, name='get_industry_turnover_percentile'),
     path('industry-ma-breadth/', views.get_industry_ma_breadth, name='get_industry_ma_breadth'),
-    path('industry-up-down-ratio/', views.get_industry_up_down_ratio, name='get_industry_up_down_ratio'),
     path('limit-board/industry-trend-strength/', views.get_limit_board_industry_trend_strength, name='get_limit_board_industry_trend_strength'),
     path('swing-analysis/', views.get_swing_analysis, name='get_swing_analysis'),
     path('swing-channel-candidates/', views.get_swing_channel_candidates, name='get_swing_channel_candidates'),
