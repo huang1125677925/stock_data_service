@@ -356,35 +356,6 @@ class LimitBoardDataServiceTests(unittest.TestCase):
     def setUp(self):
         self.service = LimitBoardDataService(fetcher=FakeLimitBoardFetcher())
 
-    def test_daily_sentiment_returns_summary_and_distribution(self):
-        result = self.service.get_daily_sentiment(trade_date="20260114")
-
-        self.assertEqual(result["summary"]["limit_up_count"], 2)
-        self.assertEqual(result["summary"]["broken_limit_count"], 1)
-        self.assertEqual(result["summary"]["max_board"], 3)
-        self.assertEqual(result["top_concepts"][0]["name"], "机器人")
-
-    def test_theme_ladder_groups_limit_up_stocks_by_concept(self):
-        result = self.service.get_theme_ladder(trade_date="20260114")
-
-        self.assertEqual(result["total"], 1)
-        self.assertEqual(result["themes"][0]["concept_name"], "机器人")
-        self.assertEqual(result["themes"][0]["core_stocks"][0]["ts_code"], "000001.SZ")
-
-    def test_break_reseal_analysis_splits_resealed_and_failed(self):
-        result = self.service.get_break_reseal_analysis(trade_date="20260114")
-
-        self.assertEqual(result["summary"]["resealed_count"], 1)
-        self.assertEqual(result["summary"]["failed_break_count"], 1)
-        self.assertEqual(result["failed"][0]["reason"], "题材催化")
-
-    def test_hot_money_review_matches_limit_up_stock(self):
-        result = self.service.get_hot_money_review(trade_date="20260114")
-
-        self.assertEqual(result["summary"]["top_limit_up_count"], 1)
-        self.assertEqual(result["records"][0]["hot_money_count"], 1)
-        self.assertEqual(result["active_hot_money"][0]["hm_name"], "测试游资")
-
     def test_trend_analysis_returns_sentiment_concept_and_lifecycle_trends(self):
         """
         功能：验证区间趋势分析会返回情绪、题材与个股生命周期三类结果。
@@ -436,6 +407,12 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         day1 = result["data"]["20260114"]
         self.assertEqual(day1["overall"]["limit_up_count"], 2)
         self.assertEqual(day1["overall"]["industry_count"], 1)
+        self.assertEqual(day1["overall"]["limit_down_count"], 1)
+        self.assertEqual(day1["overall"]["broken_limit_count"], 1)
+        self.assertEqual(day1["overall"]["limit_attempt_count"], 3)
+        self.assertEqual(day1["overall"]["sealed_rate"], 66.7)
+        self.assertEqual(day1["overall"]["max_board"], 3)
+        self.assertEqual(day1["overall"]["phase"], "repair")
         self.assertEqual(day1["industries"], [
             {
                 "industry": "机器人",
@@ -459,6 +436,10 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         day2 = result["data"]["20260115"]
         self.assertEqual(day2["overall"]["limit_up_count"], 3)
         self.assertEqual(day2["overall"]["industry_count"], 2)
+        self.assertEqual(day2["overall"]["broken_limit_count"], 1)
+        self.assertEqual(day2["overall"]["limit_attempt_count"], 4)
+        self.assertEqual(day2["overall"]["max_board"], 3)
+        self.assertEqual(day2["overall"]["phase"], "repair")
         industry_counts = {item["industry"]: item["limit_up_count"] for item in day2["industries"]}
         self.assertEqual(industry_counts, {"机器人": 2, "消费电子": 1})
         # 行业维度涨停状态统计
@@ -470,6 +451,21 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         top = {item["industry"]: item["total_limit_up_count"] for item in result["summary"]["top_industries"]}
         self.assertEqual(top["机器人"], 4)
         self.assertEqual(top["消费电子"], 1)
+    def test_industry_trend_strength_snapshot_mapping_still_contains_daily_sentiment(self):
+        result = self.service.get_industry_trend_strength(
+            start_date="20260114",
+            end_date="20260115",
+            industry_mapping="dc_l2",
+        )
+
+        day1 = result["data"]["20260114"]
+        self.assertEqual(day1["overall"]["limit_up_count"], 2)
+        self.assertEqual(day1["overall"]["broken_limit_count"], 1)
+        self.assertEqual(day1["overall"]["phase"], "repair")
+        self.assertEqual(result["source_counts"]["limit_list_d_up"], 5)
+        self.assertEqual(result["source_counts"]["limit_list_d_down"], 2)
+        self.assertEqual(result["source_counts"]["limit_list_d_broken"], 2)
+        self.assertEqual(result["source_counts"]["limit_step"], 5)
 
 
 class BoardRpsTradeDayTests(unittest.TestCase):

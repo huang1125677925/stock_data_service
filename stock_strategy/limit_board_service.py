@@ -54,339 +54,6 @@ class LimitBoardDataService:
     def __init__(self, fetcher: Callable[..., Dict[str, Any]] = call_tushare):
         self.fetcher = fetcher
 
-    def get_daily_sentiment(self, trade_date: str, token: Optional[str] = None) -> Dict[str, Any]:
-        limit_up = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "U"}, token=token)
-        limit_down = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "D"}, token=token)
-        broken = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "Z"}, token=token)
-        ladder = self._fetch_records("limit_step", {"trade_date": trade_date}, token=token)
-        concepts = self._fetch_records("limit_cpt_list", {"trade_date": trade_date}, token=token)
-
-        board_distribution = self._count_by_number(ladder, "nums")
-        if not board_distribution:
-            board_distribution = self._count_by_number(limit_up, "limit_times")
-
-        max_board = max(board_distribution.keys(), default=0)
-        limit_attempts = len(limit_up) + len(broken)
-        broken_rate = self._safe_round(len(broken) / limit_attempts * 100 if limit_attempts else 0)
-        sealed_rate = self._safe_round(len(limit_up) / limit_attempts * 100 if limit_attempts else 0)
-        one_board_count = board_distribution.get(1, 0) or max(len(limit_up) - sum(v for k, v in board_distribution.items() if k >= 2), 0)
-        second_board_or_above = sum(v for k, v in board_distribution.items() if k >= 2)
-        high_board_count = sum(v for k, v in board_distribution.items() if k >= 3)
-
-        sentiment_score = self._calc_sentiment_score(
-            limit_up_count=len(limit_up),
-            limit_down_count=len(limit_down),
-            broken_rate=broken_rate,
-            max_board=max_board,
-            high_board_count=high_board_count,
-        )
-        phase = self._sentiment_phase(sentiment_score, len(limit_down), broken_rate, max_board)
-
-        top_concepts = sorted(
-            concepts,
-            key=lambda item: (
-                self._safe_int(item.get("rank"), 9999),
-                -self._safe_float(item.get("up_nums")),
-                -self._safe_float(item.get("pct_chg")),
-            ),
-        )[:20]
-
-        return {
-            "trade_date": trade_date,
-            "summary": {
-                "limit_up_count": len(limit_up),
-                "limit_down_count": len(limit_down),
-                "broken_limit_count": len(broken),
-                "limit_attempt_count": limit_attempts,
-                "sealed_rate": sealed_rate,
-                "broken_rate": broken_rate,
-                "max_board": max_board,
-                "one_board_count": one_board_count,
-                "second_board_or_above_count": second_board_or_above,
-                "high_board_count": high_board_count,
-                "sentiment_score": sentiment_score,
-                "phase": phase["phase"],
-                "phase_label": phase["label"],
-                "conclusion": phase["conclusion"],
-            },
-            "board_distribution": [
-                {"board": board, "count": count}
-                for board, count in sorted(board_distribution.items(), reverse=True)
-            ],
-            "top_concepts": top_concepts,
-            "source_counts": {
-                "limit_list_d_up": len(limit_up),
-                "limit_list_d_down": len(limit_down),
-                "limit_list_d_broken": len(broken),
-                "limit_step": len(ladder),
-                "limit_cpt_list": len(concepts),
-            },
-            "query_time": datetime.now().isoformat(),
-        }
-
-    def get_enhanced_auction_candidates(
-        self,
-        trade_date: str,
-        token: Optional[str] = None,
-        top_n: int = 10,
-        auction_max_retries: int = 6,
-        auction_base_wait: int = 2,
-    ) -> Dict[str, Any]:
-        from .auction_selection_strategy import auction_selection_strategy_service
-
-        base_result = auction_selection_strategy_service.get_strategy_result(
-            trade_date=trade_date,
-            top_n=max(top_n, 1),
-            token=token,
-            auction_max_retries=auction_max_retries,
-            auction_base_wait=auction_base_wait,
-        )
-
-        ths_records = self._fetch_records("limit_list_ths", {"trade_date": trade_date}, token=token, required=False)
-        kpl_records = self._fetch_records("kpl_list", {"trade_date": trade_date}, token=token, required=False)
-        dc_hot_records = self._fetch_records("dc_hot", {"trade_date": trade_date, "market": "A股市场"}, token=token, required=False)
-        ths_hot_records = self._fetch_records("ths_hot", {"trade_date": trade_date, "market": "热股"}, token=token, required=False)
-
-        ths_map = self._first_by_code(ths_records)
-        kpl_map = self._first_by_code(kpl_records)
-        dc_hot_map = self._first_by_code(dc_hot_records)
-        ths_hot_map = self._first_by_code(ths_hot_records)
-
-        candidates = []
-        for item in base_result.get("candidates", []):
-            code = item.get("code") or item.get("ts_code")
-            ths = ths_map.get(code, {})
-            kpl = kpl_map.get(code, {})
-            dc_hot = dc_hot_map.get(code, {})
-            ths_hot = ths_hot_map.get(code, {})
-            hot_score = self._calc_hot_score(dc_hot, ths_hot)
-            enhanced_score = self._safe_round(self._safe_float(item.get("score")) + hot_score, 1)
-
-            candidates.append({
-                **item,
-                "enhanced_score": enhanced_score,
-                "hot_score": hot_score,
-                "reason": ths.get("lu_desc") or kpl.get("theme") or "",
-                "tags": self._merge_tags(ths.get("tag"), kpl.get("theme"), kpl.get("status")),
-                "ths_status": ths.get("status"),
-                "kpl_status": kpl.get("status"),
-                "dc_hot": dc_hot,
-                "ths_hot": ths_hot,
-                "raw_sources": {
-                    "limit_list_ths": ths,
-                    "kpl_list": kpl,
-                },
-            })
-
-        candidates.sort(key=lambda item: item.get("enhanced_score", item.get("score", 0)), reverse=True)
-
-        return {
-            **base_result,
-            "top_candidates": candidates[:top_n],
-            "candidates": candidates,
-            "statistics": {
-                **base_result.get("statistics", {}),
-                "enhanced_selected_count": len(candidates),
-                "ths_matched_count": sum(1 for item in candidates if item["raw_sources"]["limit_list_ths"]),
-                "kpl_matched_count": sum(1 for item in candidates if item["raw_sources"]["kpl_list"]),
-                "dc_hot_matched_count": sum(1 for item in candidates if item["dc_hot"]),
-                "ths_hot_matched_count": sum(1 for item in candidates if item["ths_hot"]),
-            },
-            "params": {
-                **base_result.get("params", {}),
-                "top_n": top_n,
-                "enhance_sources": ["limit_list_ths", "kpl_list", "dc_hot", "ths_hot"],
-            },
-        }
-
-    def get_theme_ladder(self, trade_date: str, token: Optional[str] = None, top_n: int = 20) -> Dict[str, Any]:
-        kpl_list = self._fetch_records("kpl_list", {"trade_date": trade_date, "tag": "涨停"}, token=token, required=False)
-        concepts = self._fetch_records("kpl_concept", {"trade_date": trade_date}, token=token, required=False)
-        concept_members = self._fetch_records("kpl_concept_cons", {"trade_date": trade_date}, token=token, required=False)
-        strongest_concepts = self._fetch_records("limit_cpt_list", {"trade_date": trade_date}, token=token, required=False)
-        limit_step = self._fetch_records("limit_step", {"trade_date": trade_date}, token=token, required=False)
-
-        stock_ladder = {item.get("ts_code"): self._safe_int(item.get("nums")) for item in limit_step}
-        stock_pool = self._first_by_code(kpl_list)
-        concept_meta = {item.get("ts_code"): item for item in concepts if item.get("ts_code")}
-        strongest_by_name = {item.get("name"): item for item in strongest_concepts if item.get("name")}
-
-        grouped: Dict[str, Dict[str, Any]] = {}
-        for member in concept_members:
-            concept_code = member.get("ts_code")
-            stock_code = member.get("con_code")
-            stock = stock_pool.get(stock_code)
-            if not concept_code or not stock_code or not stock:
-                continue
-
-            meta = concept_meta.get(concept_code, {})
-            name = meta.get("name") or member.get("name") or concept_code
-            bucket = grouped.setdefault(
-                concept_code,
-                {
-                    "concept_code": concept_code,
-                    "concept_name": name,
-                    "limit_up_count": 0,
-                    "max_board": 0,
-                    "core_stocks": [],
-                    "strongest_concept": strongest_by_name.get(name, {}),
-                },
-            )
-            board = stock_ladder.get(stock_code) or self._parse_status_board(stock.get("status"))
-            bucket["limit_up_count"] += 1
-            bucket["max_board"] = max(bucket["max_board"], board)
-            bucket["core_stocks"].append({
-                "ts_code": stock_code,
-                "name": stock.get("name") or member.get("con_name"),
-                "board": board,
-                "status": stock.get("status"),
-                "theme": stock.get("theme"),
-                "raw": stock,
-            })
-
-        if not grouped and strongest_concepts:
-            for item in strongest_concepts:
-                grouped[item.get("ts_code") or item.get("name")] = {
-                    "concept_code": item.get("ts_code"),
-                    "concept_name": item.get("name"),
-                    "limit_up_count": self._safe_int(item.get("up_nums")),
-                    "max_board": self._parse_up_stat(item.get("up_stat")),
-                    "core_stocks": [],
-                    "strongest_concept": item,
-                }
-
-        themes = list(grouped.values())
-        for theme in themes:
-            theme["core_stocks"].sort(key=lambda item: item.get("board", 0), reverse=True)
-            theme["core_stocks"] = theme["core_stocks"][:10]
-            theme["heat_score"] = self._safe_round(
-                theme["limit_up_count"] * 2 + theme["max_board"] * 3 + self._safe_float(theme["strongest_concept"].get("pct_chg"))
-            )
-
-        themes.sort(key=lambda item: (item["heat_score"], item["limit_up_count"], item["max_board"]), reverse=True)
-
-        return {
-            "trade_date": trade_date,
-            "total": len(themes),
-            "themes": themes[:top_n],
-            "source_counts": {
-                "kpl_list": len(kpl_list),
-                "kpl_concept": len(concepts),
-                "kpl_concept_cons": len(concept_members),
-                "limit_cpt_list": len(strongest_concepts),
-                "limit_step": len(limit_step),
-            },
-            "query_time": datetime.now().isoformat(),
-        }
-
-    def get_break_reseal_analysis(self, trade_date: str, token: Optional[str] = None, top_n: int = 50) -> Dict[str, Any]:
-        limit_up = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "U"}, token=token, required=False)
-        broken = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "Z"}, token=token, required=False)
-        ths_broken = self._fetch_records("limit_list_ths", {"trade_date": trade_date, "limit_type": "炸板池"}, token=token, required=False)
-        ths_map = self._first_by_code(ths_broken)
-
-        resealed = []
-        for item in limit_up:
-            open_times = self._safe_int(item.get("open_times"))
-            if open_times <= 0:
-                continue
-            code = item.get("ts_code")
-            resealed.append(self._build_break_item(item, "resealed", ths_map.get(code, {})))
-
-        failed = [
-            self._build_break_item(item, "failed", ths_map.get(item.get("ts_code"), {}))
-            for item in broken
-        ]
-
-        resealed.sort(key=lambda item: (item["open_times"], item["break_strength_score"]), reverse=True)
-        failed.sort(key=lambda item: (item["open_times"], item["amount"]), reverse=True)
-
-        total_attempts = len(limit_up) + len(broken)
-        return {
-            "trade_date": trade_date,
-            "summary": {
-                "limit_up_count": len(limit_up),
-                "resealed_count": len(resealed),
-                "failed_break_count": len(failed),
-                "break_attempt_count": len(resealed) + len(failed),
-                "failed_break_rate": self._safe_round(len(failed) / total_attempts * 100 if total_attempts else 0),
-                "reseal_rate_after_break": self._safe_round(len(resealed) / (len(resealed) + len(failed)) * 100 if (len(resealed) + len(failed)) else 0),
-            },
-            "resealed": resealed[:top_n],
-            "failed": failed[:top_n],
-            "source_counts": {
-                "limit_list_d_up": len(limit_up),
-                "limit_list_d_broken": len(broken),
-                "limit_list_ths_broken": len(ths_broken),
-            },
-            "query_time": datetime.now().isoformat(),
-        }
-
-    def get_hot_money_review(self, trade_date: str, token: Optional[str] = None, top_n: int = 100) -> Dict[str, Any]:
-        top_list = self._fetch_records("top_list", {"trade_date": trade_date}, token=token, required=False)
-        hm_detail = self._fetch_records("hm_detail", {"trade_date": trade_date}, token=token, required=False)
-        limit_up = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "U"}, token=token, required=False)
-        broken = self._fetch_records("limit_list_d", {"trade_date": trade_date, "limit_type": "Z"}, token=token, required=False)
-
-        limit_up_map = self._first_by_code(limit_up)
-        broken_map = self._first_by_code(broken)
-        hm_by_stock: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        hm_counter: Counter[str] = Counter()
-        hm_net_buy: Counter[str] = Counter()
-
-        for item in hm_detail:
-            code = item.get("ts_code")
-            if code:
-                hm_by_stock[code].append(item)
-            hm_name = item.get("hm_name") or item.get("name")
-            if hm_name:
-                hm_counter[hm_name] += 1
-                hm_net_buy[hm_name] += self._safe_float(item.get("net_amount") or item.get("net_buy") or item.get("buy_amount")) - self._safe_float(item.get("sell_amount"))
-
-        review_records = []
-        for item in top_list:
-            code = item.get("ts_code")
-            board_status = "limit_up" if code in limit_up_map else "broken" if code in broken_map else "other"
-            review_records.append({
-                "ts_code": code,
-                "name": item.get("name"),
-                "board_status": board_status,
-                "top_list": item,
-                "limit_record": limit_up_map.get(code) or broken_map.get(code) or {},
-                "hot_money_records": hm_by_stock.get(code, []),
-                "hot_money_count": len(hm_by_stock.get(code, [])),
-            })
-
-        review_records.sort(key=lambda item: (item["board_status"] == "limit_up", item["hot_money_count"]), reverse=True)
-        active_hot_money = [
-            {
-                "hm_name": name,
-                "appear_count": count,
-                "estimated_net_buy": self._safe_round(hm_net_buy[name], 2),
-            }
-            for name, count in hm_counter.most_common(30)
-        ]
-
-        return {
-            "trade_date": trade_date,
-            "summary": {
-                "top_list_count": len(top_list),
-                "hot_money_detail_count": len(hm_detail),
-                "top_limit_up_count": sum(1 for item in review_records if item["board_status"] == "limit_up"),
-                "top_broken_count": sum(1 for item in review_records if item["board_status"] == "broken"),
-                "active_hot_money_count": len(active_hot_money),
-            },
-            "active_hot_money": active_hot_money,
-            "records": review_records[:top_n],
-            "source_counts": {
-                "top_list": len(top_list),
-                "hm_detail": len(hm_detail),
-                "limit_list_d_up": len(limit_up),
-                "limit_list_d_broken": len(broken),
-            },
-            "query_time": datetime.now().isoformat(),
-        }
-
     def get_trend_analysis(
         self,
         start_date: str,
@@ -587,6 +254,37 @@ class LimitBoardDataService:
             )
             industry_map = self._build_industry_map(limit_up_d)
 
+        # 行业趋势接口内嵌每日情绪时，统一按区间预取情绪相关数据，避免逐日重复请求。
+        if not limit_up_d:
+            limit_up_d = self._fetch_records(
+                "limit_list_d",
+                {"start_date": start_date, "end_date": end_date, "limit_type": "U"},
+                token=token,
+                required=False,
+            )
+        limit_down_d = self._fetch_records(
+            "limit_list_d",
+            {"start_date": start_date, "end_date": end_date, "limit_type": "D"},
+            token=token,
+            required=False,
+        )
+        broken_d = self._fetch_records(
+            "limit_list_d",
+            {"start_date": start_date, "end_date": end_date, "limit_type": "Z"},
+            token=token,
+            required=False,
+        )
+        ladder_d = self._fetch_records(
+            "limit_step",
+            {"start_date": start_date, "end_date": end_date},
+            token=token,
+            required=False,
+        )
+        limit_up_by_date = self._group_by_date(limit_up_d)
+        limit_down_by_date = self._group_by_date(limit_down_d)
+        broken_by_date = self._group_by_date(broken_d)
+        ladder_by_date = self._group_by_date(ladder_d)
+
         def resolve_industries(trade_date: str, code: Any, record: Dict[str, Any]) -> List[str]:
             if use_snapshot:
                 return list(snapshot_index.get(str(code or ""), []))
@@ -628,6 +326,13 @@ class LimitBoardDataService:
             # 整体涨停总数按去重个股计（概念多对多时避免重复计数）
             day_limit_up_count = len(day_unique_codes)
             counted_limit_up_count += day_limit_up_count
+            sentiment_summary, _ = self._build_daily_sentiment_summary(
+                limit_up_by_date.get(trade_date, []),
+                limit_down_by_date.get(trade_date, []),
+                broken_by_date.get(trade_date, []),
+                ladder_by_date.get(trade_date, []),
+            )
+            sentiment_summary["limit_up_count"] = day_limit_up_count
             industries = sorted(
                 (
                     {
@@ -644,6 +349,7 @@ class LimitBoardDataService:
                 "overall": {
                     "limit_up_count": day_limit_up_count,
                     "industry_count": len(industry_stocks),
+                    **{key: value for key, value in sentiment_summary.items() if key != "limit_up_count"},
                 },
                 "industries": industries,
                 "stocks": dict(industry_stocks),
@@ -693,6 +399,9 @@ class LimitBoardDataService:
             "source_counts": {
                 "limit_list_ths": len(ths_records),
                 "limit_list_d_up": len(limit_up_d),
+                "limit_list_d_down": len(limit_down_d),
+                "limit_list_d_broken": len(broken_d),
+                "limit_step": len(ladder_d),
                 "dc_board_snapshot_stocks": len(snapshot_index),
             },
             "query_time": datetime.now().isoformat(),
@@ -1080,15 +789,6 @@ class LimitBoardDataService:
             raise ValueError(f"查询区间不能超过 {max_calendar_days} 个自然日")
 
     @staticmethod
-    def _first_by_code(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        result = {}
-        for item in records:
-            code = item.get("ts_code") or item.get("code")
-            if code and code not in result:
-                result[code] = item
-        return result
-
-    @staticmethod
     def _count_by_number(records: Iterable[Dict[str, Any]], field: str) -> Dict[int, int]:
         counter: Counter[int] = Counter()
         for item in records:
@@ -1097,34 +797,58 @@ class LimitBoardDataService:
                 counter[value] += 1
         return dict(counter)
 
-    @staticmethod
-    def _build_break_item(item: Dict[str, Any], status: str, ths_item: Dict[str, Any]) -> Dict[str, Any]:
-        amount = LimitBoardDataService._safe_float(item.get("amount"))
-        fd_amount = LimitBoardDataService._safe_float(item.get("fd_amount"))
-        seal_ratio = fd_amount / amount * 100 if amount > 0 else 0
-        open_times = LimitBoardDataService._safe_int(item.get("open_times") or ths_item.get("open_num"))
-        score = max(0, 100 - open_times * 12 + min(seal_ratio, 50))
+    def _build_daily_sentiment_summary(
+        self,
+        limit_up: Iterable[Dict[str, Any]],
+        limit_down: Iterable[Dict[str, Any]],
+        broken: Iterable[Dict[str, Any]],
+        ladder: Iterable[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Dict[int, int]]:
+        limit_up_records = list(limit_up)
+        limit_down_records = list(limit_down)
+        broken_records = list(broken)
+        ladder_records = list(ladder)
+
+        board_distribution = self._count_by_number(ladder_records, "nums")
+        if not board_distribution:
+            board_distribution = self._count_by_number(limit_up_records, "limit_times")
+
+        max_board = max(board_distribution.keys(), default=0)
+        limit_attempts = len(limit_up_records) + len(broken_records)
+        broken_rate = self._safe_round(len(broken_records) / limit_attempts * 100 if limit_attempts else 0)
+        sealed_rate = self._safe_round(len(limit_up_records) / limit_attempts * 100 if limit_attempts else 0)
+        one_board_count = board_distribution.get(1, 0) or max(
+            len(limit_up_records) - sum(v for k, v in board_distribution.items() if k >= 2),
+            0,
+        )
+        second_board_or_above = sum(v for k, v in board_distribution.items() if k >= 2)
+        high_board_count = sum(v for k, v in board_distribution.items() if k >= 3)
+
+        sentiment_score = self._calc_sentiment_score(
+            limit_up_count=len(limit_up_records),
+            limit_down_count=len(limit_down_records),
+            broken_rate=broken_rate,
+            max_board=max_board,
+            high_board_count=high_board_count,
+        )
+        phase = self._sentiment_phase(sentiment_score, len(limit_down_records), broken_rate, max_board)
+
         return {
-            "ts_code": item.get("ts_code"),
-            "name": item.get("name") or ths_item.get("name"),
-            "status": status,
-            "industry": item.get("industry"),
-            "close": item.get("close"),
-            "pct_chg": item.get("pct_chg"),
-            "amount": amount,
-            "fd_amount": fd_amount,
-            "seal_ratio_pct": LimitBoardDataService._safe_round(seal_ratio),
-            "first_time": item.get("first_time") or ths_item.get("first_lu_time"),
-            "last_time": item.get("last_time") or ths_item.get("last_lu_time"),
-            "open_times": open_times,
-            "limit_times": LimitBoardDataService._safe_int(item.get("limit_times")),
-            "reason": ths_item.get("lu_desc") or "",
-            "break_strength_score": LimitBoardDataService._safe_round(score, 1),
-            "raw_sources": {
-                "limit_list_d": item,
-                "limit_list_ths": ths_item,
-            },
-        }
+            "limit_up_count": len(limit_up_records),
+            "limit_down_count": len(limit_down_records),
+            "broken_limit_count": len(broken_records),
+            "limit_attempt_count": limit_attempts,
+            "sealed_rate": sealed_rate,
+            "broken_rate": broken_rate,
+            "max_board": max_board,
+            "one_board_count": one_board_count,
+            "second_board_or_above_count": second_board_or_above,
+            "high_board_count": high_board_count,
+            "sentiment_score": sentiment_score,
+            "phase": phase["phase"],
+            "phase_label": phase["label"],
+            "conclusion": phase["conclusion"],
+        }, board_distribution
 
     @staticmethod
     def _calc_sentiment_score(limit_up_count: int, limit_down_count: int, broken_rate: float, max_board: int, high_board_count: int) -> float:
@@ -1145,39 +869,6 @@ class LimitBoardDataService:
         if score >= 45:
             return {"phase": "mixed", "label": "分歧期", "conclusion": "涨停和炸板并存，适合降低预期并观察回封质量。"}
         return {"phase": "defense", "label": "防守期", "conclusion": "亏钱效应或炸板压力较高，不宜盲目接力。"}
-
-    @staticmethod
-    def _calc_hot_score(dc_hot: Dict[str, Any], ths_hot: Dict[str, Any]) -> float:
-        score = 0.0
-        for item in (dc_hot, ths_hot):
-            if not item:
-                continue
-            rank = LimitBoardDataService._safe_int(item.get("rank") or item.get("rank_no"), 9999)
-            if rank <= 10:
-                score += 2.0
-            elif rank <= 30:
-                score += 1.2
-            elif rank <= 100:
-                score += 0.5
-        return LimitBoardDataService._safe_round(score, 1)
-
-    @staticmethod
-    def _merge_tags(*values: Any) -> List[str]:
-        tags: List[str] = []
-        for value in values:
-            if not value:
-                continue
-            for part in str(value).replace("、", ",").replace("，", ",").split(","):
-                tag = part.strip()
-                if tag and tag not in tags:
-                    tags.append(tag)
-        return tags
-
-    @staticmethod
-    def _parse_status_board(value: Any) -> int:
-        text = str(value or "")
-        digits = "".join(ch for ch in text if ch.isdigit())
-        return int(digits) if digits else 1
 
     @staticmethod
     def _parse_up_stat(value: Any) -> int:
