@@ -285,6 +285,46 @@ class LimitBoardDataService:
         broken_by_date = self._group_by_date(broken_d)
         ladder_by_date = self._group_by_date(ladder_d)
 
+        # 获取行业板块行情数据（用于获取行业涨跌幅）
+        industry_daily_data: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        sector_code_to_name: Dict[str, str] = {}  # 板块代码 -> 板块名称映射
+        sector_name_to_code: Dict[str, str] = {}  # 板块名称 -> 板块代码映射
+        dc_daily: List[Dict[str, Any]] = []
+
+        if use_snapshot:
+            # 构建板块代码到板块名称的映射（从快照中）
+            for board in self._load_board_snapshot():
+                if str(board.get("idx_type") or "").strip() != mapping_meta["idx_type"]:
+                    continue
+                if mapping_meta["level"] and str(board.get("level") or "").strip() != mapping_meta["level"]:
+                    continue
+                sector_code = str(board.get("sector_code") or "").strip()
+                sector_name = str(board.get("sector_name") or "").strip()
+                if sector_code and sector_name:
+                    sector_code_to_name[sector_code] = sector_name
+                    sector_name_to_code[sector_name] = sector_code
+
+            # 获取东财板块日线行情
+            dc_daily = self._fetch_records(
+                "dc_daily",
+                {"start_date": start_date, "end_date": end_date},
+                token=token,
+                fields="trade_date,ts_code,pct_change",
+                required=False,
+            )
+
+            # 构建 (交易日, 板块名称) -> 行情数据 的映射
+            # 通过板块代码关联：dc_daily.ts_code -> 快照.sector_code -> 快照.sector_name
+            for item in dc_daily:
+                trade_date_key = str(item.get("trade_date") or "")
+                ts_code = str(item.get("ts_code") or "").strip()
+
+                if trade_date_key and ts_code:
+                    # 通过板块代码查找板块名称
+                    sector_name = sector_code_to_name.get(ts_code)
+                    if sector_name:
+                        industry_daily_data[(trade_date_key, sector_name)] = item
+
         def resolve_industries(trade_date: str, code: Any, record: Dict[str, Any]) -> List[str]:
             if use_snapshot:
                 return list(snapshot_index.get(str(code or ""), []))
@@ -298,8 +338,11 @@ class LimitBoardDataService:
         excluded_st_count = 0
         excluded_unknown_industry_count = 0
         grouped = self._group_by_date(ths_records)
-        for trade_date in sorted(grouped.keys()):
-            day_records = grouped[trade_date]
+        dc_daily_dates = {date_key for date_key, _ in industry_daily_data.keys()} if use_snapshot else set()
+        trade_dates_list = sorted(set(grouped.keys()) | dc_daily_dates)
+
+        for idx, trade_date in enumerate(trade_dates_list):
+            day_records = grouped.get(trade_date, [])
             industry_stocks: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             day_unique_codes: set = set()
             for record in day_records:
@@ -319,8 +362,9 @@ class LimitBoardDataService:
                 for industry in industries:
                     industry_stocks[industry].append({**record, "industry": industry})
 
-            # 该交易日经过滤后无有效涨停个股则跳过
-            if not industry_stocks:
+            has_industry_daily_data = any(date_key == trade_date for date_key, _ in industry_daily_data.keys())
+            # default 映射仍只返回有有效涨停个股的交易日；东财映射下保留仅有板块行情的日期。
+            if not industry_stocks and not (use_snapshot and has_industry_daily_data):
                 continue
 
             # 整体涨停总数按去重个股计（概念多对多时避免重复计数）
@@ -333,22 +377,127 @@ class LimitBoardDataService:
                 ladder_by_date.get(trade_date, []),
             )
             sentiment_summary["limit_up_count"] = day_limit_up_count
-            industries = sorted(
-                (
-                    {
+
+            # 计算各行业的昨日涨停股今日溢价数据
+            industry_yesterday_premium: Dict[str, Dict[str, Any]] = {}
+            if idx > 0:
+                # 获取前一个交易日
+                prev_trade_date = trade_dates_list[idx - 1]
+                prev_day_records = grouped.get(prev_trade_date, [])
+
+                # 构建昨日涨停股的代码集合，按行业分组
+                prev_industry_stocks: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+                for record in prev_day_records:
+                    if self._is_st_stock(record.get("name")):
+                        continue
+                    code = record.get("ts_code")
+                    industries = resolve_industries(prev_trade_date, code, record)
+                    if not industries:
+                        continue
+                    for industry in industries:
+                        prev_industry_stocks[industry].append(record)
+
+                # 获取今日和昨日的行情数据以计算溢价
+                if prev_industry_stocks:
+                    all_prev_codes = set()
+                    for stocks_list in prev_industry_stocks.values():
+                        all_prev_codes.update(s.get("ts_code") for s in stocks_list if s.get("ts_code"))
+
+                    if all_prev_codes:
+                        # 获取昨日和今日的日线行情
+                        prev_daily = self._fetch_stock_daily(prev_trade_date, prev_trade_date, token)
+                        today_daily = self._fetch_stock_daily(trade_date, trade_date, token)
+
+                        prev_daily_map = {item.get("ts_code"): item for item in prev_daily}
+                        today_daily_map = {item.get("ts_code"): item for item in today_daily}
+
+                        # 按行业计算溢价统计
+                        for industry, stocks_list in prev_industry_stocks.items():
+                            premium_list = []
+                            for stock in stocks_list:
+                                code = stock.get("ts_code")
+                                prev_data = prev_daily_map.get(code)
+                                today_data = today_daily_map.get(code)
+
+                                if prev_data and today_data:
+                                    prev_close = prev_data.get("close")
+                                    today_open = today_data.get("open")
+                                    if prev_close and today_open and prev_close > 0:
+                                        premium = (today_open - prev_close) / prev_close * 100
+                                        premium_list.append({
+                                            "ts_code": code,
+                                            "name": stock.get("name"),
+                                            "prev_close": prev_close,
+                                            "today_open": today_open,
+                                            "premium_pct": self._safe_round(premium, 2),
+                                        })
+
+                            if premium_list:
+                                avg_premium = self._safe_round(
+                                    sum(item["premium_pct"] for item in premium_list) / len(premium_list),
+                                    2
+                                )
+                                industry_yesterday_premium[industry] = {
+                                    "yesterday_limit_up_count": len(stocks_list),
+                                    "yesterday_limit_up_stocks": premium_list,
+                                    "avg_premium_pct": avg_premium,
+                                }
+
+            # 构建行业列表
+            # 当使用板块映射时，返回所有板块（即使没有涨停股）
+            if use_snapshot:
+                # 获取该交易日有行情数据的所有板块
+                all_industries_with_data = set()
+                for (date_key, industry_name) in industry_daily_data.keys():
+                    if date_key == trade_date:
+                        all_industries_with_data.add(industry_name)
+
+                # 合并有涨停的行业和有行情数据的行业
+                all_industries = all_industries_with_data | set(industry_stocks.keys())
+
+                industries = []
+                for name in all_industries:
+                    stocks = industry_stocks.get(name, [])
+                    industry_item = {
+                        "industry": name,
+                        "limit_up_count": len(stocks),
+                        "status_counts": self._count_limit_status(stocks) if stocks else {status: 0 for status in self.LIMIT_STATUS_TYPES},
+                        **industry_yesterday_premium.get(name, {}),
+                    }
+
+                    # 添加行业代码（东财映射时）
+                    industry_code = sector_name_to_code.get(name)
+                    if industry_code:
+                        industry_item["industry_code"] = industry_code
+
+                    # 添加行业涨跌幅数据
+                    industry_daily = industry_daily_data.get((trade_date, name))
+                    if industry_daily:
+                        industry_item["industry_pct_change"] = industry_daily.get("pct_change")
+
+                    industries.append(industry_item)
+            else:
+                # default 映射方式：只返回有涨停的行业
+                industries = []
+                for name, stocks in industry_stocks.items():
+                    industry_item = {
                         "industry": name,
                         "limit_up_count": len(stocks),
                         "status_counts": self._count_limit_status(stocks),
+                        **industry_yesterday_premium.get(name, {}),
                     }
-                    for name, stocks in industry_stocks.items()
-                ),
-                key=lambda item: (-item["limit_up_count"], item["industry"]),
-            )
+                    industries.append(industry_item)
+
+            industries = sorted(industries, key=lambda item: (-item["limit_up_count"], item["industry"]))
+
+            # 计算有涨停的行业数量（用于 overall 统计）
+            industries_with_limit_up = sum(1 for ind in industries if ind["limit_up_count"] > 0)
+
             data[trade_date] = {
                 "trade_date": trade_date,
                 "overall": {
                     "limit_up_count": day_limit_up_count,
-                    "industry_count": len(industry_stocks),
+                    "industry_count": industries_with_limit_up,  # 只统计有涨停的行业数
                     **{key: value for key, value in sentiment_summary.items() if key != "limit_up_count"},
                 },
                 "industries": industries,
@@ -365,6 +514,9 @@ class LimitBoardDataService:
                     name,
                     {"industry": name, "total_limit_up_count": 0, "trade_day_count": 0},
                 )
+                # 添加行业代码（如果存在）
+                if "industry_code" in entry and "industry_code" not in agg:
+                    agg["industry_code"] = entry["industry_code"]
                 agg["total_limit_up_count"] += entry["limit_up_count"]
                 agg["trade_day_count"] += 1
 
@@ -403,6 +555,7 @@ class LimitBoardDataService:
                 "limit_list_d_broken": len(broken_d),
                 "limit_step": len(ladder_d),
                 "dc_board_snapshot_stocks": len(snapshot_index),
+                "dc_daily": len(dc_daily) if use_snapshot else 0,
             },
             "query_time": datetime.now().isoformat(),
         }
@@ -422,6 +575,31 @@ class LimitBoardDataService:
             return []
         data = resp.get("data") or {}
         return data.get("records") or []
+
+    def _fetch_stock_daily(
+        self,
+        start_date: str,
+        end_date: str,
+        token: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        获取股票日线行情数据。
+
+        参数：
+        - start_date: 开始日期，格式 YYYYMMDD
+        - end_date: 结束日期，格式 YYYYMMDD
+        - token: Tushare Token
+
+        返回：
+        - 日线行情记录列表，包含 ts_code, trade_date, open, close 等字段
+        """
+        return self._fetch_records(
+            "daily",
+            {"start_date": start_date, "end_date": end_date},
+            token=token,
+            fields="ts_code,trade_date,open,close",
+            required=False,
+        )
 
     @staticmethod
     def _group_by_date(records: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:

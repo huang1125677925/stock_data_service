@@ -334,6 +334,34 @@ class FakeLimitBoardFetcher:
             ]
         if interface == "limit_list_ths":
             return [{"trade_date": "20260114", "ts_code": "000004.SZ", "name": "炸板股", "lu_desc": "题材催化", "open_num": 2}]
+        if interface == "dc_daily":
+            return [
+                {"trade_date": "20260114", "ts_code": "BK001.DC", "pct_change": 1.5},
+                {"trade_date": "20260115", "ts_code": "BK001.DC", "pct_change": 2.1},
+                {"trade_date": "20260115", "ts_code": "BK002.DC", "pct_change": -0.8},
+                {"trade_date": "20260116", "ts_code": "BK001.DC", "pct_change": -1.2},
+                {"trade_date": "20260116", "ts_code": "BK002.DC", "pct_change": 0.6},
+            ]
+        if interface == "daily":
+            trade_date = params.get("trade_date") or params.get("start_date")
+            daily_by_date = {
+                "20260114": [
+                    {"trade_date": "20260114", "ts_code": "000001.SZ", "open": 10.0, "close": 10.5},
+                    {"trade_date": "20260114", "ts_code": "000002.SZ", "open": 20.0, "close": 21.0},
+                ],
+                "20260115": [
+                    {"trade_date": "20260115", "ts_code": "000001.SZ", "open": 10.8, "close": 11.2},
+                    {"trade_date": "20260115", "ts_code": "000002.SZ", "open": 21.4, "close": 22.0},
+                    {"trade_date": "20260115", "ts_code": "000006.SZ", "open": 8.0, "close": 8.6},
+                    {"trade_date": "20260115", "ts_code": "000007.SZ", "open": 30.0, "close": 31.0},
+                ],
+                "20260116": [
+                    {"trade_date": "20260116", "ts_code": "000001.SZ", "open": 11.0, "close": 11.1},
+                    {"trade_date": "20260116", "ts_code": "000006.SZ", "open": 8.8, "close": 8.9},
+                    {"trade_date": "20260116", "ts_code": "000007.SZ", "open": 31.3, "close": 30.8},
+                ],
+            }
+            return daily_by_date.get(trade_date, [])
         if interface == "kpl_list":
             return [{"trade_date": "20260114", "ts_code": "000001.SZ", "name": "一板股", "tag": "涨停", "theme": "机器人", "status": "首板"}]
         if interface == "kpl_concept":
@@ -409,7 +437,7 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(day1["overall"]["limit_down_count"], 1)
         self.assertEqual(day1["overall"]["broken_limit_count"], 1)
         self.assertEqual(day1["overall"]["limit_attempt_count"], 3)
-        self.assertEqual(day1["overall"]["sealed_rate"], 66.7)
+        self.assertEqual(day1["overall"]["sealed_rate"], 66.67)
         self.assertEqual(day1["overall"]["max_board"], 3)
         self.assertEqual(day1["overall"]["phase"], "repair")
         self.assertEqual(day1["industries"], [
@@ -451,20 +479,53 @@ class LimitBoardDataServiceTests(unittest.TestCase):
         self.assertEqual(top["机器人"], 4)
         self.assertEqual(top["消费电子"], 1)
     def test_industry_trend_strength_snapshot_mapping_still_contains_daily_sentiment(self):
+        self.addCleanup(lambda: setattr(LimitBoardDataService, "_board_snapshot_cache", None))
+        LimitBoardDataService._board_snapshot_cache = [
+            {
+                "sector_code": "BK001.DC",
+                "sector_name": "机器人",
+                "idx_type": "行业板块",
+                "level": "东财二级行业",
+                "members": ["000001.SZ", "000002.SZ", "000006.SZ"],
+            },
+            {
+                "sector_code": "BK002.DC",
+                "sector_name": "消费电子",
+                "idx_type": "行业板块",
+                "level": "东财二级行业",
+                "members": ["000007.SZ"],
+            },
+        ]
         result = self.service.get_industry_trend_strength(
             start_date="20260114",
-            end_date="20260115",
+            end_date="20260116",
             industry_mapping="dc_l2",
         )
+
+        self.assertEqual(sorted(result["data"].keys()), ["20260114", "20260115", "20260116"])
+        self.assertEqual(result["summary"]["trade_day_count"], 3)
 
         day1 = result["data"]["20260114"]
         self.assertEqual(day1["overall"]["limit_up_count"], 2)
         self.assertEqual(day1["overall"]["broken_limit_count"], 1)
         self.assertEqual(day1["overall"]["phase"], "repair")
+        day1_industries = {item["industry"]: item for item in day1["industries"]}
+        self.assertEqual(day1_industries["机器人"]["industry_pct_change"], 1.5)
+
+        day3 = result["data"]["20260116"]
+        self.assertEqual(day3["overall"]["limit_up_count"], 0)
+        self.assertEqual(day3["overall"]["industry_count"], 0)
+        self.assertEqual(day3["stocks"], {})
+        day3_industries = {item["industry"]: item for item in day3["industries"]}
+        self.assertEqual(day3_industries["机器人"]["limit_up_count"], 0)
+        self.assertEqual(day3_industries["机器人"]["industry_pct_change"], -1.2)
+        self.assertEqual(day3_industries["消费电子"]["limit_up_count"], 0)
+        self.assertEqual(day3_industries["消费电子"]["industry_pct_change"], 0.6)
         self.assertEqual(result["source_counts"]["limit_list_d_up"], 5)
         self.assertEqual(result["source_counts"]["limit_list_d_down"], 2)
         self.assertEqual(result["source_counts"]["limit_list_d_broken"], 2)
         self.assertEqual(result["source_counts"]["limit_step"], 5)
+        self.assertEqual(result["source_counts"]["dc_daily"], 5)
 
 
 class BoardRpsTradeDayTests(unittest.TestCase):

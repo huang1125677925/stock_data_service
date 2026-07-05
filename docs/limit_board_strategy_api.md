@@ -254,6 +254,11 @@ GET /django/api/strategy/limit-board/industry-trend-strength/
 - ST/退市类股票（名称含 `ST`、`*ST` 或 `退`）。
 - 无法归类到具体行业（未知行业）的个股。
 
+**行业返回范围**：
+
+- **使用 `default` 映射方式**：只返回有涨停股的行业。
+- **使用东财板块映射方式**（`dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3`）：返回所有有行情数据的行业，没有涨停的行业 `limit_up_count=0`，可以查看行业涨跌幅数据。
+
 ### 数据源
 
 - `limit_list_ths(start_date,end_date,limit_type=涨停池)`：区间同花顺涨停池，作为涨停个股基础数据（含涨停原因、标签等全部字段）
@@ -265,6 +270,10 @@ GET /django/api/strategy/limit-board/industry-trend-strength/
 - 行业映射来源随 `industry_mapping` 变化：
   - `default`：`limit_list_d(start_date,end_date,limit_type=U)`，按交易日构建 `(交易日, 股票代码) -> 所属行业` 的动态映射。
   - `dc_concept` / `dc_region` / `dc_l1` / `dc_l2` / `dc_l3`：本地东方财富板块成分快照 `data/dc_board_members_snapshot.json`，按 `股票代码 -> 板块名称` 映射。快照为单一时点的静态成分，全区间一致，不随交易日变化。
+- 行业涨跌幅数据（仅东财板块映射方式）：
+  - `dc_daily(start_date,end_date)`：东方财富板块日线行情，用于获取行业当日涨跌幅。仅在 `industry_mapping` 为 `dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3` 时调用。
+- 昨日涨停股今日溢价数据：
+  - `daily(start_date,end_date)`：股票日线行情，用于获取昨日收盘价和今日开盘价，计算开盘溢价。
 
 ### 行业映射方式（`industry_mapping`）
 
@@ -328,6 +337,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `industry` | string | 行业名称 |
+| `industry_code` | string | 行业代码（仅在使用东财板块映射方式时返回，即 `industry_mapping` 为 `dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3` 时有效） |
 | `trade_day_count` | number | 该行业在区间内上榜交易日数 |
 | `total_limit_up_count` | number | 区间累计涨停家数 |
 | `avg_daily_limit_up_count` | number | 日均涨停家数 |
@@ -342,6 +352,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | `limit_list_d_broken` | number | 区间 `limit_list_d(limit_type=Z)` 记录数；用于每日情绪统计 |
 | `limit_step` | number | 区间 `limit_step` 记录数；用于每日情绪统计 |
 | `dc_board_snapshot_stocks` | number | 本地板块快照中命中该映射方式的股票数；`default` 映射为 0 |
+| `dc_daily` | number | 区间 `dc_daily` 板块行情记录数；仅在使用东财板块映射方式时有值，用于获取行业涨跌幅 |
 
 ### data[trade_date] 字段（按交易日 key）
 
@@ -381,8 +392,13 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `industry` | string | 行业名称 |
+| `industry_code` | string | 行业代码（仅在使用东财板块映射方式时返回，即 `industry_mapping` 为 `dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3` 时有效） |
 | `limit_up_count` | number | 该日该行业涨停家数（按成分归属计；`dc_concept` 下各行业分别计入同一个股） |
 | `status_counts` | object | 该日该行业涨停股按涨停状态（`limit_list_ths` 的 `status` 字段）分类的数量统计 |
+| `industry_pct_change` | number | 该行业当日涨跌幅百分比（仅在使用东财板块映射方式时返回，即 `industry_mapping` 为 `dc_concept`/`dc_region`/`dc_l1`/`dc_l2`/`dc_l3` 时有效） |
+| `yesterday_limit_up_count` | number | 昨日该行业涨停股数量（仅当存在前一交易日数据时返回） |
+| `yesterday_limit_up_stocks` | array | 昨日该行业涨停股的今日溢价详情列表（仅当存在前一交易日数据时返回） |
+| `avg_premium_pct` | number | 昨日该行业涨停股今日平均溢价百分比（仅当存在前一交易日数据时返回） |
 
 #### status_counts 字段（涨停状态统计）
 
@@ -393,6 +409,18 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
 | `T字板` | number | 该行业当日 T 字板涨停股数量 |
 | `一字板` | number | 该行业当日一字板涨停股数量 |
 | `换手板` | number | 该行业当日换手板涨停股数量 |
+
+#### yesterday_limit_up_stocks 字段（昨日涨停股今日溢价详情）
+
+仅当存在前一交易日数据时，`industries` 中的每个行业会包含 `yesterday_limit_up_stocks` 数组，记录昨日该行业涨停股的今日开盘溢价情况：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ts_code` | string | 股票代码 |
+| `name` | string | 股票名称 |
+| `prev_close` | number | 昨日收盘价（元） |
+| `today_open` | number | 今日开盘价（元） |
+| `premium_pct` | number | 今日开盘溢价百分比，计算公式：(今日开盘价 - 昨日收盘价) / 昨日收盘价 × 100 |
 
 #### stocks 字段（个股维度）
 
@@ -451,6 +479,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
       "top_industries": [
         {
           "industry": "机器人",
+          "industry_code": "BK0464",
           "trade_day_count": 2,
           "total_limit_up_count": 4,
           "avg_daily_limit_up_count": 2.0
@@ -480,6 +509,7 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
         "industries": [
           {
             "industry": "机器人",
+            "industry_code": "BK0464",
             "limit_up_count": 2,
             "status_counts": { "T字板": 0, "一字板": 1, "换手板": 1 }
           }
@@ -504,6 +534,102 @@ curl "http://localhost:8000/django/api/strategy/limit-board/industry-trend-stren
               "rise_rate": 12.5,
               "market_type": "HS",
               "industry": "机器人"
+            }
+          ]
+        }
+      },
+      "20260115": {
+        "trade_date": "20260115",
+        "overall": {
+          "limit_up_count": 3,
+          "industry_count": 2,
+          "limit_down_count": 0,
+          "broken_limit_count": 2,
+          "limit_attempt_count": 5,
+          "sealed_rate": 60.0,
+          "broken_rate": 40.0,
+          "max_board": 4,
+          "one_board_count": 1,
+          "second_board_or_above_count": 2,
+          "high_board_count": 1,
+          "sentiment_score": 65.8,
+          "phase": "attack",
+          "phase_label": "进攻期",
+          "conclusion": "市场情绪活跃，适合参与连板标的。"
+        },
+        "industries": [
+          {
+            "industry": "机器人",
+            "limit_up_count": 2,
+            "status_counts": { "T字板": 1, "一字板": 0, "换手板": 1 },
+            "industry_pct_change": 5.23,
+            "yesterday_limit_up_count": 2,
+            "avg_premium_pct": 3.5,
+            "yesterday_limit_up_stocks": [
+              {
+                "ts_code": "000001.SZ",
+                "name": "一板股",
+                "prev_close": 12.5,
+                "today_open": 13.0,
+                "premium_pct": 4.0
+              },
+              {
+                "ts_code": "000002.SZ",
+                "name": "二板股",
+                "prev_close": 20.0,
+                "today_open": 20.6,
+                "premium_pct": 3.0
+              }
+            ]
+          },
+          {
+            "industry": "人工智能",
+            "limit_up_count": 1,
+            "status_counts": { "T字板": 0, "一字板": 1, "换手板": 0 },
+            "industry_pct_change": 3.85
+          }
+        ],
+        "stocks": {
+          "机器人": [
+            {
+              "trade_date": "20260115",
+              "ts_code": "000003.SZ",
+              "name": "三板股",
+              "price": 15.8,
+              "pct_chg": 10.0,
+              "lu_desc": "机器人概念",
+              "limit_type": "涨停池",
+              "tag": "三板",
+              "status": "换手板",
+              "open_num": 2,
+              "turnover_rate": 15.0,
+              "limit_up_suc_rate": 0.75,
+              "turnover": 150000000,
+              "first_lu_time": "100000",
+              "rise_rate": 10.5,
+              "market_type": "HS",
+              "industry": "机器人"
+            }
+          ],
+          "人工智能": [
+            {
+              "trade_date": "20260115",
+              "ts_code": "000004.SZ",
+              "name": "AI股",
+              "price": 25.0,
+              "pct_chg": 10.0,
+              "lu_desc": "人工智能",
+              "limit_type": "涨停池",
+              "tag": "首板",
+              "status": "一字板",
+              "open_num": 0,
+              "turnover_rate": 8.0,
+              "limit_up_suc_rate": 0.90,
+              "turnover": 200000000,
+              "first_lu_time": "093000",
+              "rise_rate": 15.0,
+              "market_type": "GEM",
+              "industry": "人工智能"
             }
           ]
         }
