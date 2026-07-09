@@ -1,4 +1,5 @@
 import pandas as pd
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from django.core.cache import cache
@@ -51,6 +52,48 @@ def _fetch_dc_board_members(
         return pd.DataFrame(columns=["trade_date", "ts_code", "con_code", "name"])
 
     return out
+
+
+def _fetch_dc_board_members_with_fallback(
+    trade_date: str,
+    board_ts_code: str,
+    token: Optional[str],
+    max_lookback: int = 7,
+) -> Tuple[pd.DataFrame, str]:
+    """
+    获取板块成分股列表，若指定交易日无数据则按自然日逐日回退。
+
+    当查询日恰逢周末、节假日或数据尚未更新时，dc_member 会返回空结果；此时
+    依次回退到前一天重新查询，直到取到数据或达到最大回退次数。
+
+    Args:
+        trade_date: 起始查询交易日，格式为 YYYYMMDD。
+        board_ts_code: 东财板块代码，例如 BK0732.DC。
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+        max_lookback: 最大回退次数（按自然日回退），默认 7。
+
+    Returns:
+        Tuple[pandas.DataFrame, str]: 成分股 DataFrame 与实际命中的交易日；
+        当回退耗尽仍无数据时，返回空 DataFrame 与最后一次尝试的日期。
+
+    Raises:
+        无。函数内部会吞掉接口异常并以空 DataFrame 兜底。
+    """
+    current_date = trade_date
+    last_date = trade_date
+    # 首次查询 + 最多 max_lookback 次回退
+    for _ in range(max_lookback + 1):
+        members_df = _fetch_dc_board_members(current_date, board_ts_code=board_ts_code, token=token)
+        last_date = current_date
+        if not members_df.empty:
+            return members_df, current_date
+        try:
+            prev_dt = datetime.strptime(current_date, "%Y%m%d") - timedelta(days=1)
+        except ValueError:
+            break
+        current_date = prev_dt.strftime("%Y%m%d")
+
+    return pd.DataFrame(columns=["trade_date", "ts_code", "con_code", "name"]), last_date
 
 
 def _fetch_dc_board_name(
@@ -225,10 +268,18 @@ def compute_dc_board_member_rps(
     if cached_result:
         return cached_result
 
-    members_df = _fetch_dc_board_members(end_date, board_ts_code=board_ts_code, token=token)
+    members_df, resolved_date = _fetch_dc_board_members_with_fallback(
+        end_date, board_ts_code=board_ts_code, token=token
+    )
     if members_df.empty:
         errors.append("未获取到板块成分股列表或 trade_date 无数据")
         return None, meta, errors
+
+    # 回退命中的交易日可能早于请求日期，后续计算与元信息统一使用命中日期
+    if resolved_date != end_date:
+        errors.append(f"请求交易日 {end_date} 无数据，已回退至 {resolved_date}")
+        end_date = resolved_date
+        meta["trade_date"] = end_date
 
     board_name = _fetch_dc_board_name(end_date, board_ts_code=board_ts_code, token=token)
     meta["board_name"] = board_name or board_ts_code

@@ -13,6 +13,74 @@ from common.tushare_proxy import call_tushare
 from etfapp.serializers import ErrorResponseSerializer
 
 
+def _filter_records_by_trading_days(data, token=None):
+    """
+    组件：过滤掉非交易日（周末/节假日）的记录（_filter_records_by_trading_days）
+
+    功能：
+    - 根据记录中的 `trade_date`，调用 Tushare `trade_cal` 获取交易日历，
+      仅保留 `is_open=1` 的交易日记录，剔除周末与节假日数据。
+
+    参数：
+    - data (dict): call_tushare 返回的 data 载荷，结构为 {interface, count, records}。
+    - token (str|None): Tushare Token（覆盖环境变量）。
+
+    返回值：
+    - dict: 过滤后的 data 载荷；trade_cal 获取失败时原样返回，避免误删数据。
+
+    异常：
+    - 无。内部异常时保持原数据返回。
+    """
+    if not isinstance(data, dict):
+        return data
+
+    records = data.get("records") or []
+    trade_dates = {
+        str(r.get("trade_date")).strip()
+        for r in records
+        if isinstance(r, dict) and str(r.get("trade_date") or "").strip()
+    }
+    if not trade_dates:
+        return data
+
+    resp = call_tushare(
+        interface="trade_cal",
+        params={
+            "exchange": "SSE",
+            "start_date": min(trade_dates),
+            "end_date": max(trade_dates),
+        },
+        fields="cal_date,is_open",
+        token=token,
+        use_query=False,
+    )
+    if not isinstance(resp, dict) or resp.get("code") != 200:
+        # 交易日历获取失败时不做过滤，避免误删有效数据
+        return data
+
+    cal_records = (resp.get("data") or {}).get("records", []) or []
+
+    def _is_open(v):
+        return v in (1, "1", True)
+
+    open_days = {
+        str(r.get("cal_date")).strip()
+        for r in cal_records
+        if isinstance(r, dict) and _is_open(r.get("is_open"))
+    }
+
+    filtered = [
+        r
+        for r in records
+        if not (isinstance(r, dict) and str(r.get("trade_date") or "").strip())
+        or str(r.get("trade_date")).strip() in open_days
+    ]
+
+    data["records"] = filtered
+    data["count"] = len(filtered)
+    return data
+
+
 # --- DC 概念/行业/地域板块日频行情（dc_daily） ---
 class DcDailyRecordSerializer(serializers.Serializer):
     """dc_daily 记录字段序列化器（东财概念/行业/地域板块日频行情）。"""
@@ -206,6 +274,7 @@ class DcIndexProxyView(APIView):
                 return error_response(resp.get("message", "Tushare调用失败"), resp.get("code", 500), error=resp.get("error"))
 
             data = resp.get("data") or {}
+            data = _filter_records_by_trading_days(data, token=token)
             return success_response(data, "查询东方财富概念板块成功")
 
         except Exception as e:
