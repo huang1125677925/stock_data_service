@@ -213,6 +213,44 @@ def _build_stock_snapshot_map(
     return snapshot_map
 
 
+def _fetch_stock_market_map(token: Optional[str]) -> Dict[str, str]:
+    """
+    获取全市场上市股票的市场类型映射，仅调用一次 stock_basic 接口。
+
+    Args:
+        token: Tushare Token，可选，优先覆盖环境变量中的配置。
+
+    Returns:
+        Dict[str, str]: 键为 ts_code，值为市场类型（如 主板、创业板、科创板、北交所）；
+        接口失败或无数据时返回空字典。
+
+    Raises:
+        无。函数内部会吞掉接口异常并以空字典兜底。
+    """
+    resp = call_tushare(
+        "stock_basic",
+        params={"list_status": "L"},
+        token=token,
+        fields="ts_code,market",
+        use_query=False,
+    )
+    if resp.get("code") != 200:
+        return {}
+
+    records = (resp.get("data") or {}).get("records") or []
+    if not records:
+        return {}
+
+    market_map: Dict[str, str] = {}
+    for record in records:
+        ts_code = str(record.get("ts_code") or "").strip()
+        if not ts_code:
+            continue
+        market_map[ts_code] = str(record.get("market") or "").strip()
+
+    return market_map
+
+
 def compute_dc_board_member_rps(
     periods: List[int],
     board_ts_code: str = "BK1462.DC",
@@ -305,8 +343,12 @@ def compute_dc_board_member_rps(
         errors.append(f"daily返回空数据: trade_date={end_date}")
         return None, meta, errors
 
+    market_map = _fetch_stock_market_map(token)
+    result_df["market"] = result_df["ts_code"].map(market_map).fillna("")
+
     end_snapshot = daily_snapshot_map[end_date]
     result_df["close_end"] = result_df["ts_code"].map(end_snapshot["close"])
+    result_df["close"] = result_df["close_end"]
     result_df["pct_change"] = result_df["ts_code"].map(end_snapshot["pct_change"])
     result_df["RPS_today"] = _apply_rps(result_df["pct_change"].fillna(-999))
 
