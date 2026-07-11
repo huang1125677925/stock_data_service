@@ -20,6 +20,7 @@ from .industry_turnover_strategy import industry_turnover_strategy
 from common.response import success_response, error_response, drf_success_response, drf_error_response
 from stock_strategy.data_tasks.stock_tagging_tasks import stock_tagging_service
 from .industry_ma_breadth_strategy import industry_ma_breadth_strategy
+from .index_ma_breadth_strategy import index_ma_breadth_strategy
 from .industry_scale_breadth_strategy import industry_scale_breadth_strategy
 from .industry_actual_output_strategy import industry_actual_output_strategy
 from .auction_selection_strategy import auction_selection_strategy_service
@@ -846,6 +847,61 @@ def get_industry_ma_breadth(request):
         return error_response('参数格式错误：ma_window应为整数', 400)
     except Exception as e:
         return error_response(f'获取行业MA市场宽度数据失败: {str(e)}', 500)
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_index_ma_breadth(request):
+    """
+    指数MA市场宽度指标查询接口
+
+    功能：计算并返回指定日期范围内，每个大盘指数中“收盘价高于MA_N”的成分股占比（市场宽度）。
+    - 指数列表与 major-index-rps 接口一致（国内+国际大盘指数）。
+    - 指数成分股通过 Tushare index_weight 获取；均线与占比计算逻辑与 industry-ma-breadth 一致。
+    参数（Query Parameters）：
+    - start_date(str): 开始日期，格式YYYY-MM-DD，默认过去90天
+    - end_date(str): 结束日期，格式YYYY-MM-DD，默认当天
+    - ma_window(int): 移动平均窗口大小（交易日），默认20
+    - index_codes(str): 指数代码列表（逗号分隔），可选；为空则使用默认指数列表（与 major-index-rps 一致）
+    返回值：
+    - 成功：返回包含各指数每日宽度数据的JSON（total, data, errors, query_time, 参数回显）
+    - 失败：返回错误信息JSON
+    事件：
+    - 参数解析与校验
+    - 计算过程中异常捕获
+    - 统一响应封装success_response/error_response
+    """
+    try:
+        start_date = request.GET.get('start_date', None)
+        end_date = request.GET.get('end_date', None)
+        ma_window = int(request.GET.get('ma_window', 20))
+        index_codes_str = request.GET.get('index_codes', None)
+        index_codes = None
+        if index_codes_str:
+            index_codes = [code.strip() for code in index_codes_str.split(',') if code.strip()]
+        # 计算指数MA市场宽度
+        result, errors = index_ma_breadth_strategy.get_index_ma_breadth(
+            start_date=start_date,
+            end_date=end_date,
+            ma_window=ma_window,
+            index_codes=index_codes,
+        )
+        if result is None:
+            error_message = ', '.join(errors) if errors else '获取指数MA市场宽度数据失败'
+            return error_response(f'获取指数MA市场宽度数据失败: {error_message}', 500)
+        return success_response({
+            'total': len(result),
+            'data': result,
+            'start_date': start_date,
+            'end_date': end_date,
+            'ma_window': ma_window,
+            'index_codes': index_codes,
+            'errors': errors,
+            'query_time': datetime.now().isoformat()
+        })
+    except ValueError:
+        return error_response('参数格式错误：ma_window应为整数', 400)
+    except Exception as e:
+        return error_response(f'获取指数MA市场宽度数据失败: {str(e)}', 500)
 
 @csrf_exempt
 @require_http_methods(["GET"])
