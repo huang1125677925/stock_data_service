@@ -290,6 +290,13 @@ def get_stock_rps(request):
         trade_date (str): 截止交易日（YYYYMMDD），为空时自动使用最近可用交易日。
         exchange (str): 交易所筛选，可选，如 SSE、SZSE、BSE。
         market (str): 市场类型筛选，可选，如 主板、创业板、科创板、北交所。
+        industry_mapping (str): 行业映射方式，可选，默认 default。
+            - default: 使用 stock_basic 的 industry 字段（默认）
+            - dc_concept: 东财概念板块
+            - dc_region: 东财地域板块
+            - dc_l1: 东财一级行业板块
+            - dc_l2: 东财二级行业板块
+            - dc_l3: 东财三级行业板块
         token (str): Tushare Token（覆盖环境变量）。
 
     Returns:
@@ -303,6 +310,7 @@ def get_stock_rps(request):
         trade_date = request.GET.get('trade_date')
         exchange = request.GET.get('exchange')
         market = request.GET.get('market')
+        industry_mapping = request.GET.get('industry_mapping', 'default')
         token = request.GET.get('token')
 
         try:
@@ -318,6 +326,7 @@ def get_stock_rps(request):
             token=token,
             exchange=exchange,
             market=market,
+            industry_mapping=industry_mapping,
         )
         if df is None:
             error_message = ', '.join(errors) if errors else '未获取到股票 RPS 数据'
@@ -331,6 +340,7 @@ def get_stock_rps(request):
             'trade_date': df.attrs.get('trade_date', trade_date),
             'exchange': exchange,
             'market': market,
+            'industry_mapping': industry_mapping,
             'errors': errors,
             'query_time': datetime.now().isoformat(),
         })

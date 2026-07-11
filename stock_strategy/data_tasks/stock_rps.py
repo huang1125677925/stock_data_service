@@ -1,4 +1,7 @@
+import json
+import logging
 import pandas as pd
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from django.core.cache import cache
@@ -11,6 +14,26 @@ from stock_strategy.data_tasks.dc_board_rps import (
     _get_period_start_trade_dates,
     _get_recent_trade_dates,
 )
+
+logger = logging.getLogger(__name__)
+
+# 行业映射配置（从limit_board_service移植）
+DC_BOARD_SNAPSHOT_FILE = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "dc_board_members_snapshot.json"
+)
+
+INDUSTRY_MAPPING_MODES: Dict[str, Dict[str, str]] = {
+    "default": {"idx_type": "", "level": "", "label": "默认行业映射(stock_basic)"},
+    "dc_concept": {"idx_type": "概念板块", "level": "", "label": "东财概念板块"},
+    "dc_region": {"idx_type": "地域板块", "level": "", "label": "东财地域板块"},
+    "dc_l1": {"idx_type": "行业板块", "level": "东财一级行业", "label": "东财一级行业板块"},
+    "dc_l2": {"idx_type": "行业板块", "level": "东财二级行业", "label": "东财二级行业板块"},
+    "dc_l3": {"idx_type": "行业板块", "level": "东财三级行业", "label": "东财三级行业板块"},
+}
+
+DEFAULT_INDUSTRY_MAPPING = "default"
+
+_board_snapshot_cache: Optional[List[Dict]] = None
 
 
 def _fetch_stock_basic_by_status(
@@ -380,12 +403,96 @@ def _resolve_latest_available_stock_trade_date(
     return None, pd.DataFrame(), warnings
 
 
+def _normalize_industry_mapping(industry_mapping: Optional[str]) -> str:
+    """
+    校验并归一化行业映射方式参数。
+
+    参数：
+    - industry_mapping (Optional[str]): 请求传入的映射方式，空值回退为默认映射。
+
+    返回值：
+    - str: `INDUSTRY_MAPPING_MODES` 中的合法键。
+
+    异常：
+    - ValueError: 传入的映射方式不在支持范围内时抛出。
+    """
+    mode = str(industry_mapping or "").strip() or DEFAULT_INDUSTRY_MAPPING
+    if mode not in INDUSTRY_MAPPING_MODES:
+        supported = ", ".join(INDUSTRY_MAPPING_MODES.keys())
+        raise ValueError(f"industry_mapping 非法，仅支持: {supported}")
+    return mode
+
+
+def _load_board_snapshot() -> List[Dict]:
+    """
+    加载本地东方财富板块成分快照（进程内缓存）。
+
+    返回值：
+    - List[Dict]: 快照中的板块列表；文件缺失或解析失败时返回空列表。
+
+    异常：
+    - 无。内部异常会记录日志并返回空列表。
+    """
+    global _board_snapshot_cache
+    if _board_snapshot_cache is not None:
+        return _board_snapshot_cache
+    boards: List[Dict] = []
+    try:
+        if DC_BOARD_SNAPSHOT_FILE.exists():
+            with DC_BOARD_SNAPSHOT_FILE.open("r", encoding="utf-8") as file_obj:
+                payload = json.load(file_obj)
+            raw_boards = payload.get("boards", []) if isinstance(payload, dict) else []
+            boards = [item for item in raw_boards if isinstance(item, dict)]
+        else:
+            logger.warning("本地板块成分快照不存在: %s", DC_BOARD_SNAPSHOT_FILE)
+    except Exception as exc:
+        logger.warning("读取本地板块成分快照失败: %s", exc)
+        boards = []
+    _board_snapshot_cache = boards
+    return boards
+
+
+def _build_snapshot_industry_index(idx_type: str, level: str) -> Dict[str, List[str]]:
+    """
+    基于本地板块成分快照构建 `股票代码 -> 所属板块名称列表` 的索引。
+
+    参数：
+    - idx_type (str): 东方财富板块类型（如 `行业板块`、`概念板块`、`地域板块`）。
+    - level (str): 东财行业层级，仅 `行业板块` 需要（`东财一/二/三级行业`）；其它类型传空串。
+
+    返回值：
+    - Dict[str, List[str]]: 以股票代码为键、所属板块名称去重列表为值的映射。
+      概念板块为多对多，一只个股可能对应多个板块名称。
+
+    异常：
+    - 无。
+    """
+    index: Dict[str, List[str]] = {}
+    for board in _load_board_snapshot():
+        if str(board.get("idx_type") or "").strip() != idx_type:
+            continue
+        if level and str(board.get("level") or "").strip() != level:
+            continue
+        sector_name = str(board.get("sector_name") or "").strip()
+        if not sector_name:
+            continue
+        for member in board.get("members") or []:
+            code = str(member or "").strip()
+            if not code:
+                continue
+            names = index.setdefault(code, [])
+            if sector_name not in names:
+                names.append(sector_name)
+    return index
+
+
 def compute_stock_rps(
     periods: List[int],
     trade_date: Optional[str] = None,
     token: Optional[str] = None,
     exchange: Optional[str] = None,
     market: Optional[str] = None,
+    industry_mapping: str = DEFAULT_INDUSTRY_MAPPING,
 ) -> Tuple[Optional[pd.DataFrame], List[str]]:
     """
     功能：使用 Tushare `stock_basic` 和 `daily` 计算股票多周期 RPS 排名。
@@ -396,11 +503,14 @@ def compute_stock_rps(
         token: Tushare Token，可选，优先覆盖环境变量中的配置。
         exchange: 交易所筛选，可选，例如 SSE、SZSE、BSE。
         market: 市场类型筛选，可选，例如 主板、创业板、科创板、北交所。
+        industry_mapping: 行业映射方式，取值见 `INDUSTRY_MAPPING_MODES`，默认 `default`。
+          - `default`: 使用 `stock_basic` 的 `industry` 字段（默认）。
+          - `dc_concept` / `dc_region` / `dc_l1` / `dc_l2` / `dc_l3`: 基于本地东方财富板块成分快照映射。
 
     Returns:
         Tuple[Optional[pandas.DataFrame], List[str]]:
-        - 第一个返回值：结果 DataFrame，包含 ts_code、symbol、name、industry、market、pct_change、
-          RPS_today、return_{p}、RPS_{p}、latest_price（最新股价）、total_mv（总市值，元）、
+        - 第一个返回值：结果 DataFrame，包含 ts_code、symbol、name、industry（或industries列表）、market、
+          pct_change、RPS_today、return_{p}、RPS_{p}、latest_price（最新股价）、total_mv（总市值，元）、
           circ_mv（流通市值，元）等列；失败时返回 None。
         - 第二个返回值：错误或提示信息列表。
 
@@ -416,6 +526,11 @@ def compute_stock_rps(
     if any(period <= 0 for period in normalized_periods):
         errors.append("period 必须大于 0")
         return None, errors
+
+    # 归一化并验证行业映射方式
+    mapping_mode = _normalize_industry_mapping(industry_mapping)
+    mapping_meta = INDUSTRY_MAPPING_MODES[mapping_mode]
+    use_snapshot = mapping_mode != DEFAULT_INDUSTRY_MAPPING
 
     preferred_end_date = _ensure_date_str(trade_date)
     if trade_date is None:
@@ -447,7 +562,7 @@ def compute_stock_rps(
             return None, errors
 
     cache_key = (
-        f"stock_rps:v1:{end_date}:{exchange or ''}:{market or ''}:"
+        f"stock_rps:v2:{end_date}:{exchange or ''}:{market or ''}:{mapping_mode}:"
         f"{','.join(map(str, normalized_periods))}"
     )
     cached_result = cache.get(cache_key)
@@ -477,6 +592,23 @@ def compute_stock_rps(
     result_df["close_end"] = result_df["ts_code"].map(end_snapshot["close"])
     result_df["pct_change"] = result_df["ts_code"].map(end_snapshot["pct_change"])
     result_df["RPS_today"] = _apply_rps(result_df["pct_change"].fillna(-999))
+
+    # 应用行业映射
+    if use_snapshot:
+        # 使用东方财富板块成分快照
+        snapshot_index = _build_snapshot_industry_index(
+            idx_type=mapping_meta["idx_type"],
+            level=mapping_meta["level"],
+        )
+        # 对于多对多映射（如概念板块），保留列表形式
+        result_df["industries"] = result_df["ts_code"].map(
+            lambda code: snapshot_index.get(str(code), [])
+        )
+        # 同时保留单个industry字段（取第一个，或空字符串）
+        result_df["industry"] = result_df["industries"].apply(
+            lambda lst: lst[0] if lst else ""
+        )
+    # else: 使用默认的 stock_basic.industry 字段，已包含在 universe_df 中
 
     for period in normalized_periods:
         start_date = period_start_dates[period]
