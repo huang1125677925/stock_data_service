@@ -291,13 +291,16 @@ def get_stock_rps(request):
         exchange (str): 交易所筛选，可选，如 SSE、SZSE、BSE。
         market (str): 市场类型筛选，可选，如 主板、创业板、科创板、北交所。
         industry_mapping (str): 行业映射方式，可选，默认 default。
-            - default: 使用 stock_basic 的 industry 字段（默认）
+            - default: 使用 stock_basic 的 industry 字段（默认，无对应东财板块代码）
             - dc_concept: 东财概念板块
             - dc_region: 东财地域板块
             - dc_l1: 东财一级行业板块
             - dc_l2: 东财二级行业板块
             - dc_l3: 东财三级行业板块
         token (str): Tushare Token（覆盖环境变量）。
+
+    每条股票记录包含 industry（行业名）与 industry_code（东财板块代码，仅 dc_* 映射有值）；
+    dc_* 映射额外返回 industries、industry_codes 多对多列表。
 
     Returns:
         JSON响应，包含股票列表、周期参数、目标日期、错误信息和查询时间。

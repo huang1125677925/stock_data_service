@@ -452,22 +452,28 @@ def _load_board_snapshot() -> List[Dict]:
     return boards
 
 
-def _build_snapshot_industry_index(idx_type: str, level: str) -> Dict[str, List[str]]:
+def _build_snapshot_industry_index(
+    idx_type: str, level: str
+) -> Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
     """
-    基于本地板块成分快照构建 `股票代码 -> 所属板块名称列表` 的索引。
+    基于本地板块成分快照构建 `股票代码 -> 所属板块名称/代码列表` 的索引。
 
     参数：
     - idx_type (str): 东方财富板块类型（如 `行业板块`、`概念板块`、`地域板块`）。
     - level (str): 东财行业层级，仅 `行业板块` 需要（`东财一/二/三级行业`）；其它类型传空串。
 
     返回值：
-    - Dict[str, List[str]]: 以股票代码为键、所属板块名称去重列表为值的映射。
-      概念板块为多对多，一只个股可能对应多个板块名称。
+    - Tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+      - 第一个：以股票代码为键、所属板块名称去重列表为值的映射。
+      - 第二个：以股票代码为键、所属板块东财代码（sector_code）去重列表为值的映射，
+        与名称列表按索引一一对应。
+      概念板块为多对多，一只个股可能对应多个板块名称/代码。
 
     异常：
     - 无。
     """
-    index: Dict[str, List[str]] = {}
+    name_index: Dict[str, List[str]] = {}
+    code_index: Dict[str, List[str]] = {}
     for board in _load_board_snapshot():
         if str(board.get("idx_type") or "").strip() != idx_type:
             continue
@@ -476,14 +482,17 @@ def _build_snapshot_industry_index(idx_type: str, level: str) -> Dict[str, List[
         sector_name = str(board.get("sector_name") or "").strip()
         if not sector_name:
             continue
+        sector_code = str(board.get("sector_code") or "").strip()
         for member in board.get("members") or []:
             code = str(member or "").strip()
             if not code:
                 continue
-            names = index.setdefault(code, [])
+            names = name_index.setdefault(code, [])
+            codes = code_index.setdefault(code, [])
             if sector_name not in names:
                 names.append(sector_name)
-    return index
+                codes.append(sector_code)
+    return name_index, code_index
 
 
 def compute_stock_rps(
@@ -509,9 +518,10 @@ def compute_stock_rps(
 
     Returns:
         Tuple[Optional[pandas.DataFrame], List[str]]:
-        - 第一个返回值：结果 DataFrame，包含 ts_code、symbol、name、industry（或industries列表）、market、
-          pct_change、RPS_today、return_{p}、RPS_{p}、latest_price（最新股价）、total_mv（总市值，元）、
-          circ_mv（流通市值，元）等列；失败时返回 None。
+        - 第一个返回值：结果 DataFrame，包含 ts_code、symbol、name、industry（行业名）、
+          industry_code（东财板块代码，仅 dc_* 映射有值）、market、pct_change、RPS_today、
+          return_{p}、RPS_{p}、latest_price（最新股价）、total_mv（总市值，元）、circ_mv（流通市值，元）等列；
+          dc_* 映射额外包含 industries、industry_codes 多对多列表列；失败时返回 None。
         - 第二个返回值：错误或提示信息列表。
 
     Raises:
@@ -595,20 +605,28 @@ def compute_stock_rps(
 
     # 应用行业映射
     if use_snapshot:
-        # 使用东方财富板块成分快照
-        snapshot_index = _build_snapshot_industry_index(
+        # 使用东方财富板块成分快照，名称与东财代码按索引一一对应
+        snapshot_name_index, snapshot_code_index = _build_snapshot_industry_index(
             idx_type=mapping_meta["idx_type"],
             level=mapping_meta["level"],
         )
         # 对于多对多映射（如概念板块），保留列表形式
         result_df["industries"] = result_df["ts_code"].map(
-            lambda code: snapshot_index.get(str(code), [])
+            lambda code: snapshot_name_index.get(str(code), [])
         )
-        # 同时保留单个industry字段（取第一个，或空字符串）
+        result_df["industry_codes"] = result_df["ts_code"].map(
+            lambda code: snapshot_code_index.get(str(code), [])
+        )
+        # 同时保留单个 industry / industry_code 字段（取第一个，或空字符串）
         result_df["industry"] = result_df["industries"].apply(
             lambda lst: lst[0] if lst else ""
         )
-    # else: 使用默认的 stock_basic.industry 字段，已包含在 universe_df 中
+        result_df["industry_code"] = result_df["industry_codes"].apply(
+            lambda lst: lst[0] if lst else ""
+        )
+    else:
+        # 默认映射使用 stock_basic.industry（仅行业名，无对应东财板块代码）
+        result_df["industry_code"] = ""
 
     for period in normalized_periods:
         start_date = period_start_dates[period]
