@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import User, InvitationCode, UserToken
+from .models import User, InvitationCode, UserToken, SiteVisitCounter
 
 
 @admin.register(User)
@@ -29,3 +29,10 @@ class UserTokenAdmin(admin.ModelAdmin):
     list_filter = ('created_at',)
     search_fields = ('user__username', 'token')
     readonly_fields = ('created_at',)
+
+
+@admin.register(SiteVisitCounter)
+class SiteVisitCounterAdmin(admin.ModelAdmin):
+    list_display = ('id', 'key', 'total_count', 'created_at', 'updated_at')
+    search_fields = ('key',)
+    readonly_fields = ('created_at', 'updated_at')

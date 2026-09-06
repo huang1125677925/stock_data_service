@@ -58,6 +58,7 @@ urlpatterns = [
     path('django/api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('django/api/swagger/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('django/api/docs/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    path('django/api/site/visit/', include('user_management.urls_site')),
     path('django/api/stock/', include('industry_stock_data.urls')),
     path('django/api/individual_stock/', include('indival_stock_data.urls')),
     path('django/api/strategy/', include('stock_strategy.urls')),

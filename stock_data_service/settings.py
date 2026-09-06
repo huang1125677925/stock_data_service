@@ -59,7 +59,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'user_management.middleware.AuthenticationMiddleware',
 ]
 
 ROOT_URLCONF = 'stock_data_service.urls'

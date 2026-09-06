@@ -91,7 +91,7 @@ class InvitationCodeService:
     def __init__(self, code_expiry_days=30):
         self.code_expiry_days = code_expiry_days
     
-    def generate_invitation_code(self, user):
+    def generate_invitation_code(self, user=None):
         """生成邀请码
         
         Args:
@@ -100,8 +100,8 @@ class InvitationCodeService:
         Returns:
             (bool, str, InvitationCode): 是否成功，消息，邀请码对象
         """
-        # 检查用户权限
-        if not user.is_active:
+        # 检查用户权限。去除前端鉴权后允许系统直接生成邀请码。
+        if user is not None and not user.is_active:
             return False, "用户已被禁用", None
         
         # 生成邀请码
@@ -154,7 +154,10 @@ class InvitationCodeService:
         Returns:
             QuerySet: 邀请码查询集
         """
-        return InvitationCode.objects.filter(created_by=user).order_by('-created_at')
+        queryset = InvitationCode.objects.all()
+        if user is not None:
+            queryset = queryset.filter(created_by=user)
+        return queryset.order_by('-created_at')
 
 
 class UserService:

@@ -4,7 +4,8 @@ from rest_framework import status
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from .services import UserService, TokenService, InvitationCodeService
+from .models import SiteVisitCounter
+from .services import UserService, InvitationCodeService
 from common.response import success_response, error_response
 
 
@@ -113,23 +114,7 @@ class LogoutView(APIView):
     
     def post(self, request):
         """处理用户登出请求"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=400)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 调用服务层进行登出
-        success, message = UserService.logout(token)
-        
-        if success:
-            return success_response(message=message)
-        else:
-            return error_response(message, code=400)
+        return success_response(message="登出成功")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -139,33 +124,15 @@ class UserInfoView(APIView):
     
     def get(self, request):
         """获取当前用户信息"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if success:
-            # 返回用户信息
-            user_data = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'phone': user.phone,
-                'is_admin': user.is_admin,
-                'last_login': user.last_login,
-                'created_at': user.created_at
-            }
-            return success_response(user_data)
-        else:
-            return error_response(message, code=401)
+        return success_response({
+            'id': None,
+            'username': '访客',
+            'email': '',
+            'phone': '',
+            'is_admin': False,
+            'last_login': None,
+            'created_at': None,
+        })
 
 @method_decorator(csrf_exempt, name='dispatch')
 class InvitationCodeView(APIView):
@@ -174,25 +141,9 @@ class InvitationCodeView(APIView):
     
     def post(self, request):
         """生成邀请码"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if not success:
-            return error_response(message, code=401)
-        
         # 生成邀请码
         invitation_service = InvitationCodeService()
-        success, message, invitation = invitation_service.generate_invitation_code(user)
+        success, message, invitation = invitation_service.generate_invitation_code()
         
         if success:
             # 返回邀请码信息
@@ -207,24 +158,8 @@ class InvitationCodeView(APIView):
     
     def get(self, request):
         """获取用户的邀请码列表"""
-        # 获取请求头中的令牌
-        token = request.headers.get('Authorization')
-        
-        if not token:
-            return error_response("未提供令牌", code=401)
-        
-        # 去除Bearer前缀（如果有）
-        if token.startswith('Bearer '):
-            token = token[7:]
-        
-        # 验证令牌并获取用户
-        success, message, user = UserService.get_user_by_token(token)
-        
-        if not success:
-            return error_response(message, code=401)
-        
         # 获取用户的邀请码列表
-        invitations = InvitationCodeService.get_user_invitations(user)
+        invitations = InvitationCodeService.get_user_invitations(None)
         
         # 构建响应数据
         invitation_list = [{
@@ -259,3 +194,14 @@ class ValidateInvitationCodeView(APIView):
             return success_response(message="邀请码有效")
         else:
             return error_response(message, code=400)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class SiteVisitView(APIView):
+    """站点访问统计视图"""
+    authentication_classes = []
+
+    def post(self, request):
+        """记录一次访问并返回站点总访问数"""
+        total_visits = SiteVisitCounter.increment_total()
+        return success_response({'total_visits': total_visits})

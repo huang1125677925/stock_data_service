@@ -11,6 +11,7 @@ urlpatterns = [
     path('register/', views.RegisterView.as_view(), name='user_register'),
     path('login/', views.LoginView.as_view(), name='user_login'),
     path('logout/', views.LogoutView.as_view(), name='user_logout'),
+    path('info/', views.UserInfoView.as_view(), name='user_info'),
     path('reset-password/', views.ResetPasswordView.as_view(), name='reset_password'),
     # 邀请码
     path('invitation/', views.InvitationCodeView.as_view(), name='invitation_code'),

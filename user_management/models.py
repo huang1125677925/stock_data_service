@@ -1,6 +1,8 @@
 from django.db import models
 import uuid
 from django.utils import timezone
+from django.db import IntegrityError
+from django.db.models import F
 from django.contrib.auth.hashers import make_password, check_password
 
 
@@ -41,7 +43,7 @@ class User(models.Model):
 class InvitationCode(models.Model):
     """邀请码模型"""
     code = models.CharField(max_length=20, unique=True, verbose_name='邀请码')
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_invitations', verbose_name='创建者')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_invitations', null=True, blank=True, verbose_name='创建者')
     used_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='used_invitation', verbose_name='使用者')
     is_used = models.BooleanField(default=False, verbose_name='是否已使用')
     expires_at = models.DateTimeField(verbose_name='过期时间')
@@ -94,3 +96,37 @@ class UserToken(models.Model):
     def is_valid(self):
         """检查令牌是否有效"""
         return self.expires_at > timezone.now()
+
+
+class SiteVisitCounter(models.Model):
+    """站点访问计数器"""
+    key = models.CharField(max_length=50, unique=True, default='site_total', verbose_name='计数键')
+    total_count = models.PositiveBigIntegerField(default=0, verbose_name='总访问数')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        verbose_name = '站点访问计数'
+        verbose_name_plural = '站点访问计数'
+        ordering = ['key']
+
+    def __str__(self):
+        return f'{self.key}: {self.total_count}'
+
+    @classmethod
+    def increment_total(cls):
+        """原子递增站点总访问数并返回最新值。"""
+        try:
+            counter, _ = cls.objects.get_or_create(
+                key='site_total',
+                defaults={'total_count': 0},
+            )
+        except IntegrityError:
+            counter = cls.objects.get(key='site_total')
+
+        cls.objects.filter(pk=counter.pk).update(
+            total_count=F('total_count') + 1,
+            updated_at=timezone.now(),
+        )
+        counter.refresh_from_db(fields=['total_count', 'updated_at'])
+        return counter.total_count
