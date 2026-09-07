@@ -10,15 +10,161 @@ from stock_strategy.data_tasks.dc_board_rps import (
     _get_latest_trade_date,
     _get_recent_trade_dates,
 )
-from stock_strategy.data_tasks.stock_rps import (
-    DEFAULT_INDUSTRY_MAPPING,
-    compute_stock_rps,
-)
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_PERIODS = [5, 20, 60]
+DEFAULT_INDUSTRY_MAPPING = "default"
+
+
+def _apply_rps(values: pd.Series) -> pd.Series:
+    ranks = values.rank(ascending=False, method="min")
+    total = len(values)
+    return ((1.0 - ranks / total) * 100.0).round(2)
+
+
+def _fetch_stock_basic_by_status(
+    list_status: str,
+    token: Optional[str],
+    exchange: Optional[str],
+    market: str = "主板",
+) -> pd.DataFrame:
+    columns = ["ts_code", "symbol", "name", "industry", "market", "list_date", "delist_date", "list_status"]
+    params = {"list_status": list_status, "market": market}
+    if exchange:
+        params["exchange"] = exchange
+
+    resp = call_tushare(
+        "stock_basic",
+        params=params,
+        token=token,
+        fields="ts_code,symbol,name,industry,market,list_date,delist_date,list_status",
+        use_query=False,
+    )
+    if resp.get("code") != 200:
+        return pd.DataFrame(columns=columns)
+
+    records = (resp.get("data") or {}).get("records") or []
+    if not records:
+        return pd.DataFrame(columns=columns)
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        return pd.DataFrame(columns=columns)
+
+    for column in columns:
+        if column not in out.columns:
+            out[column] = ""
+        out[column] = out[column].fillna("").astype(str).str.strip()
+    return out[columns]
+
+
+def _fetch_stock_basic_all_statuses(
+    token: Optional[str],
+    exchange: Optional[str],
+    market: str = "主板",
+) -> pd.DataFrame:
+    cache_key = f"potential_stock:stock_basic:v1:{exchange or ''}:{market}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    frames = [
+        _fetch_stock_basic_by_status(status, token=token, exchange=exchange, market=market)
+        for status in ["L", "P", "D"]
+    ]
+    valid_frames = [frame for frame in frames if frame is not None and not frame.empty]
+    if not valid_frames:
+        empty_df = pd.DataFrame(
+            columns=["ts_code", "symbol", "name", "industry", "market", "list_date", "delist_date", "list_status"]
+        )
+        cache.set(cache_key, empty_df, 43200)
+        return empty_df
+
+    merged_df = pd.concat(valid_frames, ignore_index=True)
+    merged_df = merged_df.drop_duplicates(subset=["ts_code"], keep="first").reset_index(drop=True)
+    cache.set(cache_key, merged_df, 43200)
+    return merged_df
+
+
+def _filter_stock_universe_by_trade_date(stock_basic_df: pd.DataFrame, trade_date: str) -> pd.DataFrame:
+    columns = ["ts_code", "symbol", "name", "industry", "market", "list_date", "delist_date", "list_status"]
+    if stock_basic_df is None or stock_basic_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    out = stock_basic_df.copy()
+    normalized_trade_date = str(trade_date)
+    out["list_date"] = out["list_date"].fillna("").astype(str).str.replace("-", "", regex=False)
+    out["delist_date"] = out["delist_date"].fillna("").astype(str).str.replace("-", "", regex=False)
+
+    listed_mask = out["list_date"].ne("") & (out["list_date"] <= normalized_trade_date)
+    not_delisted_mask = out["delist_date"].eq("") | (out["delist_date"] >= normalized_trade_date)
+    out = out[listed_mask & not_delisted_mask].copy()
+    if out.empty:
+        return out
+    return out.drop_duplicates(subset=["ts_code"]).reset_index(drop=True)
+
+
+def _fetch_daily_basic_by_trade_date(trade_date: str, token: Optional[str]) -> pd.DataFrame:
+    columns = ["ts_code", "latest_price", "total_mv", "circ_mv"]
+    resp = call_tushare(
+        "daily_basic",
+        params={"trade_date": trade_date},
+        token=token,
+        fields="ts_code,close,total_mv,circ_mv",
+        use_query=False,
+    )
+    if resp.get("code") != 200:
+        return pd.DataFrame(columns=columns)
+
+    records = (resp.get("data") or {}).get("records") or []
+    if not records:
+        return pd.DataFrame(columns=columns)
+
+    out = pd.DataFrame.from_records(records)
+    if out.empty:
+        return pd.DataFrame(columns=columns)
+
+    out["ts_code"] = out["ts_code"].fillna("").astype(str).str.strip()
+    out["latest_price"] = pd.to_numeric(out.get("close"), errors="coerce")
+    out["total_mv"] = pd.to_numeric(out.get("total_mv"), errors="coerce") * 10000.0
+    out["circ_mv"] = pd.to_numeric(out.get("circ_mv"), errors="coerce") * 10000.0
+    out = out.dropna(subset=["ts_code"])
+    return out[columns].drop_duplicates(subset=["ts_code"])
+
+
+def _resolve_latest_available_trade_date(
+    preferred_date: str,
+    stock_basic_df: pd.DataFrame,
+    token: Optional[str],
+    max_fallback_count: int = 5,
+) -> Tuple[Optional[str], pd.DataFrame, pd.DataFrame, List[str]]:
+    warnings: List[str] = []
+    candidate_dates = _get_recent_trade_dates(preferred_date, token=token, max_count=max_fallback_count)
+    if not candidate_dates:
+        candidate_dates = [preferred_date]
+
+    for candidate_date in candidate_dates:
+        universe_df = _filter_stock_universe_by_trade_date(stock_basic_df, candidate_date)
+        if universe_df.empty:
+            continue
+
+        daily_basic_df = _fetch_daily_basic_by_trade_date(candidate_date, token=token)
+        if daily_basic_df.empty:
+            continue
+
+        matched_df = universe_df[universe_df["ts_code"].isin(set(daily_basic_df["ts_code"].astype(str)))].copy()
+        if matched_df.empty:
+            continue
+
+        if candidate_date != preferred_date:
+            warnings.append(
+                f"daily_basic在{preferred_date}无可用数据，已自动回退至最近可用交易日{candidate_date}"
+            )
+        return candidate_date, matched_df.reset_index(drop=True), daily_basic_df, warnings
+
+    return None, pd.DataFrame(), pd.DataFrame(), warnings
 
 
 def _fetch_daily_ohlcv_by_trade_date(trade_date: str, token: Optional[str]) -> pd.DataFrame:
@@ -219,6 +365,51 @@ def _compute_shape_metrics(
     return pd.DataFrame(rows)
 
 
+def _compute_rps_metrics(history_df: pd.DataFrame, periods: List[int]) -> pd.DataFrame:
+    if history_df.empty:
+        return pd.DataFrame()
+
+    latest_rows = (
+        history_df.sort_values(["ts_code", "trade_date"])
+        .groupby("ts_code", as_index=False)
+        .tail(1)
+        .copy()
+    )
+    result_df = latest_rows[["ts_code", "trade_date", "close", "pct_change"]].rename(
+        columns={
+            "trade_date": "trade_date",
+            "close": "latest_close",
+        }
+    )
+    result_df["pct_change"] = pd.to_numeric(result_df["pct_change"], errors="coerce")
+    result_df["RPS_today"] = _apply_rps(result_df["pct_change"].fillna(-999))
+
+    for period in periods:
+        rows: List[Dict] = []
+        for ts_code, group in history_df.groupby("ts_code"):
+            bars = group.sort_values("trade_date").reset_index(drop=True)
+            if len(bars) < period + 1:
+                continue
+            start_close = pd.to_numeric(bars.iloc[-period - 1]["close"], errors="coerce")
+            end_close = pd.to_numeric(bars.iloc[-1]["close"], errors="coerce")
+            if pd.isna(start_close) or pd.isna(end_close) or start_close <= 0:
+                continue
+            rows.append({
+                "ts_code": ts_code,
+                f"return_{period}": (float(end_close) / float(start_close) - 1.0) * 100.0,
+            })
+
+        period_df = pd.DataFrame(rows)
+        if period_df.empty:
+            result_df[f"return_{period}"] = pd.NA
+            result_df[f"RPS_{period}"] = pd.NA
+            continue
+        period_df[f"RPS_{period}"] = _apply_rps(period_df[f"return_{period}"].fillna(-999))
+        result_df = result_df.merge(period_df, on="ts_code", how="left")
+
+    return result_df
+
+
 def compute_potential_stock_candidates(
     periods: Optional[List[int]] = None,
     trade_date: Optional[str] = None,
@@ -258,8 +449,8 @@ def compute_potential_stock_candidates(
             preferred_end_date = latest
 
     cache_key = (
-        "potential_stock_candidates:v1:"
-        f"{preferred_end_date}:{exchange or ''}:{industry_mapping}:{','.join(map(str, normalized_periods))}:"
+        "potential_stock_candidates:v3:"
+        f"{preferred_end_date}:{exchange or ''}:{','.join(map(str, normalized_periods))}:"
         f"{lookback_days}:{min_rps_20}:{min_rps_60}:{min_volume_ratio}:"
         f"{min_breakout_pct}:{max_breakout_pct}:{max_base_depth_pct}:{max_distance_ma20_pct}:"
         f"{max_price}:{max_circ_mv}:{limit}"
@@ -268,36 +459,52 @@ def compute_potential_stock_candidates(
     if cached:
         return cached
 
-    rps_df, rps_errors = compute_stock_rps(
-        periods=normalized_periods,
-        trade_date=trade_date,
-        token=token,
-        exchange=exchange,
-        market="主板",
-        industry_mapping=industry_mapping,
-    )
-    errors.extend(rps_errors)
-    if rps_df is None or rps_df.empty:
-        errors.append("未获取到主板股票RPS数据")
+    stock_basic_df = _fetch_stock_basic_all_statuses(token=token, exchange=exchange, market="主板")
+    if stock_basic_df.empty:
+        errors.append("未获取到主板股票基础信息")
         return None, errors, {}
 
-    end_date = str(rps_df.attrs.get("trade_date") or preferred_end_date)
-    prefilter_total = len(rps_df)
-    rps_df = rps_df.copy()
-    rps_df["latest_price"] = pd.to_numeric(rps_df.get("latest_price"), errors="coerce")
-    rps_df["circ_mv"] = pd.to_numeric(rps_df.get("circ_mv"), errors="coerce")
-    rps_df = rps_df[
-        (rps_df["latest_price"].notna())
-        & (rps_df["circ_mv"].notna())
-        & (rps_df["latest_price"] <= max_price)
-        & (rps_df["circ_mv"] <= max_circ_mv)
+    if trade_date is None:
+        resolved = _resolve_latest_available_trade_date(
+            preferred_end_date,
+            stock_basic_df=stock_basic_df,
+            token=token,
+        )
+        end_date, universe_df, daily_basic_df, fallback_warnings = resolved
+        errors.extend(fallback_warnings)
+        if not end_date or universe_df.empty:
+            errors.append("未获取到可用主板股票池")
+            return None, errors, {}
+    else:
+        end_date = preferred_end_date
+        universe_df = _filter_stock_universe_by_trade_date(stock_basic_df, end_date)
+        if universe_df.empty:
+            errors.append("目标交易日无可用主板股票池")
+            return None, errors, {}
+        daily_basic_df = _fetch_daily_basic_by_trade_date(end_date, token=token)
+        if daily_basic_df.empty:
+            errors.append(f"daily_basic返回空数据: trade_date={end_date}")
+            return None, errors, {}
+
+    prefilter_total = len(universe_df)
+    candidate_df = universe_df.merge(daily_basic_df, on="ts_code", how="inner")
+    name_series = candidate_df["name"].fillna("").astype(str)
+    candidate_df = candidate_df[~name_series.str.contains("ST", case=False, na=False)].copy()
+    candidate_df["latest_price"] = pd.to_numeric(candidate_df["latest_price"], errors="coerce")
+    candidate_df["circ_mv"] = pd.to_numeric(candidate_df["circ_mv"], errors="coerce")
+    candidate_df = candidate_df[
+        (candidate_df["latest_price"].notna())
+        & (candidate_df["circ_mv"].notna())
+        & (candidate_df["latest_price"] <= max_price)
+        & (candidate_df["circ_mv"] <= max_circ_mv)
     ].copy()
-    prefiltered_total = len(rps_df)
-    if rps_df.empty:
+    prefiltered_total = len(candidate_df)
+    if candidate_df.empty:
         errors.append("价格和流通市值预过滤后无候选股票")
         return pd.DataFrame(), errors, {
             "trade_date": end_date,
             "rps_total": prefilter_total,
+            "universe_total": prefilter_total,
             "prefiltered_total": 0,
             "scanned_total": 0,
             "history_start_date": "",
@@ -309,10 +516,15 @@ def compute_potential_stock_candidates(
         errors.append("未获取到交易日历")
         return None, errors, {}
 
-    stock_codes = rps_df["ts_code"].dropna().astype(str).tolist()
+    stock_codes = candidate_df["ts_code"].dropna().astype(str).tolist()
     history_df = _build_ohlcv_history(required_dates, stock_codes=stock_codes, token=token)
     if history_df.empty:
         errors.append("未获取到主板股票历史行情")
+        return None, errors, {}
+
+    rps_df = _compute_rps_metrics(history_df, periods=normalized_periods)
+    if rps_df.empty:
+        errors.append("未计算出有效RPS指标")
         return None, errors, {}
 
     metrics_df = _compute_shape_metrics(
@@ -328,13 +540,12 @@ def compute_potential_stock_candidates(
         errors.append("未计算出有效形态指标")
         return None, errors, {}
 
-    merged_df = rps_df.merge(metrics_df, on="ts_code", how="inner")
+    merged_df = candidate_df.merge(rps_df, on="ts_code", how="inner", suffixes=("", "_rps"))
+    merged_df = merged_df.merge(metrics_df, on="ts_code", how="inner", suffixes=("", "_shape"))
     if merged_df.empty:
         errors.append("RPS数据与历史行情未匹配")
         return None, errors, {}
 
-    name_series = merged_df["name"].fillna("").astype(str)
-    merged_df = merged_df[~name_series.str.contains("ST", case=False, na=False)].copy()
     merged_df["RPS_20"] = pd.to_numeric(merged_df.get("RPS_20"), errors="coerce")
     merged_df["RPS_60"] = pd.to_numeric(merged_df.get("RPS_60"), errors="coerce")
 
@@ -363,6 +574,7 @@ def compute_potential_stock_candidates(
             "trade_date": end_date,
             "scanned_total": len(merged_df),
             "rps_total": prefilter_total,
+            "universe_total": prefilter_total,
             "prefiltered_total": prefiltered_total,
             "history_start_date": min(required_dates),
             "history_end_date": max(required_dates),
@@ -390,6 +602,7 @@ def compute_potential_stock_candidates(
         "trade_date": end_date,
         "scanned_total": len(merged_df),
         "rps_total": prefilter_total,
+        "universe_total": prefilter_total,
         "prefiltered_total": prefiltered_total,
         "history_start_date": min(required_dates),
         "history_end_date": max(required_dates),

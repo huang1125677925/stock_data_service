@@ -360,14 +360,14 @@ def get_potential_stock_candidates(request):
     """
     主板潜力股票筛选接口。
 
-    功能：复用股票 RPS 数据源，并结合突破前高、放量、均线多头、平台回撤和乖离度等条件，
-    筛选主板中具备趋势加速形态的候选股票。
+    功能：先按交易所主板、收盘价和流通市值缩小股票池，再拉取剩余股票历史行情，
+    本地计算 RPS、突破前高、放量、均线多头、平台回撤和乖离度等条件。
 
     Query Parameters:
         periods (str): RPS 周期，多个周期用逗号分隔，默认 "5,20,60"。
         trade_date (str): 截止交易日 YYYYMMDD，空值自动使用最近可用交易日。
         exchange (str): 主板所属交易所，支持 SSE（上交所）或 SZSE（深交所），默认 SSE。
-        industry_mapping (str): 行业映射方式，默认 dc_l2。
+        industry_mapping (str): 兼容旧调用参数，当前潜力股筛选不按东财行业映射计算。
         lookback_days (int): 前高/平台观察窗口，默认 60。
         min_rps_20 (float): 最低 20 日 RPS，默认 80。
         min_rps_60 (float): 最低 60 日 RPS，默认 70。
@@ -453,6 +453,7 @@ def get_potential_stock_candidates(request):
             'total': len(result),
             'matched_total': len(result),
             'rps_total': meta.get('rps_total', 0),
+            'universe_total': meta.get('universe_total', meta.get('rps_total', 0)),
             'prefiltered_total': meta.get('prefiltered_total', 0),
             'scanned_total': meta.get('scanned_total', 0),
             'data': result,

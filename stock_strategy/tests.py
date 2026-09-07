@@ -1095,21 +1095,23 @@ class PotentialStockScreenTests(unittest.TestCase):
     组件：主板潜力股票筛选测试。
 
     功能：
-    - 验证潜力股票筛选会基于 stock-rps 结果和 OHLCV 历史行情识别突破前高、放量和均线多头形态。
+    - 验证潜力股票筛选会先按价格/流通市值缩小股票池，再基于 OHLCV 历史行情计算 RPS、突破前高、放量和均线多头形态。
     """
 
     @patch("stock_strategy.data_tasks.potential_stock_screen.cache")
     @patch("stock_strategy.data_tasks.potential_stock_screen._fetch_daily_ohlcv_by_trade_date")
+    @patch("stock_strategy.data_tasks.potential_stock_screen._fetch_daily_basic_by_trade_date")
+    @patch("stock_strategy.data_tasks.potential_stock_screen._fetch_stock_basic_all_statuses")
     @patch("stock_strategy.data_tasks.potential_stock_screen._get_recent_trade_dates")
-    @patch("stock_strategy.data_tasks.potential_stock_screen.compute_stock_rps")
     def test_compute_potential_stock_candidates_filters_breakout_setup(
         self,
-        mock_compute_stock_rps,
         mock_get_recent_trade_dates,
+        mock_fetch_stock_basic_all_statuses,
+        mock_fetch_daily_basic_by_trade_date,
         mock_fetch_daily_ohlcv_by_trade_date,
         mock_cache,
     ):
-        rps_df = pd.DataFrame(
+        mock_fetch_stock_basic_all_statuses.return_value = pd.DataFrame(
             [
                 {
                     "ts_code": "000001.SZ",
@@ -1120,13 +1122,6 @@ class PotentialStockScreenTests(unittest.TestCase):
                     "list_date": "20200101",
                     "delist_date": "",
                     "list_status": "L",
-                    "trade_date": "20260131",
-                    "pct_change": 7.5,
-                    "latest_price": 14.0,
-                    "circ_mv": 12000000000.0,
-                    "RPS_today": 92.0,
-                    "RPS_20": 95.0,
-                    "RPS_60": 88.0,
                 },
                 {
                     "ts_code": "000002.SZ",
@@ -1137,19 +1132,30 @@ class PotentialStockScreenTests(unittest.TestCase):
                     "list_date": "20200101",
                     "delist_date": "",
                     "list_status": "L",
-                    "trade_date": "20260131",
-                    "pct_change": 1.0,
-                    "latest_price": 50.0,
-                    "circ_mv": 60000000000.0,
-                    "RPS_today": 40.0,
-                    "RPS_20": 45.0,
-                    "RPS_60": 42.0,
+                },
+                {
+                    "ts_code": "000003.SZ",
+                    "symbol": "000003",
+                    "name": "高价大盘",
+                    "industry": "测试行业",
+                    "market": "主板",
+                    "list_date": "20200101",
+                    "delist_date": "",
+                    "list_status": "L",
                 },
             ]
         )
-        rps_df.attrs["trade_date"] = "20260131"
-        mock_compute_stock_rps.return_value = (rps_df, [])
-        mock_get_recent_trade_dates.return_value = [f"202601{day:02d}" for day in range(1, 32)]
+        mock_fetch_daily_basic_by_trade_date.return_value = pd.DataFrame(
+            [
+                {"ts_code": "000001.SZ", "latest_price": 14.0, "total_mv": 15000000000.0, "circ_mv": 12000000000.0},
+                {"ts_code": "000002.SZ", "latest_price": 10.0, "total_mv": 9000000000.0, "circ_mv": 8000000000.0},
+                {"ts_code": "000003.SZ", "latest_price": 50.0, "total_mv": 70000000000.0, "circ_mv": 60000000000.0},
+            ]
+        )
+        mock_get_recent_trade_dates.return_value = (
+            [f"202512{day:02d}" for day in range(1, 32)]
+            + [f"202601{day:02d}" for day in range(1, 32)]
+        )
 
         def fake_daily(trade_date, token=None):
             day = int(trade_date[-2:])
@@ -1180,6 +1186,16 @@ class PotentialStockScreenTests(unittest.TestCase):
                         "vol": 1000.0,
                         "pct_change": 0.1,
                     },
+                    {
+                        "ts_code": "000003.SZ",
+                        "trade_date": trade_date,
+                        "open": 50.0,
+                        "high": 51.0,
+                        "low": 49.0,
+                        "close": 50.0,
+                        "vol": 1000.0,
+                        "pct_change": 0.1,
+                    },
                 ]
             )
 
@@ -1191,8 +1207,8 @@ class PotentialStockScreenTests(unittest.TestCase):
             trade_date="20260131",
             exchange="SSE",
             lookback_days=20,
-            min_rps_20=80,
-            min_rps_60=70,
+            min_rps_20=40,
+            min_rps_60=40,
             min_volume_ratio=1.3,
             max_breakout_pct=20,
             max_price=30,
@@ -1206,17 +1222,12 @@ class PotentialStockScreenTests(unittest.TestCase):
         self.assertTrue(result_df.iloc[0]["volume_confirmed"])
         self.assertIn("突破前高", result_df.iloc[0]["setup_tags"])
         self.assertEqual(meta["trade_date"], "20260131")
-        self.assertEqual(meta["rps_total"], 2)
-        self.assertEqual(meta["prefiltered_total"], 1)
-        self.assertEqual(meta["scanned_total"], 1)
-        mock_compute_stock_rps.assert_called_once_with(
-            periods=[5, 20, 60],
-            trade_date="20260131",
-            token=None,
-            exchange="SSE",
-            market="主板",
-            industry_mapping="default",
-        )
+        self.assertEqual(meta["rps_total"], 3)
+        self.assertEqual(meta["universe_total"], 3)
+        self.assertEqual(meta["prefiltered_total"], 2)
+        self.assertEqual(meta["scanned_total"], 2)
+        self.assertNotIn("000003.SZ", result_df["ts_code"].tolist())
+        mock_fetch_stock_basic_all_statuses.assert_called_once_with(token=None, exchange="SSE", market="主板")
         mock_cache.set.assert_called_once()
 
 
