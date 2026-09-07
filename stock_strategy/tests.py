@@ -1122,6 +1122,8 @@ class PotentialStockScreenTests(unittest.TestCase):
                     "list_status": "L",
                     "trade_date": "20260131",
                     "pct_change": 7.5,
+                    "latest_price": 14.0,
+                    "circ_mv": 12000000000.0,
                     "RPS_today": 92.0,
                     "RPS_20": 95.0,
                     "RPS_60": 88.0,
@@ -1137,6 +1139,8 @@ class PotentialStockScreenTests(unittest.TestCase):
                     "list_status": "L",
                     "trade_date": "20260131",
                     "pct_change": 1.0,
+                    "latest_price": 50.0,
+                    "circ_mv": 60000000000.0,
                     "RPS_today": 40.0,
                     "RPS_20": 45.0,
                     "RPS_60": 42.0,
@@ -1191,6 +1195,8 @@ class PotentialStockScreenTests(unittest.TestCase):
             min_rps_60=70,
             min_volume_ratio=1.3,
             max_breakout_pct=20,
+            max_price=30,
+            max_circ_mv=50000000000.0,
         )
 
         self.assertEqual(errors, [])
@@ -1200,6 +1206,9 @@ class PotentialStockScreenTests(unittest.TestCase):
         self.assertTrue(result_df.iloc[0]["volume_confirmed"])
         self.assertIn("突破前高", result_df.iloc[0]["setup_tags"])
         self.assertEqual(meta["trade_date"], "20260131")
+        self.assertEqual(meta["rps_total"], 2)
+        self.assertEqual(meta["prefiltered_total"], 1)
+        self.assertEqual(meta["scanned_total"], 1)
         mock_compute_stock_rps.assert_called_once_with(
             periods=[5, 20, 60],
             trade_date="20260131",

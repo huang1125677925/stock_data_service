@@ -376,6 +376,8 @@ def get_potential_stock_candidates(request):
         max_breakout_pct (float): 突破前高最大幅度，默认 12，避免过度追高。
         max_base_depth_pct (float): 平台最大深度，默认 35。
         max_distance_ma20_pct (float): 距 20 日线最大乖离，默认 25。
+        max_price (float): 最高收盘价，默认 30。
+        max_circ_mv (float): 最大流通市值，单位元，默认 50000000000（500亿）。
         limit (int): 返回数量，默认 100，最大 300。
         token (str): Tushare Token（覆盖环境变量）。
     """
@@ -404,6 +406,8 @@ def get_potential_stock_candidates(request):
         max_breakout_pct = _get_float_param(request, 'max_breakout_pct', 12)
         max_base_depth_pct = _get_float_param(request, 'max_base_depth_pct', 35)
         max_distance_ma20_pct = _get_float_param(request, 'max_distance_ma20_pct', 25)
+        max_price = _get_float_param(request, 'max_price', 30)
+        max_circ_mv = _get_float_param(request, 'max_circ_mv', 50000000000)
 
         df, errors, meta = compute_potential_stock_candidates(
             periods=periods,
@@ -419,6 +423,8 @@ def get_potential_stock_candidates(request):
             max_breakout_pct=max_breakout_pct,
             max_base_depth_pct=max_base_depth_pct,
             max_distance_ma20_pct=max_distance_ma20_pct,
+            max_price=max_price,
+            max_circ_mv=max_circ_mv,
             limit=limit,
         )
         if df is None:
@@ -439,11 +445,15 @@ def get_potential_stock_candidates(request):
             'max_breakout_pct': max_breakout_pct,
             'max_base_depth_pct': max_base_depth_pct,
             'max_distance_ma20_pct': max_distance_ma20_pct,
+            'max_price': max_price,
+            'max_circ_mv': max_circ_mv,
             'limit': limit,
         }
         return success_response({
             'total': len(result),
             'matched_total': len(result),
+            'rps_total': meta.get('rps_total', 0),
+            'prefiltered_total': meta.get('prefiltered_total', 0),
             'scanned_total': meta.get('scanned_total', 0),
             'data': result,
             'filters': filters,

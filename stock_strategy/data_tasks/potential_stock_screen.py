@@ -233,6 +233,8 @@ def compute_potential_stock_candidates(
     max_breakout_pct: float = 12.0,
     max_base_depth_pct: float = 35.0,
     max_distance_ma20_pct: float = 25.0,
+    max_price: float = 30.0,
+    max_circ_mv: float = 50000000000.0,
     limit: int = 100,
 ) -> Tuple[Optional[pd.DataFrame], List[str], Dict]:
     """
@@ -259,7 +261,8 @@ def compute_potential_stock_candidates(
         "potential_stock_candidates:v1:"
         f"{preferred_end_date}:{exchange or ''}:{industry_mapping}:{','.join(map(str, normalized_periods))}:"
         f"{lookback_days}:{min_rps_20}:{min_rps_60}:{min_volume_ratio}:"
-        f"{min_breakout_pct}:{max_breakout_pct}:{max_base_depth_pct}:{max_distance_ma20_pct}:{limit}"
+        f"{min_breakout_pct}:{max_breakout_pct}:{max_base_depth_pct}:{max_distance_ma20_pct}:"
+        f"{max_price}:{max_circ_mv}:{limit}"
     )
     cached = cache.get(cache_key)
     if cached:
@@ -279,6 +282,28 @@ def compute_potential_stock_candidates(
         return None, errors, {}
 
     end_date = str(rps_df.attrs.get("trade_date") or preferred_end_date)
+    prefilter_total = len(rps_df)
+    rps_df = rps_df.copy()
+    rps_df["latest_price"] = pd.to_numeric(rps_df.get("latest_price"), errors="coerce")
+    rps_df["circ_mv"] = pd.to_numeric(rps_df.get("circ_mv"), errors="coerce")
+    rps_df = rps_df[
+        (rps_df["latest_price"].notna())
+        & (rps_df["circ_mv"].notna())
+        & (rps_df["latest_price"] <= max_price)
+        & (rps_df["circ_mv"] <= max_circ_mv)
+    ].copy()
+    prefiltered_total = len(rps_df)
+    if rps_df.empty:
+        errors.append("价格和流通市值预过滤后无候选股票")
+        return pd.DataFrame(), errors, {
+            "trade_date": end_date,
+            "rps_total": prefilter_total,
+            "prefiltered_total": 0,
+            "scanned_total": 0,
+            "history_start_date": "",
+            "history_end_date": "",
+        }
+
     required_dates = _get_recent_trade_dates(end_date, token=token, max_count=max(lookback_days + 1, max(normalized_periods) + 1))
     if not required_dates:
         errors.append("未获取到交易日历")
@@ -337,6 +362,8 @@ def compute_potential_stock_candidates(
         meta = {
             "trade_date": end_date,
             "scanned_total": len(merged_df),
+            "rps_total": prefilter_total,
+            "prefiltered_total": prefiltered_total,
             "history_start_date": min(required_dates),
             "history_end_date": max(required_dates),
         }
@@ -362,6 +389,8 @@ def compute_potential_stock_candidates(
     meta = {
         "trade_date": end_date,
         "scanned_total": len(merged_df),
+        "rps_total": prefilter_total,
+        "prefiltered_total": prefiltered_total,
         "history_start_date": min(required_dates),
         "history_end_date": max(required_dates),
     }
