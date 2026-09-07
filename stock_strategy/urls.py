@@ -5,6 +5,7 @@ from . import tushare_proxy_views
 urlpatterns = [
     path('index-rps/', views.get_index_rps, name='get_index_rps'),
     path('stock-rps/', views.get_stock_rps, name='get_stock_rps'),
+    path('potential-stocks/', views.get_potential_stock_candidates, name='get_potential_stock_candidates'),
     path('major-index-rps/', views.get_major_index_rps, name='get_major_index_rps'),
     path('dc-board-member-rps/', views.get_dc_board_member_rps, name='get_dc_board_member_rps'),
     path('industry-turnover-percentile/', views.get_industry_turnover_percentile, name='get_industry_turnover_percentile'),

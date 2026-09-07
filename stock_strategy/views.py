@@ -14,6 +14,7 @@ from .services import rps_service, StockScreeningService
 from stock_strategy.data_tasks.dc_board_rps import compute_board_rps
 from stock_strategy.data_tasks.dc_board_member_rps import compute_dc_board_member_rps
 from stock_strategy.data_tasks.major_index_rps import compute_major_index_rps
+from stock_strategy.data_tasks.potential_stock_screen import compute_potential_stock_candidates
 from stock_strategy.data_tasks.stock_rps import compute_stock_rps
 from .models import IndexRPS, StockSelectionRecord
 from .industry_turnover_strategy import industry_turnover_strategy
@@ -351,6 +352,107 @@ def get_stock_rps(request):
 
     except Exception as e:
         return error_response(f'获取股票RPS排名失败: {str(e)}', 500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_potential_stock_candidates(request):
+    """
+    主板潜力股票筛选接口。
+
+    功能：复用股票 RPS 数据源，并结合突破前高、放量、均线多头、平台回撤和乖离度等条件，
+    筛选主板中具备趋势加速形态的候选股票。
+
+    Query Parameters:
+        periods (str): RPS 周期，多个周期用逗号分隔，默认 "5,20,60"。
+        trade_date (str): 截止交易日 YYYYMMDD，空值自动使用最近可用交易日。
+        industry_mapping (str): 行业映射方式，默认 dc_l2。
+        lookback_days (int): 前高/平台观察窗口，默认 60。
+        min_rps_20 (float): 最低 20 日 RPS，默认 80。
+        min_rps_60 (float): 最低 60 日 RPS，默认 70。
+        min_volume_ratio (float): 最低 5 日均量放大倍数，默认 1.3。
+        min_breakout_pct (float): 突破前高最小幅度，默认 0。
+        max_breakout_pct (float): 突破前高最大幅度，默认 12，避免过度追高。
+        max_base_depth_pct (float): 平台最大深度，默认 35。
+        max_distance_ma20_pct (float): 距 20 日线最大乖离，默认 25。
+        limit (int): 返回数量，默认 100，最大 300。
+        token (str): Tushare Token（覆盖环境变量）。
+    """
+    try:
+        periods_str = request.GET.get('periods', '5,20,60')
+        trade_date = request.GET.get('trade_date')
+        industry_mapping = request.GET.get('industry_mapping', 'dc_l2')
+        token = request.GET.get('token')
+
+        try:
+            periods = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
+            if not periods:
+                periods = [5, 20, 60]
+        except ValueError:
+            return error_response('周期参数格式错误，应为逗号分隔的整数', 400)
+
+        lookback_days = _get_positive_int_param(request, 'lookback_days', 60, max_value=120)
+        limit = _get_positive_int_param(request, 'limit', 100, max_value=300)
+        min_rps_20 = _get_float_param(request, 'min_rps_20', 80)
+        min_rps_60 = _get_float_param(request, 'min_rps_60', 70)
+        min_volume_ratio = _get_float_param(request, 'min_volume_ratio', 1.3)
+        min_breakout_pct = _get_float_param(request, 'min_breakout_pct', 0)
+        max_breakout_pct = _get_float_param(request, 'max_breakout_pct', 12)
+        max_base_depth_pct = _get_float_param(request, 'max_base_depth_pct', 35)
+        max_distance_ma20_pct = _get_float_param(request, 'max_distance_ma20_pct', 25)
+
+        df, errors, meta = compute_potential_stock_candidates(
+            periods=periods,
+            trade_date=trade_date,
+            token=token,
+            industry_mapping=industry_mapping,
+            lookback_days=lookback_days,
+            min_rps_20=min_rps_20,
+            min_rps_60=min_rps_60,
+            min_volume_ratio=min_volume_ratio,
+            min_breakout_pct=min_breakout_pct,
+            max_breakout_pct=max_breakout_pct,
+            max_base_depth_pct=max_base_depth_pct,
+            max_distance_ma20_pct=max_distance_ma20_pct,
+            limit=limit,
+        )
+        if df is None:
+            error_message = ', '.join(errors) if errors else '未获取到潜力股票筛选数据'
+            return error_response(f'获取潜力股票筛选失败: {error_message}', 500)
+
+        result = df.fillna('').to_dict('records')
+        filters = {
+            'market': '主板',
+            'periods': periods,
+            'industry_mapping': industry_mapping,
+            'lookback_days': lookback_days,
+            'min_rps_20': min_rps_20,
+            'min_rps_60': min_rps_60,
+            'min_volume_ratio': min_volume_ratio,
+            'min_breakout_pct': min_breakout_pct,
+            'max_breakout_pct': max_breakout_pct,
+            'max_base_depth_pct': max_base_depth_pct,
+            'max_distance_ma20_pct': max_distance_ma20_pct,
+            'limit': limit,
+        }
+        return success_response({
+            'total': len(result),
+            'matched_total': len(result),
+            'scanned_total': meta.get('scanned_total', 0),
+            'data': result,
+            'filters': filters,
+            'periods': periods,
+            'trade_date': meta.get('trade_date', trade_date),
+            'history_start_date': meta.get('history_start_date', ''),
+            'history_end_date': meta.get('history_end_date', ''),
+            'errors': errors,
+            'query_time': datetime.now().isoformat(),
+        })
+
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(f'获取潜力股票筛选失败: {str(e)}', 500)
 
 
 @csrf_exempt

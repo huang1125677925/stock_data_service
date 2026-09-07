@@ -10,6 +10,7 @@ from .limit_board_service import LimitBoardDataService
 from stock_strategy.data_tasks import dc_board_rps
 from stock_strategy.data_tasks import dc_board_member_rps
 from stock_strategy.data_tasks import major_index_rps
+from stock_strategy.data_tasks import potential_stock_screen
 from stock_strategy.data_tasks import stock_rps
 
 
@@ -1086,6 +1087,119 @@ class StockRpsTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result_df.attrs.get("trade_date"), "20260108")
+        mock_cache.set.assert_called_once()
+
+
+class PotentialStockScreenTests(unittest.TestCase):
+    """
+    组件：主板潜力股票筛选测试。
+
+    功能：
+    - 验证潜力股票筛选会基于 stock-rps 结果和 OHLCV 历史行情识别突破前高、放量和均线多头形态。
+    """
+
+    @patch("stock_strategy.data_tasks.potential_stock_screen.cache")
+    @patch("stock_strategy.data_tasks.potential_stock_screen._fetch_daily_ohlcv_by_trade_date")
+    @patch("stock_strategy.data_tasks.potential_stock_screen._get_recent_trade_dates")
+    @patch("stock_strategy.data_tasks.potential_stock_screen.compute_stock_rps")
+    def test_compute_potential_stock_candidates_filters_breakout_setup(
+        self,
+        mock_compute_stock_rps,
+        mock_get_recent_trade_dates,
+        mock_fetch_daily_ohlcv_by_trade_date,
+        mock_cache,
+    ):
+        rps_df = pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "symbol": "000001",
+                    "name": "强势主板",
+                    "industry": "测试行业",
+                    "market": "主板",
+                    "list_date": "20200101",
+                    "delist_date": "",
+                    "list_status": "L",
+                    "trade_date": "20260131",
+                    "pct_change": 7.5,
+                    "RPS_today": 92.0,
+                    "RPS_20": 95.0,
+                    "RPS_60": 88.0,
+                },
+                {
+                    "ts_code": "000002.SZ",
+                    "symbol": "000002",
+                    "name": "弱势主板",
+                    "industry": "测试行业",
+                    "market": "主板",
+                    "list_date": "20200101",
+                    "delist_date": "",
+                    "list_status": "L",
+                    "trade_date": "20260131",
+                    "pct_change": 1.0,
+                    "RPS_today": 40.0,
+                    "RPS_20": 45.0,
+                    "RPS_60": 42.0,
+                },
+            ]
+        )
+        rps_df.attrs["trade_date"] = "20260131"
+        mock_compute_stock_rps.return_value = (rps_df, [])
+        mock_get_recent_trade_dates.return_value = [f"202601{day:02d}" for day in range(1, 32)]
+
+        def fake_daily(trade_date, token=None):
+            day = int(trade_date[-2:])
+            strong_close = 10.0 + day * 0.1
+            strong_vol = 1000.0
+            if day == 31:
+                strong_close = 14.0
+                strong_vol = 5000.0
+            return pd.DataFrame(
+                [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": trade_date,
+                        "open": strong_close - 0.1,
+                        "high": strong_close,
+                        "low": strong_close - 0.2,
+                        "close": strong_close,
+                        "vol": strong_vol,
+                        "pct_change": 7.5 if day == 31 else 0.5,
+                    },
+                    {
+                        "ts_code": "000002.SZ",
+                        "trade_date": trade_date,
+                        "open": 10.0,
+                        "high": 10.2,
+                        "low": 9.8,
+                        "close": 10.0,
+                        "vol": 1000.0,
+                        "pct_change": 0.1,
+                    },
+                ]
+            )
+
+        mock_fetch_daily_ohlcv_by_trade_date.side_effect = fake_daily
+        mock_cache.get.return_value = None
+
+        result_df, errors, meta = potential_stock_screen.compute_potential_stock_candidates(
+            periods=[5, 20, 60],
+            trade_date="20260131",
+            lookback_days=20,
+            min_rps_20=80,
+            min_rps_60=70,
+            min_volume_ratio=1.3,
+            max_breakout_pct=20,
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(result_df)
+        self.assertEqual(result_df["ts_code"].tolist(), ["000001.SZ"])
+        self.assertTrue(result_df.iloc[0]["is_breakout"])
+        self.assertTrue(result_df.iloc[0]["volume_confirmed"])
+        self.assertIn("突破前高", result_df.iloc[0]["setup_tags"])
+        self.assertEqual(meta["trade_date"], "20260131")
+        mock_compute_stock_rps.assert_called_once()
         mock_cache.set.assert_called_once()
 
 
