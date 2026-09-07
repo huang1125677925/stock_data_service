@@ -1185,6 +1185,7 @@ class PotentialStockScreenTests(unittest.TestCase):
         result_df, errors, meta = potential_stock_screen.compute_potential_stock_candidates(
             periods=[5, 20, 60],
             trade_date="20260131",
+            exchange="SSE",
             lookback_days=20,
             min_rps_20=80,
             min_rps_60=70,
@@ -1199,7 +1200,14 @@ class PotentialStockScreenTests(unittest.TestCase):
         self.assertTrue(result_df.iloc[0]["volume_confirmed"])
         self.assertIn("突破前高", result_df.iloc[0]["setup_tags"])
         self.assertEqual(meta["trade_date"], "20260131")
-        mock_compute_stock_rps.assert_called_once()
+        mock_compute_stock_rps.assert_called_once_with(
+            periods=[5, 20, 60],
+            trade_date="20260131",
+            token=None,
+            exchange="SSE",
+            market="主板",
+            industry_mapping="default",
+        )
         mock_cache.set.assert_called_once()
 
 

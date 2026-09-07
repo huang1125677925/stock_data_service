@@ -366,6 +366,7 @@ def get_potential_stock_candidates(request):
     Query Parameters:
         periods (str): RPS 周期，多个周期用逗号分隔，默认 "5,20,60"。
         trade_date (str): 截止交易日 YYYYMMDD，空值自动使用最近可用交易日。
+        exchange (str): 主板所属交易所，支持 SSE（上交所）或 SZSE（深交所），默认 SSE。
         industry_mapping (str): 行业映射方式，默认 dc_l2。
         lookback_days (int): 前高/平台观察窗口，默认 60。
         min_rps_20 (float): 最低 20 日 RPS，默认 80。
@@ -381,8 +382,11 @@ def get_potential_stock_candidates(request):
     try:
         periods_str = request.GET.get('periods', '5,20,60')
         trade_date = request.GET.get('trade_date')
+        exchange = request.GET.get('exchange', 'SSE')
         industry_mapping = request.GET.get('industry_mapping', 'dc_l2')
         token = request.GET.get('token')
+        if exchange not in {'SSE', 'SZSE'}:
+            return error_response('exchange 参数仅支持 SSE 或 SZSE', 400)
 
         try:
             periods = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
@@ -405,6 +409,7 @@ def get_potential_stock_candidates(request):
             periods=periods,
             trade_date=trade_date,
             token=token,
+            exchange=exchange,
             industry_mapping=industry_mapping,
             lookback_days=lookback_days,
             min_rps_20=min_rps_20,
@@ -423,6 +428,7 @@ def get_potential_stock_candidates(request):
         result = df.fillna('').to_dict('records')
         filters = {
             'market': '主板',
+            'exchange': exchange,
             'periods': periods,
             'industry_mapping': industry_mapping,
             'lookback_days': lookback_days,
@@ -443,6 +449,7 @@ def get_potential_stock_candidates(request):
             'filters': filters,
             'periods': periods,
             'trade_date': meta.get('trade_date', trade_date),
+            'exchange': exchange,
             'history_start_date': meta.get('history_start_date', ''),
             'history_end_date': meta.get('history_end_date', ''),
             'errors': errors,

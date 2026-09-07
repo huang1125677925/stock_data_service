@@ -223,6 +223,7 @@ def compute_potential_stock_candidates(
     periods: Optional[List[int]] = None,
     trade_date: Optional[str] = None,
     token: Optional[str] = None,
+    exchange: Optional[str] = "SSE",
     industry_mapping: str = DEFAULT_INDUSTRY_MAPPING,
     lookback_days: int = 60,
     min_rps_20: float = 80.0,
@@ -235,7 +236,7 @@ def compute_potential_stock_candidates(
     limit: int = 100,
 ) -> Tuple[Optional[pd.DataFrame], List[str], Dict]:
     """
-    功能：筛选主板中接近“突破前高 + 趋势加速”形态的潜力股票。
+    功能：筛选指定交易所主板中接近“突破前高 + 趋势加速”形态的潜力股票。
 
     Returns:
         Tuple[pandas.DataFrame|None, List[str], Dict]: 候选列表、提示信息、筛选元数据。
@@ -256,7 +257,7 @@ def compute_potential_stock_candidates(
 
     cache_key = (
         "potential_stock_candidates:v1:"
-        f"{preferred_end_date}:{industry_mapping}:{','.join(map(str, normalized_periods))}:"
+        f"{preferred_end_date}:{exchange or ''}:{industry_mapping}:{','.join(map(str, normalized_periods))}:"
         f"{lookback_days}:{min_rps_20}:{min_rps_60}:{min_volume_ratio}:"
         f"{min_breakout_pct}:{max_breakout_pct}:{max_base_depth_pct}:{max_distance_ma20_pct}:{limit}"
     )
@@ -268,6 +269,7 @@ def compute_potential_stock_candidates(
         periods=normalized_periods,
         trade_date=trade_date,
         token=token,
+        exchange=exchange,
         market="主板",
         industry_mapping=industry_mapping,
     )
